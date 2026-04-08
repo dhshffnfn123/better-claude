@@ -1,0 +1,38 @@
+{
+  "plugins": [
+    "stylelint-scss",
+    "stylelint-order"
+  ],
+  "extends": [
+    "stylelint-config-standard",
+    "stylelint-config-prettier",
+    "stylelint-config-recess-order"
+  ],
+  "rules": {
+    "no-eol-whitespace": true,
+    "at-rule-no-unknown": null,
+    "scss/at-rule-no-unknown": true,
+    "rule-empty-line-before": [
+      "always-multi-line",
+      {
+        "ignoreDisables": true
+      }
+    ],
+    "block-opening-brace-newline-before": "never-single-line",
+    "block-opening-brace-newline-after": "always",
+    "block-closing-brace-newline-after": "always",
+    "block-closing-brace-newline-before": "always",
+    "block-opening-brace-space-before": "always",
+    "declaration-block-trailing-semicolon": "always",
+    "block-closing-brace-empty-line-before": "never",
+    "selector-pseudo-class-no-unknown": [
+      true,
+      {
+        "ignorePseudoClasses": [
+          "global",
+          "local"
+        ]
+      }
+    ]
+  }
+}
