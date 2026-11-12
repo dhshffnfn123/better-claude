@@ -129,11 +129,17 @@
 }
 
 .convFolder {
-  margin-right: 6px;
   padding: 0 5px;
+  margin-right: 6px;
   color: #a0a896;
   background-color: rgba(255, 255, 255, 0.06);
   border-radius: 4px;
+
+  // 작업 폴더가 지워진 세션
+  &.convFolderMissing {
+    color: #d98b6f;
+    text-decoration: line-through;
+  }
 }
 
 .convDelete {
@@ -674,6 +680,334 @@
 
 .backgroundStat {
   color: #6f7d5f;
+  cursor: pointer;
+  border-radius: 4px;
+  outline: none;
+
+  &:hover,
+  &:focus-visible,
+  &.backgroundStatOpen {
+    color: #3a3d35;
+  }
+
+  // 실행 중인 건 없고 끝난 기록만 있을 때
+  &.backgroundStatIdle {
+    color: #a0a896;
+  }
+}
+
+// 상단 "백그라운드 N"을 누르면 뜨는 상세 패널 (BackgroundTasksPanel.tsx)
+.bgBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+}
+
+.bgPanel {
+  position: fixed;
+  right: 16px;
+  z-index: 21;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  width: min(480px, calc(100vw - 32px));
+  max-height: 70vh;
+  padding: 12px;
+  overflow: hidden;
+  background-color: #fff;
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+}
+
+.bgPanelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4px;
+}
+
+.bgPanelTitle {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: #3a3d35;
+}
+
+.bgStopAll {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #b5533c;
+  cursor: pointer;
+  background-color: #fbeeea;
+  border: none;
+  border-radius: 6px;
+
+  &:hover {
+    background-color: #f6dfd8;
+  }
+}
+
+.bgPanelHint {
+  padding: 0 4px;
+  margin: 6px 0 10px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #8a8f7a;
+}
+
+.bgList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.bgTask {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+  background-color: #f7f5ef;
+  border-radius: 8px;
+}
+
+.bgTaskHead {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.bgTaskType {
+  display: flex;
+  flex: 1;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6f7d5f;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bgTaskElapsed {
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  color: #8a8f7a;
+}
+
+.bgTaskStop {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  font-size: 11px;
+  color: #a0a896;
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-radius: 4px;
+
+  &:hover {
+    color: #b5533c;
+    background-color: #fbeeea;
+  }
+}
+
+.bgTaskDesc {
+  font-size: 12px;
+  font-weight: 600;
+  color: #3a3d35;
+  word-break: break-word;
+}
+
+.bgTaskCommand {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  padding: 5px 8px;
+  overflow: hidden;
+  font-size: 11px;
+  color: #4a5245;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background-color: #eeebe2;
+  border-radius: 5px;
+}
+
+.bgTaskActivity {
+  font-size: 11px;
+  line-height: 1.5;
+  color: #4a5245;
+}
+
+.bgTaskMeta {
+  font-size: 11px;
+  color: #8a8f7a;
+}
+
+.bgTaskPrompt {
+  font-size: 11px;
+  color: #8a8f7a;
+
+  summary {
+    cursor: pointer;
+  }
+
+  p {
+    max-height: 120px;
+    margin: 4px 0 0;
+    overflow-y: auto;
+    line-height: 1.5;
+    color: #4a5245;
+    white-space: pre-wrap;
+  }
+}
+
+.bgOutput {
+  box-sizing: border-box;
+  max-height: 160px;
+  padding: 8px 10px;
+  margin: 2px 0 0;
+  overflow-y: auto;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #e8e6df;
+  word-break: break-all;
+  white-space: pre-wrap;
+  background-color: #2f322b;
+  border-radius: 6px;
+}
+
+.bgOutputCut {
+  color: #8a8f7a;
+}
+
+.bgFinishedHeader {
+  padding-top: 6px;
+  margin-top: 4px;
+  border-top: 1px solid #ece9de;
+}
+
+.bgClear {
+  padding: 3px 8px;
+  font-size: 11px;
+  color: #8a8f7a;
+  cursor: pointer;
+  background: none;
+  border: 1px solid #e3dfd2;
+  border-radius: 6px;
+
+  &:hover {
+    color: #3a3d35;
+    background-color: #f2f0eb;
+  }
+}
+
+// 끝난 작업 카드 — 접혀 있고 눌러서 펼친다
+.bgTaskDone {
+  background-color: #fbfaf6;
+
+  summary {
+    list-style: none;
+    cursor: pointer;
+  }
+
+  summary::-webkit-details-marker {
+    display: none;
+  }
+}
+
+.bgStatus {
+  display: flex;
+  flex-shrink: 0;
+  gap: 4px;
+  align-items: center;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 4px;
+
+  &.completed {
+    color: #4f7a3f;
+    background-color: #e8f1e1;
+  }
+
+  &.failed {
+    color: #b5533c;
+    background-color: #fbeeea;
+  }
+
+  &.stopped {
+    color: #8a8f7a;
+    background-color: #eeebe2;
+  }
+}
+
+// 에이전트가 최근에 쓴 도구
+.bgSteps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0;
+}
+
+.bgStep {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  color: #4a5245;
+
+  &.error {
+    color: #b5533c;
+  }
+}
+
+.bgStepIcon {
+  flex-shrink: 0;
+  width: 10px;
+  font-size: 9px;
+  color: #a0a896;
+
+  .done & {
+    color: #6f9a5f;
+  }
+
+  .error & {
+    color: #b5533c;
+  }
+}
+
+.bgStepName {
+  flex-shrink: 0;
+  font-weight: 600;
+}
+
+.bgStepTarget {
+  overflow: hidden;
+  color: #8a8f7a;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bgOutputEmpty {
+  padding: 6px 2px 0;
+  font-size: 11px;
+  color: #a0a896;
 }
 
 .backgroundStop {
@@ -800,7 +1134,8 @@
 }
 
 .mcpMeta,
-.mcpError {
+.mcpError,
+.mcpHint {
   grid-column: 2;
   font-size: 11px;
   color: #8a8f7a;
@@ -809,6 +1144,15 @@
 .mcpError {
   color: #b5533c;
   word-break: break-all;
+}
+
+.mcpHint {
+  padding: 4px 6px;
+  margin-top: 2px;
+  line-height: 1.45;
+  color: #8a6d1f;
+  background-color: #fbf6e6;
+  border-radius: 5px;
 }
 
 .contextGauge {
@@ -1250,6 +1594,12 @@
     background-color: #ece9de;
   }
 
+  // 서브에이전트(Agent 도구)가 쓴 도구 — 들여 써서 구분한다
+  &.toolRowSub {
+    padding-left: 20px;
+    opacity: 0.8;
+  }
+
   &.running .toolIcon {
     color: #c9a84c;
   }
@@ -1489,6 +1839,12 @@
   }
 }
 
+.modalAlwaysHint {
+  margin: -4px 0 0;
+  font-size: 11px;
+  color: #a0a896;
+}
+
 .modalAlwaysRule {
   max-width: 100%;
   overflow: hidden;
@@ -1507,6 +1863,22 @@
   max-height: 200px;
   overflow-y: auto;
   text-align: left;
+}
+
+.rewindNote {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 8px 12px 8px 26px;
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #8a6d1f;
+  text-align: left;
+  background-color: #fbf6e6;
+  border-radius: 8px;
 }
 
 .rewindFile {
@@ -1944,6 +2316,82 @@
   }
 }
 
+// 입력창이 화면 맨 아래라 위쪽으로 띄우고, 오른쪽 끝을 아이콘에 맞춰 왼쪽으로 펼친다
+.promptInfoTip {
+  position: absolute;
+  right: -6px;
+  bottom: calc(100% + 6px);
+  z-index: 50;
+  box-sizing: border-box;
+  width: 300px;
+  padding: 10px 12px;
+  font-size: 11px;
+  line-height: 1.55;
+  color: #f2f0eb;
+  text-align: left;
+  white-space: normal;
+  pointer-events: none;
+  cursor: default;
+  visibility: hidden;
+  background-color: #3a3d35;
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  opacity: 0;
+  transition: opacity 0.15s, transform 0.15s, visibility 0.15s;
+  transform: translateY(4px);
+
+  // 아이콘을 가리키는 꼬리
+  &::after {
+    position: absolute;
+    top: 100%;
+    right: 11px;
+    content: "";
+    border: 5px solid transparent;
+    border-top-color: #3a3d35;
+  }
+}
+
+.promptInfoTitle {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.promptInfoList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 16px;
+  margin: 6px 0 0;
+}
+
+.promptInfo {
+  position: relative;
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 28px;
+  font-size: 13px;
+  color: #a0a896;
+  cursor: help;
+  outline: none;
+  transition: color 0.15s;
+
+  &:hover,
+  &:focus-visible {
+    color: #4a5245;
+  }
+
+  &:hover .promptInfoTip,
+  &:focus-visible .promptInfoTip {
+    visibility: visible;
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .promptAddBtn {
   display: flex;
   flex-shrink: 0;
@@ -2214,11 +2662,12 @@
   }
 }
 
+// 한 줄(21px) + 위아래 여백 + 테두리가 44px 안에 들어가야 빈 입력창에 스크롤바가 생기지 않는다
 .textarea {
   flex: 1;
   min-height: 44px;
   max-height: 160px;
-  padding: 12px 16px;
+  padding: 10px 16px;
   font-family: inherit;
   font-size: 14px;
   line-height: 1.5;
@@ -2229,8 +2678,12 @@
   border-radius: 12px;
   outline: none;
 
+  // 좁은 폭(작업 파일 패널을 열었을 때 등)에서 안내문이 두 줄로 넘어가 잘리지 않게 한 줄로 줄인다
   &::placeholder {
+    overflow: hidden;
     color: #aaa89a;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   &:focus {
@@ -2284,17 +2737,27 @@
 }
 
 // Claude의 선택지 질문(AskUserQuestion) 모달
+// 질문이 길어도 제목과 버튼은 항상 보이게 — 질문 목록만 스크롤한다.
+// (예전에는 창 전체가 스크롤돼 "답변 보내기" 버튼이 아래로 밀려 안 보였다)
 .questionModal {
+  // 선택지 설명이 길어서 다른 창(.modalWide 480px)보다 넓게. 좁은 창에서는 양옆 24px를 남기고 줄어든다.
+  box-sizing: border-box;
+  width: min(680px, calc(100vw - 48px));
   max-height: 78vh;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 .questionList {
+  box-sizing: border-box;
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 18px;
   width: 100%;
+  min-height: 0;
+  padding-right: 4px;
   margin: 4px 0 16px;
+  overflow-y: auto;
   text-align: left;
 }
 
@@ -2398,11 +2861,17 @@
 }
 
 .questionCustom {
+  box-sizing: border-box;
+  display: block;
   width: 100%;
+  // 길어지면 칸 안에서 스크롤 (높이는 입력에 맞춰 늘어난다)
+  max-height: 160px;
   padding: 8px 10px;
   font-family: inherit;
   font-size: 12px;
+  line-height: 1.5;
   color: #3a3d35;
+  resize: none;
   background-color: #fff;
   border: 1px solid #e8e4d8;
   border-radius: 8px;
@@ -2414,5 +2883,1079 @@
 
   &:focus {
     border-color: #c9a84c;
+  }
+}
+
+// ── 오른쪽 작업 파일 패널 (FilesPanel.tsx) ──
+.mainArea {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.chatColumn {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.filesToggleBadge {
+  position: absolute;
+  top: -1px;
+  right: -3px;
+  box-sizing: border-box;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 15px;
+  color: #3a3d35;
+  text-align: center;
+  background-color: #c9a84c;
+  border-radius: 8px;
+}
+
+.filesPanel {
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  min-width: 240px;
+  max-width: 70%;
+  background-color: #faf9f6;
+  border-left: 1px solid #e0dccf;
+}
+
+.filesResize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  z-index: 2;
+  width: 6px;
+  cursor: col-resize;
+
+  &:hover {
+    background-color: rgba(201, 168, 76, 0.35);
+  }
+}
+
+.filesHeader {
+  display: flex;
+  flex-shrink: 0;
+  gap: 2px;
+  align-items: center;
+  height: 40px;
+  padding: 0 6px 0 12px;
+  border-bottom: 1px solid #e8e4d8;
+}
+
+.filesTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 700;
+  color: #3a3d35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.filesHeaderBtn {
+  flex-shrink: 0;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 7px;
+  font-size: 12px;
+  color: #6a6f5e;
+  white-space: nowrap;
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-radius: 6px;
+
+  &:hover {
+    background-color: #efece4;
+  }
+
+  &.active {
+    font-weight: 600;
+    color: #8a6d1f;
+    background-color: #f3ead0;
+  }
+}
+
+.filesTree {
+  flex: 1;
+  min-height: 0;
+  padding: 4px 0 8px;
+  overflow: auto;
+  font-size: 12.5px;
+
+  &::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background-color: #ddd8b0;
+    border-radius: 3px;
+  }
+}
+
+// 파일을 열면 아래쪽을 파일 보기에 내준다
+.filesTreeShrunk {
+  flex: 0 0 38%;
+}
+
+.treeRow {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  height: 24px;
+  padding-right: 8px;
+  color: #3a3d35;
+  white-space: nowrap;
+  cursor: pointer;
+
+  &:hover {
+    background-color: #efece4;
+  }
+}
+
+.treeRowStatic {
+  cursor: default;
+
+  &:hover {
+    background: none;
+  }
+}
+
+.treeRowSelected,
+.treeRowSelected:hover {
+  background-color: #ebe4cc;
+}
+
+.treeChevron {
+  flex-shrink: 0;
+  width: 10px;
+  font-size: 9px;
+  color: #a0a896;
+}
+
+.treeIcon {
+  flex-shrink: 0;
+  width: 13px;
+  font-size: 12px;
+  color: #b5b099;
+}
+
+.treeRowDir .treeIcon {
+  color: #c9a84c;
+}
+
+// 가운데 생략: 앞부분만 줄어들고 끝 8글자는 늘 보인다
+.treeName {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  white-space: pre;
+}
+
+.treeNameHead {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.treeNameTail {
+  flex-shrink: 0;
+}
+
+.treeRowChanged .treeName {
+  font-weight: 600;
+  color: #7a5f12;
+}
+
+.treeBadge {
+  flex-shrink: 0;
+  padding: 0 6px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  color: #8a6d1f;
+  background-color: #f3ead0;
+  border-radius: 8px;
+}
+
+.treeRowRecent .treeBadge {
+  color: #fff;
+  background-color: #c9a84c;
+}
+
+.treeDot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  background-color: #c9a84c;
+  border-radius: 50%;
+}
+
+.treeNote {
+  padding: 4px 8px 4px 0;
+  font-size: 11px;
+  color: #a0a896;
+}
+
+.treeSection {
+  padding: 10px 12px 4px;
+  margin-top: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #8a8f7a;
+  border-top: 1px solid #e8e4d8;
+}
+
+.fileViewer {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  background-color: #fff;
+  border-top: 1px solid #e0dccf;
+}
+
+.fileViewerHead {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 6px 4px 12px;
+}
+
+.fileViewerName {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #3a3d35;
+}
+
+.fileViewerDir {
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 400;
+  color: #8a8f7a;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fileViewerActions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 2px;
+
+  button {
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    font-size: 12px;
+    color: #8a8f7a;
+    cursor: pointer;
+    background: none;
+    border: none;
+    border-radius: 6px;
+
+    &:hover {
+      color: #3a3d35;
+      background-color: #efece4;
+    }
+  }
+}
+
+.fileViewerTabs {
+  display: flex;
+  flex-shrink: 0;
+  gap: 2px;
+  align-items: center;
+  padding: 0 10px;
+  border-bottom: 1px solid #e8e4d8;
+}
+
+.fileViewerTab {
+  padding: 6px 8px;
+  margin-bottom: -1px;
+  font-size: 12px;
+  color: #8a8f7a;
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+
+  &:hover {
+    color: #3a3d35;
+  }
+
+  &.active {
+    font-weight: 600;
+    color: #3a3d35;
+    border-bottom-color: #c9a84c;
+  }
+}
+
+.fileViewerCopied {
+  margin-left: auto;
+  font-size: 11px;
+  color: #6b8f4e;
+}
+
+.codeView,
+.changesView {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.changesView {
+  gap: 10px;
+  padding: 8px 10px 12px;
+  overflow-y: auto;
+}
+
+.viewerNotice {
+  flex-shrink: 0;
+  padding: 6px 12px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #8a8f7a;
+}
+
+.changesView .viewerNotice {
+  padding: 0 2px;
+}
+
+// 줄 번호와 코드가 한 스크롤 안에 있어 늘 같이 움직인다. 가로로 밀어도 줄 번호는 남는다.
+.codeScroll {
+  display: flex;
+  flex: 1;
+  align-items: flex-start;
+  min-height: 0;
+  overflow: auto;
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.codeGutter {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  flex-shrink: 0;
+  padding: 8px 8px 8px 10px;
+  margin: 0;
+  font: inherit;
+  color: #b5b099;
+  text-align: right;
+  user-select: none;
+  background-color: #faf9f6;
+  border-right: 1px solid #efece4;
+}
+
+.codeBody {
+  flex: 1;
+  padding: 8px 12px;
+  margin: 0;
+  font: inherit;
+
+  // highlight.js 테마의 기본 여백·스크롤을 없애 줄 번호와 줄이 맞게
+  :global(.hljs) {
+    display: block;
+    padding: 0;
+    overflow: visible;
+    font: inherit;
+    background: transparent;
+  }
+}
+
+.changeItem {
+  flex-shrink: 0;
+}
+
+.changeHead {
+  margin-bottom: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6a6f5e;
+}
+
+.changeItem .toolDiff {
+  max-height: none;
+  margin: 0;
+}
+
+// 보기 전환: 전체 | Claude 수정 | Git 변경
+.filesViews {
+  display: flex;
+  flex-shrink: 0;
+  gap: 2px;
+  padding: 6px 8px;
+  border-bottom: 1px solid #e8e4d8;
+}
+
+.filesViewBtn {
+  display: inline-flex;
+  flex: 1;
+  gap: 5px;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  height: 26px;
+  padding: 0 6px;
+  font-size: 12px;
+  color: #6a6f5e;
+  white-space: nowrap;
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-radius: 6px;
+
+  &:hover {
+    background-color: #efece4;
+  }
+
+  &.active {
+    font-weight: 600;
+    color: #3a3d35;
+    background-color: #ebe4cc;
+  }
+}
+
+.filesViewCount {
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 15px;
+  color: #8a6d1f;
+  background-color: #f3ead0;
+  border-radius: 8px;
+}
+
+// ── Git 변경 보기 ──
+.gitBranchRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 10px 8px;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: #6a6f5e;
+  border-bottom: 1px dashed #e8e4d8;
+}
+
+.gitBranchIcon {
+  font-size: 11px;
+  color: #8a8f7a;
+}
+
+.gitBranchName {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  color: #3a3d35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gitBranchMeta {
+  font-size: 11px;
+  color: #8a8f7a;
+}
+
+.gitSummary {
+  margin-left: auto;
+  font-size: 11px;
+  color: #8a8f7a;
+  white-space: nowrap;
+}
+
+.gitAdd {
+  color: #3f7d32;
+}
+
+.gitDel {
+  color: #b5443a;
+}
+
+.gitCounts {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 4px;
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 10.5px;
+}
+
+.gitBadge {
+  flex-shrink: 0;
+  padding: 0 6px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  border-radius: 8px;
+}
+
+.gitBadge-modified,
+.gitBadge-typechange {
+  color: #8a6d1f;
+  background-color: #f3ead0;
+}
+
+.gitBadge-added,
+.gitBadge-untracked,
+.gitBadge-copied {
+  color: #2f6a24;
+  background-color: #e3f1dc;
+}
+
+.gitBadge-deleted {
+  color: #9b3a31;
+  background-color: #f8e1de;
+}
+
+.gitBadge-renamed {
+  color: #2d5f86;
+  background-color: #dfeaf3;
+}
+
+.gitBadge-conflict {
+  color: #fff;
+  background-color: #c0392b;
+}
+
+// 지운 파일은 이름에 줄을 긋는다
+.treeRowGone .treeName {
+  color: #a0a896;
+  text-decoration: line-through;
+}
+
+// 파일 보기의 "Git 변경" 탭
+.gitDiffView {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.gitDiff {
+  padding-bottom: 8px;
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.gitDiffHunk {
+  padding: 3px 10px;
+  margin-top: 4px;
+  overflow: hidden;
+  color: #8a8f7a;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background-color: #f3f0e6;
+}
+
+.gitDiffNote {
+  padding: 1px 10px 1px 74px;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 11px;
+  color: #a0a896;
+}
+
+.gitDiffRow {
+  display: flex;
+}
+
+.gitDiffNo {
+  flex-shrink: 0;
+  width: 30px;
+  padding-right: 4px;
+  color: #c2bda8;
+  text-align: right;
+  user-select: none;
+}
+
+.gitDiffMarker {
+  flex-shrink: 0;
+  width: 14px;
+  font-weight: 700;
+  color: #b5b099;
+  text-align: center;
+  user-select: none;
+}
+
+.gitDiffText {
+  flex: 1;
+  min-width: 0;
+  padding-right: 10px;
+  color: #3a3d35;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+.gitDiffAdd {
+  background-color: rgba(34, 197, 94, 0.1);
+
+  .gitDiffMarker,
+  .gitDiffText {
+    color: #14532d;
+  }
+}
+
+.gitDiffDel {
+  background-color: rgba(220, 38, 38, 0.08);
+
+  .gitDiffMarker,
+  .gitDiffText {
+    color: #991b1b;
+  }
+}
+
+// 좁은 창에서는 채팅을 밀어내지 않고 위에 겹쳐 띄운다
+@media (max-width: 760px) {
+  .filesPanel {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 6;
+    max-width: calc(100% - 40px);
+    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.12);
+  }
+}
+
+// ── 채팅 코드 블록 (MessageItem의 CodeBlock) ──
+// 기존 어두운 배경(#2c2c2c)을 그대로 쓰고, 그 위에서 읽히는 따뜻한 색으로 칠한다.
+// highlight.js의 github 테마(파일 보기용, 밝은 배경)가 같은 클래스에 색을 넣으므로 여기서 모두 덮어쓴다.
+.codeBlock {
+  margin: 8px 0;
+  overflow: hidden;
+  background-color: #2c2c2c;
+  border-radius: 8px;
+}
+
+.codeBlockHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 28px;
+  padding: 0 6px 0 12px;
+  font-size: 11px;
+  color: #a8a28c;
+  background-color: #363633;
+}
+
+.codeBlockLang {
+  font-family: "SFMono-Regular", Consolas, monospace;
+}
+
+.codeBlockCopy {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: #c8c0a8;
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-radius: 5px;
+
+  &:hover {
+    color: #f2ead3;
+    background-color: rgba(255, 255, 255, 0.08);
+  }
+}
+
+.bubble.markdown .codeBlock pre {
+  margin: 0;
+  border-radius: 0;
+}
+
+.codeBlockPre {
+  // 토큰 색 — github 테마(파일 보기용)가 같은 클래스에 넣은 색을 모두 덮는다.
+  // 클래스가 하나인 것 먼저, 둘 이상인 것(더 구체적인 것)은 뒤에.
+  :global(.hljs-keyword),
+  :global(.hljs-doctag),
+  :global(.hljs-template-tag),
+  :global(.hljs-template-variable),
+  :global(.hljs-bullet) {
+    color: #e78a4e;
+  }
+
+  :global(.hljs-type),
+  :global(.hljs-built_in),
+  :global(.hljs-symbol) {
+    color: #d8a657;
+  }
+
+  :global(.hljs-title) {
+    color: #a9b665;
+  }
+
+  :global(.hljs-string),
+  :global(.hljs-regexp) {
+    color: #89b482;
+  }
+
+  :global(.hljs-number),
+  :global(.hljs-literal),
+  :global(.hljs-variable),
+  :global(.hljs-selector-attr),
+  :global(.hljs-selector-class),
+  :global(.hljs-selector-id) {
+    color: #d3869b;
+  }
+
+  :global(.hljs-attr),
+  :global(.hljs-attribute),
+  :global(.hljs-meta),
+  :global(.hljs-property) {
+    color: #7daea3;
+  }
+
+  :global(.hljs-name),
+  :global(.hljs-quote),
+  :global(.hljs-selector-tag),
+  :global(.hljs-selector-pseudo),
+  :global(.hljs-tag) {
+    color: #ea6962;
+  }
+
+  :global(.hljs-comment),
+  :global(.hljs-code),
+  :global(.hljs-formula) {
+    font-style: italic;
+    color: #928374;
+  }
+
+  :global(.hljs-operator),
+  :global(.hljs-subst),
+  :global(.hljs-params),
+  :global(.hljs-punctuation) {
+    color: inherit;
+  }
+
+  :global(.hljs-section) {
+    font-weight: 700;
+    color: #d8a657;
+  }
+
+  :global(.hljs-emphasis) {
+    font-style: italic;
+    color: inherit;
+  }
+
+  :global(.hljs-strong) {
+    font-weight: 700;
+    color: inherit;
+  }
+
+  :global(.hljs-addition) {
+    color: #a9b665;
+    background-color: rgba(169, 182, 101, 0.14);
+  }
+
+  :global(.hljs-deletion) {
+    color: #ea6962;
+    background-color: rgba(234, 105, 98, 0.14);
+  }
+
+  :global(.hljs-variable.language_),
+  :global(.hljs-meta .hljs-keyword) {
+    color: #e78a4e;
+  }
+
+  :global(.hljs-title.class_) {
+    color: #d8a657;
+  }
+
+  :global(.hljs-title.function_) {
+    color: #a9b665;
+  }
+
+  :global(.hljs-meta .hljs-string) {
+    color: #89b482;
+  }
+
+  :global(.hljs-title.class_.inherited__) {
+    color: #d8a657;
+  }
+}
+
+// ── 응답 중 미리 써 둔 메시지 (ChatInput) ──
+.queuedBar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 12px;
+  margin: 10px 24px 0;
+  font-size: 12px;
+  color: #6a6f5e;
+  background-color: #fbf6e3;
+  border: 1px dashed #d9c98f;
+  border-radius: 10px;
+}
+
+.queuedIcon {
+  flex-shrink: 0;
+  color: #b8962e;
+}
+
+.queuedLabel {
+  flex-shrink: 0;
+  font-weight: 600;
+  color: #8a6d1f;
+}
+
+.queuedText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: #3a3d35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queuedBtn {
+  flex-shrink: 0;
+  padding: 3px 9px;
+  font-size: 12px;
+  color: #6a6f5e;
+  cursor: pointer;
+  background-color: #fff;
+  border: 1px solid #e3dcc0;
+  border-radius: 6px;
+
+  &:hover {
+    color: #3a3d35;
+    background-color: #f7f3e6;
+  }
+}
+
+.queuedBtnPrimary {
+  color: #f2f0eb;
+  background-color: #4a5245;
+  border-color: #4a5245;
+
+  &:hover {
+    color: #fff;
+    background-color: #3a3d35;
+  }
+}
+
+// ── 알림 설정 (NotificationSettings) ──
+.notifyWrap {
+  position: relative;
+  display: flex;
+}
+
+.notifyPopover {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: -8px;
+  z-index: 21;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 300px;
+  padding: 12px 14px;
+  font-size: 12px;
+  font-weight: 400;
+  color: #3a3d35;
+  background-color: #fff;
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+}
+
+.notifyTitle {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.notifyRow {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.notifyText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.notifyLabel {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.notifyHint {
+  font-size: 11px;
+  line-height: 1.5;
+  color: #8a8f7a;
+}
+
+.notifyVolume {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.notifyDisabled {
+  opacity: 0.45;
+}
+
+.notifyVolumeIcon {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: #8a8f7a;
+}
+
+// 채워진 부분까지 색을 칠한 가로 슬라이더 (--fill = 현재 값 %)
+.notifyRange {
+  flex: 1;
+  min-width: 0;
+  height: 4px;
+  cursor: pointer;
+  background: linear-gradient(to right, #c9a84c var(--fill), #e6e1d2 var(--fill));
+  border-radius: 2px;
+  outline: none;
+  appearance: none;
+
+  &::-webkit-slider-thumb {
+    width: 14px;
+    height: 14px;
+    background-color: #fff;
+    border: 2px solid #c9a84c;
+    border-radius: 50%;
+    appearance: none;
+  }
+
+  &:focus-visible::-webkit-slider-thumb {
+    box-shadow: 0 0 0 3px rgba(201, 168, 76, 0.3);
+  }
+
+  &:disabled {
+    cursor: default;
+  }
+}
+
+.notifyVolumeValue {
+  flex-shrink: 0;
+  width: 34px;
+  font-variant-numeric: tabular-nums;
+  color: #6a6f5e;
+  text-align: right;
+}
+
+.notifyIconBtn {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  font-size: 10px;
+  color: #6a6f5e;
+  cursor: pointer;
+  background-color: #f2f0eb;
+  border: none;
+  border-radius: 6px;
+
+  &:disabled {
+    cursor: default;
+  }
+
+  &:hover:not(:disabled) {
+    color: #3a3d35;
+    background-color: #e8e4d8;
+  }
+}
+
+.notifyDivider {
+  height: 1px;
+  margin: 2px 0;
+  background-color: #efece4;
+}
+
+.notifyTestBtn {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  align-self: flex-start;
+  padding: 5px 10px;
+  font-size: 12px;
+  color: #3a3d35;
+  cursor: pointer;
+  background-color: #f2f0eb;
+  border: none;
+  border-radius: 6px;
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.45;
+  }
+
+  &:hover:not(:disabled) {
+    background-color: #e8e4d8;
+  }
+}
+
+.notifyFootnote {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #a0a896;
+}
+
+// 켜기/끄기 스위치
+.switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 34px;
+  height: 20px;
+  padding: 0;
+  cursor: pointer;
+  background-color: #d6d1c2;
+  border: none;
+  border-radius: 10px;
+  transition: background-color 0.15s;
+}
+
+.switchOn {
+  background-color: #c9a84c;
+}
+
+.switchKnob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background-color: #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  transition: transform 0.15s;
+
+  .switchOn & {
+    transform: translateX(14px);
   }
 }

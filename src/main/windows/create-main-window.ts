@@ -1,6 +1,7 @@
 import {app, BrowserWindow} from "electron";
 import path from "path";
 import fs from "fs";
+import {guardNavigation} from "./link-guard";
 
 function resolveWindowIcon(): string | undefined {
     const candidates = [
@@ -26,6 +27,7 @@ export const createMainWindow = () => {
             nodeIntegration: false,
         },
     });
+    guardNavigation(win);
 
     if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
         win.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);

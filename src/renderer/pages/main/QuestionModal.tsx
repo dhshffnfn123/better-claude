@@ -78,15 +78,19 @@ export function QuestionModal({questions, onAnswer, onSkip}: Props) {
                                     );
                                 })}
                             </div>
-                            <input
+                            {/* 여러 줄로 답할 수 있게 textarea. Enter는 줄바꿈이다. */}
+                            <textarea
                                 className={cx("questionCustom")}
-                                placeholder="직접 입력 (선택)"
+                                placeholder="직접 입력 (선택) · 여러 줄로 쓸 수 있습니다"
+                                rows={2}
                                 value={custom[qi]}
-                                onChange={(e) =>
-                                    setCustom((prev) =>
-                                        prev.map((c, i) => (i === qi ? e.target.value : c))
-                                    )
-                                }
+                                onChange={(e) => {
+                                    // 내용에 맞춰 높이를 늘린다 (최대 높이는 CSS에서 제한)
+                                    const el = e.target;
+                                    el.style.height = "auto";
+                                    el.style.height = `${el.scrollHeight + el.offsetHeight - el.clientHeight}px`;
+                                    setCustom((prev) => prev.map((c, i) => (i === qi ? el.value : c)));
+                                }}
                             />
                         </div>
                     ))}

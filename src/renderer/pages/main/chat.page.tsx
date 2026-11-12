@@ -9,6 +9,7 @@ import {
     faClockRotateLeft,
     faCircleExclamation,
     faFolder,
+    faFolderTree,
     faGears,
     faLayerGroup,
     faPlug,
@@ -17,18 +18,19 @@ import {
     faShieldHalved,
     faTrash,
     faTriangleExclamation,
-    faVolumeHigh,
-    faVolumeXmark,
     faXmark,
 } from "@fortawesome/free-solid-svg-icons";
 import claudeIcon from "../../assets/better-claude-icon.png";
 import type {ImagePayload} from "../../hooks/useClaudeChat";
 import {useClaudeChat} from "../../hooks/useClaudeChat";
-import {useNotificationSound} from "../../hooks/useNotificationSound";
 import {MessageItem} from "./MessageItem";
 import {ChatInput} from "./ChatInput";
 import {ActivityPanel, middleTruncate} from "./ActivityPanel";
+import {NotificationSettings} from "./NotificationSettings";
 import {QuestionModal} from "./QuestionModal";
+import {BackgroundTasksPanel} from "./BackgroundTasksPanel";
+import {FilesPanel} from "./FilesPanel";
+import {FILES_PANEL_MIN_WIDTH, readPref, writePref} from "./files-panel-prefs";
 
 const cx = classNames.bind(styles);
 
@@ -125,6 +127,7 @@ const ChatPage = () => {
         runningTokens,
         notice,
         setNotice,
+        turnEnd,
         send,
         regenerate,
         editAndResend,
@@ -134,7 +137,6 @@ const ChatPage = () => {
         newConversation,
         loadSession,
     } = useClaudeChat();
-    const {soundEnabled, toggleSound} = useNotificationSound();
 
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [sessions, setSessions] = useState<SessionSummary[]>([]);
@@ -150,7 +152,11 @@ const ChatPage = () => {
     const [models, setModels] = useState<ModelOption[]>(FALLBACK_MODELS);
     const [costUsd, setCostUsd] = useState<number | null>(null);
     const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
-    const [backgroundTasks, setBackgroundTasks] = useState<BackgroundTask[]>([]);
+    // 백그라운드 작업: 실행 중 + 이 대화에서 최근 끝난 것
+    const [bg, setBg] = useState<BackgroundState>({running: [], finished: []});
+    const backgroundTasks = bg.running;
+    // 백그라운드 작업 상세 패널: 열려 있으면 패널 위쪽 위치(px), 닫혀 있으면 null
+    const [bgPanelTop, setBgPanelTop] = useState<number | null>(null);
     const [rateLimits, setRateLimits] = useState<RateLimitWindow[]>([]);
     const [rewind, setRewind] = useState<RewindState | null>(null);
     const [showScrollBottom, setShowScrollBottom] = useState(false);
@@ -158,6 +164,15 @@ const ChatPage = () => {
     const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
     const [locateError, setLocateError] = useState<string | null>(null);
     const [locating, setLocating] = useState(false);
+    // 다른 대화로 옮길 때마다 올린다 — 입력창이 대기 중인 메시지를 새 대화로 보내지 않게
+    const [conversationSeq, setConversationSeq] = useState(0);
+    // 오른쪽 작업 파일 패널 (기본은 닫힘, 열림·너비는 기억)
+    const [changedFiles, setChangedFiles] = useState<ChangedFilesState>({turn: 0, files: []});
+    const [filesOpen, setFilesOpen] = useState(() => readPref("filesPanel.open") === "1");
+    const [filesWidth, setFilesWidth] = useState(() => {
+        const saved = Number(readPref("filesPanel.width"));
+        return saved >= FILES_PANEL_MIN_WIDTH ? saved : 380;
+    });
     const bottomRef = useRef<HTMLDivElement>(null);
     const messageListRef = useRef<HTMLDivElement>(null);
     const isAtBottomRef = useRef(true);
@@ -175,6 +190,8 @@ const ChatPage = () => {
         window.electronAPI.getEffort().then(setEffort);
         window.electronAPI.getUltracode().then(setUltracode);
         window.electronAPI.getFastMode().then(setFastMode);
+        // 방패는 main이 실제로 쓰는 값을 그대로 보여준다
+        window.electronAPI.getPermissions().then(setAllPermissionsGranted);
         window.electronAPI.listModels().then((infos) => {
             const opts = infos ? toModelOptions(infos) : [];
             if (opts.length > 0) setModels(opts);
@@ -188,13 +205,16 @@ const ChatPage = () => {
         const removeNotFound = window.electronAPI.onClaudeNotFound(() => setClaudeMissing(true));
         const removeCost = window.electronAPI.onCost(({totalCostUsd}) => setCostUsd(totalCostUsd));
         const removeContext = window.electronAPI.onContextUsage(setContextUsage);
-        const removeBackground = window.electronAPI.onBackgroundTasks(setBackgroundTasks);
+        const removeBackground = window.electronAPI.onBackgroundTasks(setBg);
+        window.electronAPI.getChangedFiles().then(setChangedFiles);
+        const removeChangedFiles = window.electronAPI.onChangedFiles(setChangedFiles);
         window.electronAPI.getRateLimits().then(setRateLimits);
         const removeRateLimits = window.electronAPI.onRateLimits(setRateLimits);
         return () => {
             removeMcp();
             removeRateLimits();
             removeBackground();
+            removeChangedFiles();
             removeNotFound();
             removeCost();
             removeContext();
@@ -232,23 +252,70 @@ const ChatPage = () => {
         wasLoadingRef.current = isLoading;
     }, [isLoading]);
 
+    // 사이드바를 열 때마다 다시 읽는다 — 터미널 등 앱 밖에서 생긴 대화도 바로 보이게
+    useEffect(() => {
+        if (sidebarOpen) window.electronAPI.listSessions().then(setSessions);
+    }, [sidebarOpen]);
+
     // 비용/컨텍스트는 세션 단위 지표라 세션이 바뀌면 비운다
     const startNewConversation = useCallback(async () => {
+        setConversationSeq((n) => n + 1);
         setCostUsd(null);
         setContextUsage(null);
         await newConversation();
+        // 새 대화는 main이 "전체 허용"으로 되돌린다 — 방패 표시를 실제 값에 맞춘다
+        setAllPermissionsGranted(await window.electronAPI.getPermissions());
     }, [newConversation]);
+
+    // 대화를 옮기면 CLI를 바로 닫아야 해서 실행 중인 백그라운드 작업도 즉시 종료된다
+    const confirmStopBackground = (action: string) =>
+        backgroundTasks.length === 0 ||
+        window.confirm(`백그라운드 작업 ${backgroundTasks.length}개가 실행 중입니다.\n${action} 이 작업들이 종료됩니다. 계속할까요?`);
+
+    // 설정은 CLI를 띄울 때 고정된다. 다음 메시지를 보낼 때 새 설정으로 다시 띄우면서 작업이 종료된다.
+    const warnBackgroundOnSettingChange = () => {
+        if (backgroundTasks.length === 0) return;
+        setNotice({
+            level: "warning",
+            message: `백그라운드 작업 ${backgroundTasks.length}개가 실행 중입니다. 바꾼 설정은 다음 메시지부터 적용되며, 그때까지 끝나지 않은 작업은 종료됩니다.`,
+        });
+    };
+
+    // 재생성·편집은 세션을 이어갈 지점이 바뀌어 CLI를 새로 띄운다 — 백그라운드 작업도 종료된다
+    const handleRegenerate = () => {
+        if (confirmStopBackground("다시 생성하면")) regenerate();
+    };
+
+    const handleEditResend = (text: string) => {
+        if (confirmStopBackground("편집해서 다시 보내면")) editAndResend(text);
+    };
+
+    const handleNewConversationClick = () => {
+        if (!confirmStopBackground("새 대화를 시작하면")) return false;
+        void startNewConversation();
+        return true;
+    };
 
     // 저장된 세션 열기. 모델은 바꾸지 않는다 — 지금 고른 모델로 이어서 대화한다.
     const handleLoadSession = async (session: SessionSummary) => {
+        if (!confirmStopBackground("다른 대화를 열면")) return;
+        setConversationSeq((n) => n + 1);
         setCostUsd(null);
         setContextUsage(null);
         setSidebarOpen(false);
         try {
             const loaded = await window.electronAPI.loadSessionMessages(session.sessionId, session.cwd);
-            const resumedCwd = await window.electronAPI.resumeSession(session.sessionId, session.cwd);
+            const resumed = await window.electronAPI.resumeSession(session.sessionId, session.cwd);
             loadSession(loaded);
-            setCwd(resumedCwd);
+            setCwd(resumed.cwd);
+            // 원래 폴더가 없으면 CLI는 지금 폴더에서 그대로 이어간다 — 모르고 보내지 않게 알린다
+            if (resumed.cwdMissing) {
+                setNotice({
+                    level: "warning",
+                    message: "이 대화의 원래 작업 폴더가 없습니다. 메시지를 보내면 현재 작업 폴더에서 이어집니다.",
+                    detail: `원래 폴더: ${session.cwd}\n현재 폴더: ${resumed.cwd}`,
+                });
+            }
         } catch (e) {
             setNotice({level: "error", message: "대화 기록을 불러오지 못했습니다", detail: (e as Error).message});
         }
@@ -257,12 +324,45 @@ const ChatPage = () => {
     // CLI 세션 기록 자체를 지운다 — 터미널의 /resume 목록에서도 사라진다
     const handleDeleteSession = async (e: React.MouseEvent, session: SessionSummary) => {
         e.stopPropagation();
-        if (!window.confirm(`"${session.title}" 대화 기록을 삭제할까요?\n터미널의 /resume 목록에서도 사라지며 되돌릴 수 없습니다.`)) return;
         const current = await window.electronAPI.getSessionId();
+        const stopsBackground = current === session.sessionId && backgroundTasks.length > 0;
+        const message =
+            `"${session.title}" 대화 기록을 삭제할까요?\n터미널의 /resume 목록에서도 사라지며 되돌릴 수 없습니다.` +
+            (stopsBackground ? `\n\n이 대화의 백그라운드 작업 ${backgroundTasks.length}개도 종료됩니다.` : "");
+        if (!window.confirm(message)) return;
         await window.electronAPI.deleteSession(session.sessionId, session.cwd);
         if (current === session.sessionId) await startNewConversation();
         setSessions(await window.electronAPI.listSessions());
     };
+
+    const toggleBackgroundPanel = (e: React.MouseEvent | React.KeyboardEvent) => {
+        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+        setBgPanelTop((cur) => (cur === null ? Math.round(rect.bottom + 6) : null));
+    };
+
+    const closeBackgroundPanel = useCallback(() => setBgPanelTop(null), []);
+
+    // 실행 중인 것도 끝난 기록도 없으면 패널을 닫는다
+    const hasBackgroundInfo = bg.running.length > 0 || bg.finished.length > 0;
+    useEffect(() => {
+        if (!hasBackgroundInfo) setBgPanelTop(null);
+    }, [hasBackgroundInfo]);
+    const failedCount = bg.finished.filter((f) => f.status === "failed").length;
+
+    const toggleFilesPanel = () => {
+        const next = !filesOpen;
+        setFilesOpen(next);
+        writePref("filesPanel.open", next ? "1" : "0");
+    };
+
+    const closeFilesPanel = useCallback(() => {
+        setFilesOpen(false);
+        writePref("filesPanel.open", "0");
+    }, []);
+
+    useEffect(() => {
+        writePref("filesPanel.width", String(filesWidth));
+    }, [filesWidth]);
 
     const handleToggleMcp = () => {
         setMcpOpen((open) => !open);
@@ -277,28 +377,33 @@ const ChatPage = () => {
     const handleModelChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
         const next = e.target.value;
         setModel(next);
+        warnBackgroundOnSettingChange();
         await window.electronAPI.setModel(next);
     };
 
     const handleEffortChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
         const next = e.target.value;
         setEffort(next);
+        warnBackgroundOnSettingChange();
         await window.electronAPI.setEffort(next);
     };
 
     const handleToggleUltracode = async () => {
         const next = !ultracode;
         setUltracode(next);
+        warnBackgroundOnSettingChange();
         await window.electronAPI.setUltracode(next);
     };
 
     const handleToggleFastMode = async () => {
         const next = !fastMode;
         setFastMode(next);
+        warnBackgroundOnSettingChange();
         await window.electronAPI.setFastMode(next);
     };
 
     const handleSelectDirectory = async () => {
+        if (!confirmStopBackground("작업 폴더를 바꾸면")) return;
         const selected = await window.electronAPI.selectDirectory();
         if (selected) {
             setCwd(selected);
@@ -333,6 +438,7 @@ const ChatPage = () => {
     const handleTogglePermissions = async () => {
         const next = !allPermissionsGranted;
         setAllPermissionsGranted(next);
+        warnBackgroundOnSettingChange();
         await window.electronAPI.setPermissions(next);
         // 전체 허용으로 켜는 순간 대기 중인 요청이 있으면 허용으로 답한다.
         // 그냥 닫아버리면 CLI가 답을 기다리며 멈춘 채로 남는다.
@@ -382,8 +488,7 @@ const ChatPage = () => {
                     <div
                         className={cx("navItem")}
                         onClick={() => {
-                            startNewConversation();
-                            setSidebarOpen(false);
+                            if (handleNewConversationClick()) setSidebarOpen(false);
                         }}
                     >
                         새 대화
@@ -403,7 +508,10 @@ const ChatPage = () => {
                                     <div className={cx("convTitle")}>{session.title}</div>
                                     <div className={cx("convMeta")}>
                                         {session.cwd && (
-                                            <span className={cx("convFolder")}>
+                                            <span
+                                                className={cx("convFolder", {convFolderMissing: session.cwdMissing})}
+                                                title={session.cwdMissing ? `작업 폴더가 없습니다: ${session.cwd}` : session.cwd}
+                                            >
                                                 {session.cwd.split("/").filter(Boolean).pop()}
                                             </span>
                                         )}
@@ -438,24 +546,21 @@ const ChatPage = () => {
                 <button
                     className={cx("permissionToggle")}
                     style={{marginLeft: "auto"}}
-                    onClick={startNewConversation}
+                    onClick={handleNewConversationClick}
                     data-tooltip="새 대화"
                     data-tooltip-dir="down"
                 >
                     <FontAwesomeIcon icon={faRotateRight} />
                 </button>
-                <button
-                    className={cx("permissionToggle", {active: soundEnabled})}
-                    onClick={toggleSound}
-                    data-tooltip={soundEnabled ? "알림음 켜짐 (클릭해서 끄기)" : "알림음 꺼짐 (클릭해서 켜기)"}
-                    data-tooltip-dir="down"
-                >
-                    <FontAwesomeIcon icon={soundEnabled ? faVolumeHigh : faVolumeXmark} />
-                </button>
+                <NotificationSettings />
                 <button
                     className={cx("permissionToggle", {active: allPermissionsGranted})}
                     onClick={handleTogglePermissions}
-                    data-tooltip={allPermissionsGranted ? "권한 허용 중 (클릭해서 해제)" : "전체 권한 허용"}
+                    data-tooltip={
+                        allPermissionsGranted
+                            ? "전체 허용 중 · 클릭하면 이 대화만 확인 모드"
+                            : "이 대화만 확인 모드 · 새 대화는 전체 허용"
+                    }
                     data-tooltip-dir="down"
                 >
                     <FontAwesomeIcon icon={allPermissionsGranted ? faShield : faShieldHalved} />
@@ -486,6 +591,20 @@ const ChatPage = () => {
                     data-tooltip-dir="down"
                 >
                     <FontAwesomeIcon icon={faLayerGroup} />
+                </button>
+                <button
+                    className={cx("permissionToggle", "filesToggle", {active: filesOpen})}
+                    onClick={toggleFilesPanel}
+                    data-tooltip={
+                        (filesOpen ? "작업 파일 패널 닫기" : "작업 파일 패널 열기") +
+                        (changedFiles.files.length > 0 ? ` · 이 대화에서 바뀐 파일 ${changedFiles.files.length}개` : "")
+                    }
+                    data-tooltip-dir="down"
+                >
+                    <FontAwesomeIcon icon={faFolderTree} />
+                    {changedFiles.files.length > 0 && (
+                        <span className={cx("filesToggleBadge")}>{changedFiles.files.length}</span>
+                    )}
                 </button>
             </div>
 
@@ -564,6 +683,17 @@ const ChatPage = () => {
                                                 {m.scope && ` · ${m.scope}`}
                                             </span>
                                             {m.error && <span className={cx("mcpError")}>{m.error}</span>}
+                                            {/* 앱(SDK)에는 MCP 인증·켜기 기능이 없어 터미널에서 해야 한다 */}
+                                            {m.status === "needs-auth" && (
+                                                <span className={cx("mcpHint")}>
+                                                    터미널에서 claude를 실행해 /mcp로 인증한 뒤, 위의 ↻로 다시 확인하세요.
+                                                </span>
+                                            )}
+                                            {m.status === "disabled" && (
+                                                <span className={cx("mcpHint")}>
+                                                    터미널에서 claude를 실행해 /mcp로 켤 수 있습니다.
+                                                </span>
+                                            )}
                                         </div>
                                     ))}
                                 </div>
@@ -571,23 +701,55 @@ const ChatPage = () => {
                         )}
                     </span>
                 )}
-                {backgroundTasks.length > 0 && (
+                {hasBackgroundInfo && (
                     <span
-                        className={cx("sessionStat", "backgroundStat")}
-                        title={`실행 중인 백그라운드 작업\n${backgroundTasks.map((t) => `· ${t.description}`).join("\n")}\n\n끝나면 Claude가 이어서 응답합니다`}
+                        className={cx("sessionStat", "backgroundStat", {
+                            backgroundStatOpen: bgPanelTop !== null,
+                            backgroundStatIdle: backgroundTasks.length === 0,
+                            sessionStatDanger: failedCount > 0,
+                        })}
+                        role="button"
+                        tabIndex={0}
+                        onClick={toggleBackgroundPanel}
+                        onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                toggleBackgroundPanel(e);
+                            }
+                        }}
+                        title="눌러서 백그라운드 작업 자세히 보기"
                     >
                         <FontAwesomeIcon icon={faGears} />
-                        백그라운드 {backgroundTasks.length}
-                        {!isLoading && (
+                        {backgroundTasks.length > 0 ? `백그라운드 ${backgroundTasks.length}` : `끝난 작업 ${bg.finished.length}`}
+                        {failedCount > 0 && ` · 실패 ${failedCount}`}
+                        {backgroundTasks.length > 0 && !isLoading && (
                             <button
                                 className={cx("backgroundStop")}
-                                onClick={stopGeneration}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    stopGeneration();
+                                }}
                                 title="백그라운드 작업 모두 중지"
                             >
                                 <FontAwesomeIcon icon={faXmark} />
                             </button>
                         )}
                     </span>
+                )}
+                {bgPanelTop !== null && hasBackgroundInfo && (
+                    <BackgroundTasksPanel
+                        tasks={backgroundTasks}
+                        finished={bg.finished}
+                        top={bgPanelTop}
+                        canStopAll={!isLoading}
+                        onStopTask={(id) => void window.electronAPI.stopBackgroundTask(id)}
+                        onStopAll={() => {
+                            setBgPanelTop(null);
+                            stopGeneration();
+                        }}
+                        onClearFinished={() => void window.electronAPI.clearFinishedBackground()}
+                        onClose={closeBackgroundPanel}
+                    />
                 )}
                 {rateLimits
                     .filter((w) => typeof w.utilization === "number")
@@ -633,81 +795,102 @@ const ChatPage = () => {
                 )}
             </div>
 
-            {/* 채팅 영역 */}
-            <div className={cx("messageListWrap")}>
-                <div
-                    className={cx("messageList")}
-                    ref={messageListRef}
-                    onScroll={handleMessageScroll}
-                    onWheel={handleMessageWheel}
-                >
-                    {messages.map((msg, i) => (
-                        <MessageItem
-                            key={msg.id}
-                            msg={msg}
-                            isStreaming={isThinking && i === messages.length - 1}
-                            onImageClick={setLightboxSrc}
-                            onRegenerate={
-                                !isLoading &&
-                                i === messages.length - 1 &&
-                                msg.role === "assistant" &&
-                                lastUserIdx >= 0
-                                    ? regenerate
-                                    : undefined
-                            }
-                            onEditResend={!isLoading && i === lastUserIdx ? editAndResend : undefined}
-                            onRewindFiles={!isLoading ? handleRewindFiles : undefined}
-                        />
-                    ))}
-                    {notice && (
-                        <div className={cx("notice", notice.level === "error" ? "noticeError" : "noticeWarning")}>
-                            <FontAwesomeIcon
-                                icon={notice.level === "error" ? faCircleExclamation : faTriangleExclamation}
-                                className={cx("noticeIcon")}
-                            />
-                            <div className={cx("noticeBody")}>
-                                <div className={cx("noticeMessage")}>{notice.message}</div>
-                                {notice.detail && notice.detail !== notice.message && (
-                                    <details className={cx("noticeDetails")}>
-                                        <summary className={cx("noticeSummary")}>자세히</summary>
-                                        <pre className={cx("noticeDetail")}>{notice.detail}</pre>
-                                    </details>
-                                )}
-                            </div>
-                            <button
-                                className={cx("noticeClose")}
-                                onClick={() => setNotice(null)}
-                                aria-label="닫기"
-                            >
-                                <FontAwesomeIcon icon={faXmark} />
-                            </button>
+            {/* 채팅 + 오른쪽 작업 파일 패널 */}
+            <div className={cx("mainArea")}>
+                <div className={cx("chatColumn")}>
+                    {/* 채팅 영역 */}
+                    <div className={cx("messageListWrap")}>
+                        <div
+                            className={cx("messageList")}
+                            ref={messageListRef}
+                            onScroll={handleMessageScroll}
+                            onWheel={handleMessageWheel}
+                        >
+                            {messages.map((msg, i) => (
+                                <MessageItem
+                                    key={msg.id}
+                                    msg={msg}
+                                    isStreaming={isThinking && i === messages.length - 1}
+                                    onImageClick={setLightboxSrc}
+                                    onRegenerate={
+                                        !isLoading &&
+                                        i === messages.length - 1 &&
+                                        msg.role === "assistant" &&
+                                        lastUserIdx >= 0
+                                            ? handleRegenerate
+                                            : undefined
+                                    }
+                                    onEditResend={!isLoading && i === lastUserIdx ? handleEditResend : undefined}
+                                    onRewindFiles={!isLoading ? handleRewindFiles : undefined}
+                                />
+                            ))}
+                            {notice && (
+                                <div className={cx("notice", notice.level === "error" ? "noticeError" : "noticeWarning")}>
+                                    <FontAwesomeIcon
+                                        icon={notice.level === "error" ? faCircleExclamation : faTriangleExclamation}
+                                        className={cx("noticeIcon")}
+                                    />
+                                    <div className={cx("noticeBody")}>
+                                        <div className={cx("noticeMessage")}>{notice.message}</div>
+                                        {notice.detail && notice.detail !== notice.message && (
+                                            <details className={cx("noticeDetails")}>
+                                                <summary className={cx("noticeSummary")}>자세히</summary>
+                                                <pre className={cx("noticeDetail")}>{notice.detail}</pre>
+                                            </details>
+                                        )}
+                                    </div>
+                                    <button
+                                        className={cx("noticeClose")}
+                                        onClick={() => setNotice(null)}
+                                        aria-label="닫기"
+                                    >
+                                        <FontAwesomeIcon icon={faXmark} />
+                                    </button>
+                                </div>
+                            )}
+                            <div ref={bottomRef} />
                         </div>
+                        <button
+                            className={cx("scrollBottomButton", {visible: showScrollBottom})}
+                            onClick={scrollToBottom}
+                            data-tooltip="맨 아래로"
+                            aria-label="맨 아래로"
+                        >
+                            <FontAwesomeIcon icon={faArrowDown} />
+                        </button>
+                    </div>
+
+                    {/* 활동 패널 */}
+                    {isLoading && (
+                        <ActivityPanel
+                            isThinking={isThinking}
+                            tools={tools}
+                            thinkingText={thinkingText}
+                            elapsedMs={elapsedMs}
+                            runningTokens={runningTokens}
+                        />
                     )}
-                    <div ref={bottomRef} />
+
+                    {/* 입력 영역 */}
+                    <ChatInput
+                        isLoading={isLoading}
+                        onSend={handleSend}
+                        onStop={stopGeneration}
+                        turnEnd={turnEnd}
+                        resetSignal={conversationSeq}
+                    />
                 </div>
-                <button
-                    className={cx("scrollBottomButton", {visible: showScrollBottom})}
-                    onClick={scrollToBottom}
-                    data-tooltip="맨 아래로"
-                    aria-label="맨 아래로"
-                >
-                    <FontAwesomeIcon icon={faArrowDown} />
-                </button>
+                {filesOpen && (
+                    <FilesPanel
+                        cwd={cwd}
+                        changed={changedFiles}
+                        refreshKey={turnEnd.seq}
+                        width={filesWidth}
+                        onResize={setFilesWidth}
+                        onClose={closeFilesPanel}
+                    />
+                )}
             </div>
-
-            {/* 활동 패널 */}
-            {isLoading && (
-                <ActivityPanel
-                    isThinking={isThinking}
-                    tools={tools}
-                    thinkingText={thinkingText}
-                    elapsedMs={elapsedMs}
-                    runningTokens={runningTokens}
-                />
-            )}
-
-            {/* 입력 영역 */}
-            <ChatInput isLoading={isLoading} onSend={handleSend} onStop={stopGeneration} />
 
             {/* Claude CLI 찾기 모달 */}
             {claudeMissing && (
@@ -788,7 +971,7 @@ const ChatPage = () => {
                         {!rewind.loading && rewind.done && (
                             <p className={cx("modalDesc")}>
                                 {rewind.done.canRewind
-                                    ? `파일 ${rewind.preview?.filesChanged?.length ?? 0}개를 되돌렸습니다. 대화 내용은 그대로입니다.`
+                                    ? `파일 ${rewind.preview?.filesChanged?.length ?? 0}개를 되돌렸습니다. 대화는 그대로라 Claude는 이 사실을 모릅니다. 이어서 작업하려면 Claude에게 알려 주세요.`
                                     : `되돌리지 못했습니다: ${rewind.done.error ?? "알 수 없는 오류"}`}
                             </p>
                         )}
@@ -798,7 +981,6 @@ const ChatPage = () => {
                                     <p className={cx("modalDesc")}>
                                         아래 파일이 이 메시지를 보내기 직전 상태로 돌아갑니다
                                         {` (+${rewind.preview.insertions ?? 0} −${rewind.preview.deletions ?? 0})`}.
-                                        대화 내용은 바뀌지 않습니다.
                                     </p>
                                     <div className={cx("rewindFileList")}>
                                         {rewind.preview.filesChanged?.map((f) => {
@@ -810,11 +992,15 @@ const ChatPage = () => {
                                             );
                                         })}
                                     </div>
+                                    <ul className={cx("rewindNote")}>
+                                        <li>Write·Edit 도구로 바꾼 파일만 되돌립니다. Bash 명령으로 만들거나 고친 파일은 그대로 남습니다.</li>
+                                        <li>대화는 그대로라 Claude는 파일이 되돌려진 걸 모릅니다. 이어서 작업하려면 Claude에게 알려 주세요.</li>
+                                    </ul>
                                 </>
                             ) : (
                                 <p className={cx("modalDesc")}>
                                     {rewind.preview.canRewind
-                                        ? "이 메시지 이후 Claude가 바꾼 파일이 없습니다."
+                                        ? "이 메시지 이후 Claude가 Write·Edit 도구로 바꾼 파일이 없습니다. Bash 명령으로 바꾼 파일은 되돌릴 수 없습니다."
                                         : `되돌릴 수 없습니다: ${rewind.preview.error ?? "알 수 없는 오류"}`}
                                 </p>
                             )
@@ -885,6 +1071,11 @@ const ChatPage = () => {
                                     {middleTruncate(permissionRequest.alwaysAllow.join(", "), 80)}
                                 </span>
                             </button>
+                        )}
+                        {permissionRequest.alwaysAllow && permissionRequest.alwaysAllow.length > 0 && (
+                            <p className={cx("modalAlwaysHint")}>
+                                다른 대화를 열었다 돌아와도 유지되고, 앱을 다시 켜면 다시 물어봅니다.
+                            </p>
                         )}
                     </div>
                 </>

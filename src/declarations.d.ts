@@ -13,6 +13,7 @@ interface SessionSummary {
     sessionId: string;
     title: string;
     cwd: string;
+    cwdMissing: boolean; // 작업 폴더가 지워짐
     lastModified: number;
     gitBranch?: string;
 }
@@ -93,8 +94,138 @@ interface RewindFilesResult {
 
 interface BackgroundTask {
     id: string;
+    type: string; // local_bash, local_agent, local_workflow, monitor ...
+    description: string;
+    subagentType?: string; // 에이전트 종류 (general-purpose 등)
+    workflowName?: string;
+    prompt?: string; // 에이전트가 받은 지시
+    command?: string; // 셸 작업의 명령
+    hasOutput?: boolean; // 셸 출력을 읽을 수 있음 (getBackgroundOutput)
+    startedAt?: number;
+    activity?: string; // 지금 하는 일
+    summary?: string; // 에이전트 진행 요약
+    toolUses?: number;
+    totalTokens?: number;
+    lastToolName?: string;
+    recentTools?: ToolStep[]; // 에이전트가 최근에 쓴 도구
+    launchedByAgent?: boolean;
+}
+
+// 에이전트가 쓴 도구 한 번
+interface ToolStep {
+    id: string;
+    name: string;
+    target: string;
+    status: "running" | "done" | "error";
+}
+
+// 이 대화에서 최근에 끝난 백그라운드 작업
+interface FinishedTask {
+    id: string;
     type: string;
     description: string;
+    subagentType?: string;
+    workflowName?: string;
+    command?: string;
+    status: "completed" | "failed" | "stopped";
+    summary?: string;
+    startedAt?: number;
+    endedAt: number;
+    totalTokens?: number;
+    toolUses?: number;
+    exitCode?: number; // 셸 작업의 종료 코드
+    hasOutput: boolean;
+    recentTools?: ToolStep[];
+    launchedByAgent?: boolean;
+}
+
+interface BackgroundState {
+    running: BackgroundTask[];
+    finished: FinishedTask[];
+}
+
+// ── 작업 파일 패널 ──
+// Claude가 이 대화에서 고친 파일
+interface ChangedFile {
+    path: string;
+    edits: number;
+    lastTurn: number; // 몇 번째 응답에서 마지막으로 바뀌었나
+    lastAt: number;
+}
+
+interface ChangedFilesState {
+    turn: number; // 지금 몇 번째 응답인지 (lastTurn과 같으면 "방금 바뀐 파일")
+    files: ChangedFile[];
+}
+
+// 한 번의 수정 (Edit: 바뀐 부분, Write: 새 내용 전체)
+interface FileHunk {
+    tool: string;
+    oldText: string;
+    newText: string;
+    at: number;
+}
+
+interface DirEntry {
+    name: string;
+    path: string;
+    isDir: boolean;
+}
+
+interface DirListing {
+    entries: DirEntry[];
+    truncated: boolean;
+}
+
+interface FileView {
+    text?: string;
+    truncated?: boolean;
+    binary?: boolean;
+    missing?: boolean;
+    error?: string;
+    size?: number;
+}
+
+// "Git 변경" 보기 (main/services/git-changes.ts와 같은 모양)
+type GitChangeKind = "modified" | "added" | "deleted" | "renamed" | "copied" | "typechange" | "untracked" | "conflict";
+
+interface GitChange {
+    path: string;
+    rel: string;
+    origRel?: string;
+    origPath?: string;
+    kind: GitChangeKind;
+    staged: boolean;
+    unstaged: boolean;
+    added?: number;
+    deleted?: number;
+    binary?: boolean;
+}
+
+interface GitBranch {
+    head: string | null;
+    detached: boolean;
+    initial: boolean;
+    upstream?: string;
+    ahead?: number;
+    behind?: number;
+}
+
+type GitStatusResult =
+    | {ok: true; root: string; branch: GitBranch; files: GitChange[]; truncated: boolean}
+    | {ok: false; reason: "no-git" | "not-repo" | "error"; message?: string};
+
+interface GitDiffResult {
+    text?: string;
+    truncated?: boolean;
+    binary?: boolean;
+    untracked?: boolean;
+    error?: string;
+}
+
+interface BackgroundOutput {
+    text: string;
+    truncated: boolean; // 앞부분이 잘렸음 (끝부분만 읽음)
 }
 
 interface ContextUsage {
@@ -112,7 +243,11 @@ interface SlashCommand {
 
 interface Window {
     electronAPI: {
-        sendMessage: (message: string, images?: { data: string; mediaType: string }[]) => Promise<void>;
+        sendMessage: (
+            message: string,
+            images?: { data: string; mediaType: string }[],
+            replaceUuid?: string
+        ) => Promise<void>;
         newConversation: () => Promise<void>;
         respondPermission: (id: string, allow: boolean, always?: boolean) => Promise<void>;
         rewindFiles: (uuid: string, dryRun: boolean) => Promise<RewindFilesResult>;
@@ -120,6 +255,7 @@ interface Window {
         onTurnUuid: (callback: (data: { uuid: string }) => void) => () => void;
         onRateLimits: (callback: (limits: RateLimitWindow[]) => void) => () => void;
         answerQuestions: (id: string, answers: string[][]) => Promise<void>;
+        getPermissions: () => Promise<boolean>;
         setPermissions: (allow: boolean) => Promise<void>;
         stopGeneration: () => Promise<void>;
         onChunk: (callback: (text: string) => void) => () => void;
@@ -127,10 +263,10 @@ interface Window {
         onUsage: (callback: (data: { inputTokens: number; outputTokens: number }) => void) => () => void;
         onThinking: (callback: (text: string) => void) => () => void;
         onToolUse: (
-            callback: (data: { id: string; name: string; input: unknown }) => void
+            callback: (data: { id: string; name: string; input: unknown; parentToolUseId?: string }) => void
         ) => () => void;
         onToolResult: (
-            callback: (data: { id: string; isError: boolean; content: string }) => void
+            callback: (data: { id: string; isError: boolean; content: string; parentToolUseId?: string }) => void
         ) => () => void;
         onChatError: (
             callback: (data: { level: "error" | "warning"; message: string; detail?: string }) => void
@@ -140,7 +276,20 @@ interface Window {
         onPermissionResolved: (callback: (data: { id: string | null }) => void) => () => void;
         getPathForFile: (file: File) => string;
         onTurnStart: (callback: () => void) => () => void;
-        onBackgroundTasks: (callback: (tasks: BackgroundTask[]) => void) => () => void;
+        onBackgroundTasks: (callback: (state: BackgroundState) => void) => () => void;
+        clearFinishedBackground: () => Promise<void>;
+        copyText: (text: string) => Promise<boolean>;
+        showNotification: (n: {title: string; body: string}) => Promise<boolean>;
+        getChangedFiles: () => Promise<ChangedFilesState>;
+        onChangedFiles: (callback: (state: ChangedFilesState) => void) => () => void;
+        getFileChanges: (path: string) => Promise<FileHunk[]>;
+        listDir: (dir: string) => Promise<DirListing | null>;
+        readFileForView: (path: string) => Promise<FileView>;
+        revealFile: (path: string) => Promise<void>;
+        gitStatus: () => Promise<GitStatusResult>;
+        gitDiff: (path: string) => Promise<GitDiffResult>;
+        getBackgroundOutput: (taskId: string) => Promise<BackgroundOutput | null>;
+        stopBackgroundTask: (taskId: string) => Promise<void>;
         onCost: (callback: (data: { totalCostUsd: number }) => void) => () => void;
         onContextUsage: (callback: (data: ContextUsage) => void) => () => void;
         getCwd: () => Promise<string>;
@@ -160,7 +309,7 @@ interface Window {
         removePrompt: (index: number) => Promise<string[]>;
         listCommands: () => Promise<SlashCommand[]>;
         getSessionId: () => Promise<string | null>;
-        resumeSession: (sessionId: string, cwd?: string) => Promise<string>;
+        resumeSession: (sessionId: string, cwd?: string) => Promise<{cwd: string; cwdMissing: boolean}>;
         listSessions: () => Promise<SessionSummary[]>;
         loadSessionMessages: (sessionId: string, cwd?: string) => Promise<LoadedMessage[]>;
         deleteSession: (sessionId: string, cwd?: string) => Promise<void>;

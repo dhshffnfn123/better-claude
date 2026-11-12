@@ -1,8 +1,9 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 contextBridge.exposeInMainWorld("electronAPI", {
-    sendMessage: (message: string, images?: { data: string; mediaType: string }[]) =>
-        ipcRenderer.invoke("chat:send", message, images ?? []),
+    // replaceUuid: 재생성·편집일 때 대신할 사용자 메시지의 uuid
+    sendMessage: (message: string, images?: { data: string; mediaType: string }[], replaceUuid?: string) =>
+        ipcRenderer.invoke("chat:send", message, images ?? [], replaceUuid),
     // 드래그/선택한 파일의 디스크 절대경로를 얻는다 (Electron 41은 File.path 제거됨).
     // 빈 문자열이면 디스크에 실재하지 않는 파일(예: 메모리상 붙여넣기).
     getPathForFile: (file: File) => webUtils.getPathForFile(file),
@@ -14,6 +15,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     getRateLimits: () => ipcRenderer.invoke("chat:get_rate_limits"),
     answerQuestions: (id: string, answers: string[][]) =>
         ipcRenderer.invoke("chat:question_response", id, answers),
+    getPermissions: () => ipcRenderer.invoke("chat:get_permissions"),
     setPermissions: (allow: boolean) => ipcRenderer.invoke("chat:set_permissions", allow),
     stopGeneration: () => ipcRenderer.invoke("chat:stop"),
     onChunk: (callback: (text: string) => void) => {
@@ -59,13 +61,18 @@ contextBridge.exposeInMainWorld("electronAPI", {
         ipcRenderer.on("chat:thinking", handler);
         return () => ipcRenderer.removeListener("chat:thinking", handler);
     },
-    onToolUse: (callback: (data: { id: string; name: string; input: unknown }) => void) => {
-        const handler = (_: unknown, data: { id: string; name: string; input: unknown }) => callback(data);
+    // parentToolUseId가 있으면 서브에이전트(Agent 도구)가 쓴 도구
+    onToolUse: (callback: (data: { id: string; name: string; input: unknown; parentToolUseId?: string }) => void) => {
+        const handler = (_: unknown, data: { id: string; name: string; input: unknown; parentToolUseId?: string }) =>
+            callback(data);
         ipcRenderer.on("chat:tool_use", handler);
         return () => ipcRenderer.removeListener("chat:tool_use", handler);
     },
-    onToolResult: (callback: (data: { id: string; isError: boolean; content: string }) => void) => {
-        const handler = (_: unknown, data: { id: string; isError: boolean; content: string }) => callback(data);
+    onToolResult: (
+        callback: (data: { id: string; isError: boolean; content: string; parentToolUseId?: string }) => void
+    ) => {
+        const handler = (_: unknown, data: { id: string; isError: boolean; content: string; parentToolUseId?: string }) =>
+            callback(data);
         ipcRenderer.on("chat:tool_result", handler);
         return () => ipcRenderer.removeListener("chat:tool_result", handler);
     },
@@ -88,8 +95,30 @@ contextBridge.exposeInMainWorld("electronAPI", {
         return () => ipcRenderer.removeListener("chat:turn_start", handler);
     },
     // 실행 중인 백그라운드 작업 목록 (바뀔 때마다 전체 목록)
-    onBackgroundTasks: (callback: (tasks: BackgroundTask[]) => void) => {
-        const handler = (_: unknown, tasks: BackgroundTask[]) => callback(tasks);
+    // 상단 "백그라운드 N" 패널: 셸 작업의 최근 출력, 작업 하나만 중지
+    getBackgroundOutput: (taskId: string) => ipcRenderer.invoke("background:output", taskId),
+    stopBackgroundTask: (taskId: string) => ipcRenderer.invoke("background:stop", taskId),
+    clearFinishedBackground: () => ipcRenderer.invoke("background:clear_finished"),
+    copyText: (text: string) => ipcRenderer.invoke("clipboard:write", text),
+    // macOS 알림 (언제 띄울지는 렌더러가 정한다)
+    showNotification: (n: {title: string; body: string}) => ipcRenderer.invoke("notify:show", n),
+    // 작업 파일 패널: Claude가 이 대화에서 고친 파일, 작업 폴더 트리, 파일 내용
+    getChangedFiles: () => ipcRenderer.invoke("files:get_changed"),
+    onChangedFiles: (callback: (state: ChangedFilesState) => void) => {
+        const handler = (_: unknown, state: ChangedFilesState) => callback(state);
+        ipcRenderer.on("files:changed", handler);
+        return () => ipcRenderer.removeListener("files:changed", handler);
+    },
+    getFileChanges: (path: string) => ipcRenderer.invoke("files:changes", path),
+    listDir: (dir: string) => ipcRenderer.invoke("files:list_dir", dir),
+    readFileForView: (path: string) => ipcRenderer.invoke("files:read", path),
+    revealFile: (path: string) => ipcRenderer.invoke("files:reveal", path),
+    // "Git 변경" 보기: 마지막 커밋 이후 바뀐 파일, 파일 하나의 차이
+    gitStatus: () => ipcRenderer.invoke("git:status"),
+    gitDiff: (path: string) => ipcRenderer.invoke("git:diff", path),
+    // 실행 중인 백그라운드 작업 + 이 대화에서 최근 끝난 작업 (바뀔 때마다 전체)
+    onBackgroundTasks: (callback: (state: BackgroundState) => void) => {
+        const handler = (_: unknown, state: BackgroundState) => callback(state);
         ipcRenderer.on("chat:background", handler);
         return () => ipcRenderer.removeListener("chat:background", handler);
     },
@@ -122,7 +151,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     removePrompt: (index: number) => ipcRenderer.invoke("prompts:remove", index),
     listCommands: () => ipcRenderer.invoke("commands:list"),
     getSessionId: () => ipcRenderer.invoke("chat:get_session_id"),
-    // 세션 이어가기 — 세션의 작업 폴더로 옮긴 뒤 실제 작업 폴더를 돌려준다
+    // 세션 이어가기 — 세션의 작업 폴더로 옮긴 뒤 실제 작업 폴더와, 원래 폴더가 없었는지를 돌려준다
     resumeSession: (sessionId: string, cwd?: string) => ipcRenderer.invoke("chat:resume_session", sessionId, cwd),
     // CLI 세션 기록 (터미널에서 한 대화 포함)
     listSessions: () => ipcRenderer.invoke("sessions:list"),

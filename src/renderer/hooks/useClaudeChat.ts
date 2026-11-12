@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import {playCompletionSound} from "./useNotificationSound";
+import {notifyNeedsInput, notifyTurnDone} from "./useNotificationSound";
 
 export interface ImagePayload {
     previewUrl: string;
@@ -27,6 +27,7 @@ export interface Message {
     inputTokens?: number;
     outputTokens?: number;
     segments?: MessageSegment[]; // 어시스턴트: 텍스트/도구를 발생 순서대로 보관
+    greeting?: boolean; // 새 대화의 첫 인사말 (복사 버튼 등을 붙이지 않는다)
 }
 
 export interface ToolActivity {
@@ -35,6 +36,8 @@ export interface ToolActivity {
     input: unknown;
     status: "running" | "done" | "error";
     resultPreview?: string;
+    // 서브에이전트(Agent 도구)가 쓴 도구면 그 Agent 호출의 id
+    parentToolUseId?: string;
 }
 
 export type MessageSegment =
@@ -73,10 +76,32 @@ export interface RunningTokens {
     output: number;
 }
 
+// 턴이 끝날 때마다 seq가 오른다. stopped = 사용자가 중지해서 끝났다 (입력창의 대기 메시지가 이걸 보고 보낼지 정한다)
+export interface TurnEnd {
+    seq: number;
+    stopped: boolean;
+}
+
+// 알림에 넣을 짧은 글: 코드 블록·마크다운 기호를 빼고 앞부분만
+function plainSummary(text: string, max = 140): string {
+    const plain = text
+        .replace(/```[\s\S]*?(```|$)/g, " ")
+        .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+        .replace(/[`*_#>|]/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+    return plain.length > max ? plain.slice(0, max - 1) + "…" : plain;
+}
+
+function permissionSummary(req: PermissionRequest): string {
+    return `${req.displayName ?? req.toolName}${req.target ? ` · ${req.target}` : ""}`;
+}
+
 const INITIAL_MESSAGE: Message = {
     id: 1,
     role: "assistant",
     content: "안녕하세요! 무엇을 도와드릴까요?",
+    greeting: true,
 };
 
 export function useClaudeChat() {
@@ -90,6 +115,7 @@ export function useClaudeChat() {
     const [elapsedMs, setElapsedMs] = useState(0);
     const [runningTokens, setRunningTokens] = useState<RunningTokens>({input: 0, output: 0});
     const [notice, setNotice] = useState<ChatNotice | null>(null);
+    const [turnEnd, setTurnEnd] = useState<TurnEnd>({seq: 0, stopped: false});
     const idCounter = useRef(2);
     const startedAtRef = useRef<number | null>(null);
     const toolsRef = useRef<ToolActivity[]>([]);
@@ -98,8 +124,17 @@ export function useClaudeChat() {
     const finishRef = useRef<((stopped: boolean) => void) | null>(null);
 
     useEffect(() => {
-        const offRequest = window.electronAPI.onPermissionRequest(setPermissionRequest);
-        const offQuestion = window.electronAPI.onQuestionRequest(setQuestionRequest);
+        // 앱을 보고 있지 않으면 소리와 macOS 알림으로 알린다 — 답할 때까지 Claude가 멈춰 있다
+        const offRequest = window.electronAPI.onPermissionRequest((req) => {
+            setPermissionRequest(req);
+            notifyNeedsInput("Claude가 허용을 기다립니다", permissionSummary(req));
+        });
+        const offQuestion = window.electronAPI.onQuestionRequest((req) => {
+            setQuestionRequest(req);
+            const first = req.questions[0]?.question ?? "";
+            const more = req.questions.length > 1 ? ` 외 ${req.questions.length - 1}개` : "";
+            notifyNeedsInput("Claude의 질문", plainSummary(first) + more);
+        });
         // 턴이 끝나면 답할 수 없는 요청이 되므로 모달을 닫는다 (id가 null이면 전부)
         const offResolved = window.electronAPI.onPermissionResolved(({id}) => {
             setPermissionRequest((cur) => (cur && (id === null || cur.id === id) ? null : cur));
@@ -175,7 +210,12 @@ export function useClaudeChat() {
             );
         });
 
-        const removeError = window.electronAPI.onChatError(setNotice);
+        // 오류로 끝난 턴은 알림 문구를 바꾼다
+        let failed: ChatNotice | null = null;
+        const removeError = window.electronAPI.onChatError((n) => {
+            setNotice(n);
+            if (n.level === "error") failed = n;
+        });
 
         const removeTurnUuid = window.electronAPI.onTurnUuid(({uuid}) => {
             if (userId === undefined) return;
@@ -186,10 +226,13 @@ export function useClaudeChat() {
             setThinkingText((prev) => prev + text);
         });
 
-        const removeToolUse = window.electronAPI.onToolUse(({id, name, input}) => {
-            const activity: ToolActivity = {id, name, input, status: "running"};
+        const removeToolUse = window.electronAPI.onToolUse(({id, name, input, parentToolUseId}) => {
+            const activity: ToolActivity = {id, name, input, status: "running", parentToolUseId};
             toolsRef.current = [...toolsRef.current, activity];
             setTools(toolsRef.current);
+            // 서브에이전트가 쓴 도구는 진행 패널에만 보이고 답변 본문에는 넣지 않는다
+            // (불러온 대화와 같은 모습)
+            if (parentToolUseId) return;
             segs.push({kind: "tool", tool: activity});
             flush();
         });
@@ -240,8 +283,13 @@ export function useClaudeChat() {
             }
             setIsThinking(false);
             setIsLoading(false);
-            // 사용자가 직접 중지한 건 완료가 아니므로 소리를 내지 않는다
-            if (!stopped) playCompletionSound();
+            setTurnEnd((t) => ({seq: t.seq + 1, stopped}));
+            // 사용자가 직접 중지한 건 완료가 아니므로 알리지 않는다
+            if (!stopped) {
+                const lastText = [...segs].reverse().find((sg) => sg.kind === "text" && sg.text.trim());
+                if (failed) notifyTurnDone("응답이 오류로 끝났습니다", plainSummary(failed.message));
+                else notifyTurnDone("응답 완료", lastText?.kind === "text" ? plainSummary(lastText.text) : "작업을 마쳤습니다");
+            }
         };
         finishRef.current = finish;
 
@@ -284,7 +332,8 @@ export function useClaudeChat() {
         const images = last?.images ?? [];
         setMessages(trimmed);
         const imageData = images.map(({ data, mediaType }) => ({ data, mediaType }));
-        startResponse(() => window.electronAPI.sendMessage(message, imageData), userMsg.id);
+        // uuid를 넘기면 main이 그 메시지 직전부터 이어가서 옛 질문·답이 모델 기록에서도 빠진다
+        startResponse(() => window.electronAPI.sendMessage(message, imageData, userMsg.uuid), userMsg.id);
     }, [isLoading, messages, startResponse]);
 
     // 마지막 사용자 메시지를 수정한 뒤 다시 보낸다.
@@ -301,7 +350,7 @@ export function useClaudeChat() {
         setMessages(trimmed);
         lastSentRef.current = { message: text, images };
         const imageData = images.map(({ data, mediaType }) => ({ data, mediaType }));
-        startResponse(() => window.electronAPI.sendMessage(text, imageData), userMsg.id);
+        startResponse(() => window.electronAPI.sendMessage(text, imageData, userMsg.uuid), userMsg.id);
     }, [isLoading, messages, startResponse]);
 
     // 허용/거부를 CLI에 되돌려 보낸다. 예전처럼 요청을 통째로 다시 보내는 게 아니라,
@@ -361,6 +410,7 @@ export function useClaudeChat() {
         runningTokens,
         notice,
         setNotice,
+        turnEnd,
         send,
         regenerate,
         editAndResend,

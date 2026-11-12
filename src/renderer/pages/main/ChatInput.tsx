@@ -2,6 +2,8 @@ import {useCallback, useEffect, useMemo, useRef, useState} from "react";
 import classNames from "classnames/bind";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 import {
+    faCircleInfo,
+    faClock,
     faFile,
     faFileCode,
     faFileCsv,
@@ -31,7 +33,7 @@ import {
 } from "@fortawesome/free-brands-svg-icons";
 import type {IconDefinition} from "@fortawesome/fontawesome-svg-core";
 import styles from "./chat.page.module.scss";
-import type {ImagePayload} from "../../hooks/useClaudeChat";
+import type {ImagePayload, TurnEnd} from "../../hooks/useClaudeChat";
 import {readFileAsImagePayload} from "../../hooks/useClaudeChat";
 
 const cx = classNames.bind(styles);
@@ -96,6 +98,13 @@ const FILE_ICONS: Record<string, {icon: IconDefinition; color: string}> = {
 
 const DEFAULT_FILE_ICON: {icon: IconDefinition; color: string} = {icon: faFile, color: "#c9a84c"};
 
+// 한글처럼 조합해서 입력하는 중인 키 입력인가. 마지막 글자를 조합하는 중에 Enter를 누르면
+// 브라우저가 Enter를 두 번 보낸다(조합 중 표시가 붙은 것 → 확정 후 진짜 Enter). 첫 번째에 반응하면
+// 확정 전 내용을 보내고 마지막 글자가 입력칸에 남는다. keyCode 229는 조합 중을 뜻하는 예전 표시.
+export function isImeComposing(e: React.KeyboardEvent): boolean {
+    return e.nativeEvent.isComposing || e.keyCode === 229;
+}
+
 function iconForFile(p: string): {icon: IconDefinition; color: string} {
     const base = fileBase(p);
     const dot = base.lastIndexOf(".");
@@ -103,13 +112,76 @@ function iconForFile(p: string): {icon: IconDefinition; color: string} {
     return FILE_ICONS[ext] ?? DEFAULT_FILE_ICON;
 }
 
+// 입력창의 내용 전체 (글 + 첨부). 응답 중에 보내면 이 모양 그대로 줄 세워 둔다.
+interface Draft {
+    input: string;
+    images: ImagePayload[];
+    files: {name: string; path: string}[];
+    mentions: string[];
+}
+
+const EMPTY_DRAFT: Draft = {input: "", images: [], files: [], mentions: []};
+
+function isEmptyDraft(d: Draft): boolean {
+    return !d.input.trim() && d.images.length === 0 && d.files.length === 0 && d.mentions.length === 0;
+}
+
+// 둘을 하나로 — 대기 중인 메시지에 더 보태거나, 되돌릴 때 입력창에 쓰던 글과 합칠 때
+function mergeDrafts(a: Draft, b: Draft): Draft {
+    const input = a.input.trim() && b.input.trim() ? `${a.input.trimEnd()}\n\n${b.input.trimStart()}` : a.input.trim() ? a.input : b.input;
+    return {
+        input,
+        images: [...a.images, ...b.images],
+        files: [...a.files, ...b.files],
+        mentions: [...a.mentions, ...b.mentions.filter((m) => !a.mentions.includes(m))],
+    };
+}
+
+// 첨부·참조 파일 안내를 글 앞에 붙여 실제로 보낼 메시지를 만든다
+function buildMessage(d: Draft): {text: string; images: ImagePayload[]} {
+    const parts: string[] = [];
+    if (d.files.length > 0) {
+        const withPath = d.files.filter((f) => f.path);
+        const withoutPath = d.files.filter((f) => !f.path);
+        if (withPath.length > 0) {
+            parts.push(
+                "첨부 파일 — 아래 경로의 파일을 Read 도구로 읽어주세요:\n" +
+                    withPath.map((f) => `- ${f.path}`).join("\n")
+            );
+        }
+        if (withoutPath.length > 0) {
+            parts.push(`[첨부(경로를 확인할 수 없어 읽을 수 없음): ${withoutPath.map((f) => f.name).join(", ")}]`);
+        }
+    }
+    if (d.mentions.length > 0) {
+        parts.push(
+            "참조 파일 — 아래 경로를 Read 도구로 읽어주세요:\n" +
+                d.mentions.map((p) => `- ${p}`).join("\n")
+        );
+    }
+    const trimmed = d.input.trim();
+    if (trimmed) parts.push(trimmed);
+    return {text: parts.join("\n\n"), images: d.images};
+}
+
+// 대기 중인 메시지 미리보기: 첫 줄 + 첨부 개수
+function draftPreview(d: Draft): string {
+    const firstLine = d.input.trim().split("\n")[0] ?? "";
+    const attached = d.images.length + d.files.length + d.mentions.length;
+    return [firstLine, attached > 0 ? `첨부 ${attached}개` : ""].filter(Boolean).join(" · ");
+}
+
 interface Props {
     isLoading: boolean;
     onSend: (message: string, images: ImagePayload[]) => void;
     onStop: () => void;
+    // 턴이 끝날 때마다 바뀐다 — 대기 중인 메시지를 보낼지(정상 종료) 되돌릴지(중지) 정한다
+    turnEnd: TurnEnd;
+    // 다른 대화로 옮기면 바뀐다 — 대기 중인 메시지를 새 대화로 보내지 않고 입력창으로 되돌린다
+    resetSignal: number;
 }
 
-export function ChatInput({isLoading, onSend, onStop}: Props) {
+export function ChatInput({isLoading, onSend, onStop, turnEnd, resetSignal}: Props) {
     const [input, setInput] = useState("");
     const [selectedImages, setSelectedImages] = useState<ImagePayload[]>([]);
     const [selectedFiles, setSelectedFiles] = useState<{name: string; path: string}[]>([]);
@@ -124,6 +196,7 @@ export function ChatInput({isLoading, onSend, onStop}: Props) {
     const [mentionFiles, setMentionFiles] = useState<string[]>([]);
     const [activeMention, setActiveMention] = useState(0);
     const [mentionedFiles, setMentionedFiles] = useState<string[]>([]);
+    const [queued, setQueued] = useState<Draft | null>(null);
 
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -132,6 +205,10 @@ export function ChatInput({isLoading, onSend, onStop}: Props) {
     const mentionStartRef = useRef(-1);
     const pendingCursorRef = useRef<number | null>(null);
     const activeMentionRef = useRef<HTMLDivElement>(null);
+    // "지금 보내기": 중지로 끝난 턴이어도 대기 메시지를 되돌리지 않고 바로 보낸다
+    const sendAfterStopRef = useRef(false);
+    const seenTurnEndRef = useRef(turnEnd.seq);
+    const seenResetRef = useRef(resetSignal);
 
     useEffect(() => {
         window.electronAPI.getPrompts().then(setPrompts);
@@ -193,38 +270,20 @@ export function ChatInput({isLoading, onSend, onStop}: Props) {
         if (textareaRef.current) textareaRef.current.style.height = "44px";
     };
 
-    const handleSend = () => {
-        const trimmed = input.trim();
-        if (
-            (!trimmed &&
-                selectedImages.length === 0 &&
-                selectedFiles.length === 0 &&
-                mentionedFiles.length === 0) ||
-            isLoading
-        )
-            return;
-        const parts: string[] = [];
-        if (selectedFiles.length > 0) {
-            const withPath = selectedFiles.filter((f) => f.path);
-            const withoutPath = selectedFiles.filter((f) => !f.path);
-            if (withPath.length > 0) {
-                parts.push(
-                    "첨부 파일 — 아래 경로의 파일을 Read 도구로 읽어주세요:\n" +
-                        withPath.map((f) => `- ${f.path}`).join("\n")
-                );
-            }
-            if (withoutPath.length > 0) {
-                parts.push(`[첨부(경로를 확인할 수 없어 읽을 수 없음): ${withoutPath.map((f) => f.name).join(", ")}]`);
-            }
-        }
-        if (mentionedFiles.length > 0) {
-            parts.push(
-                "참조 파일 — 아래 경로를 Read 도구로 읽어주세요:\n" +
-                    mentionedFiles.map((p) => `- ${p}`).join("\n")
-            );
-        }
-        if (trimmed) parts.push(trimmed);
-        onSend(parts.join("\n\n"), selectedImages);
+    // 내용에 맞춰 입력창 높이를 다시 잰다. scrollHeight 읽기는 강제 reflow를 유발하므로 rAF로 디퍼
+    const scheduleResize = useCallback(() => {
+        if (resizeFrameRef.current != null) cancelAnimationFrame(resizeFrameRef.current);
+        resizeFrameRef.current = requestAnimationFrame(() => {
+            const el = textareaRef.current;
+            if (!el) return;
+            el.style.height = "44px";
+            // box-sizing이 border-box라 scrollHeight에 테두리를 더해야 한다 — 빼먹으면 늘 2px가 넘쳐 스크롤바가 보였다
+            el.style.height = `${el.scrollHeight + el.offsetHeight - el.clientHeight}px`;
+            resizeFrameRef.current = null;
+        });
+    }, []);
+
+    const clearDraft = () => {
         setInput("");
         setSelectedImages([]);
         setSelectedFiles([]);
@@ -234,17 +293,83 @@ export function ChatInput({isLoading, onSend, onStop}: Props) {
         if (fileInputRef.current) fileInputRef.current.value = "";
     };
 
+    // 대기 메시지를 입력창으로 되돌린다. 그사이 입력창에 쓰던 글이 있으면 그 앞에 붙인다 — 아무것도 버리지 않는다.
+    const restoreDraft = useCallback(
+        (q: Draft) => {
+            setInput((cur) => mergeDrafts(q, {...EMPTY_DRAFT, input: cur}).input);
+            setSelectedImages((cur) => [...q.images, ...cur]);
+            setSelectedFiles((cur) => [...q.files, ...cur]);
+            setMentionedFiles((cur) => [...q.mentions, ...cur.filter((m) => !q.mentions.includes(m))]);
+            scheduleResize();
+            textareaRef.current?.focus();
+        },
+        [scheduleResize]
+    );
+
+    // 응답 중이면 바로 보내지 않고 줄 세워 둔다. 여러 번 보내면 하나로 이어 붙는다.
+    const queueDraft = (d: Draft) => {
+        setQueued((q) => (q ? mergeDrafts(q, d) : d));
+        clearDraft();
+    };
+
+    const handleSend = () => {
+        const draft: Draft = {input, images: selectedImages, files: selectedFiles, mentions: mentionedFiles};
+        if (isEmptyDraft(draft)) return;
+        if (isLoading) {
+            queueDraft(draft);
+            return;
+        }
+        const {text, images} = buildMessage(draft);
+        onSend(text, images);
+        clearDraft();
+    };
+
     const sendCommand = (cmd: SlashCommand) => {
-        if (isLoading) return;
-        onSend(cmd.name, []);
-        setInput("");
-        setSelectedImages([]);
-        setSelectedFiles([]);
-        setMentionedFiles([]);
-        setMentionOpen(false);
-        resetTextareaHeight();
         setCommandsOpen(false);
-        if (fileInputRef.current) fileInputRef.current.value = "";
+        if (isLoading) {
+            queueDraft({...EMPTY_DRAFT, input: cmd.name});
+            return;
+        }
+        onSend(cmd.name, []);
+        clearDraft();
+    };
+
+    // 응답이 끝나면 대기 메시지를 보낸다. 중지로 끝났으면 보내지 않고 입력창으로 되돌린다
+    // (멈춘 이유가 그 메시지와 상관있을 수 있다). "지금 보내기"는 중지한 뒤 바로 보낸다.
+    useEffect(() => {
+        if (turnEnd.seq === seenTurnEndRef.current) return;
+        seenTurnEndRef.current = turnEnd.seq;
+        const sendNow = sendAfterStopRef.current;
+        sendAfterStopRef.current = false;
+        if (!queued) return;
+        setQueued(null);
+        if (turnEnd.stopped && !sendNow) {
+            restoreDraft(queued);
+            return;
+        }
+        const {text, images} = buildMessage(queued);
+        onSend(text, images);
+    }, [turnEnd, queued, onSend, restoreDraft]);
+
+    // 새 대화·다른 대화로 옮기면 대기 메시지를 그 대화로 보내지 않는다 — 입력창으로 되돌린다
+    useEffect(() => {
+        if (resetSignal === seenResetRef.current) return;
+        seenResetRef.current = resetSignal;
+        sendAfterStopRef.current = false;
+        if (!queued) return;
+        setQueued(null);
+        restoreDraft(queued);
+    }, [resetSignal, queued, restoreDraft]);
+
+    const sendQueuedNow = () => {
+        sendAfterStopRef.current = true;
+        onStop();
+    };
+
+    const editQueued = () => {
+        if (!queued) return;
+        setQueued(null);
+        restoreDraft(queued);
     };
 
     const fillCommand = (cmd: SlashCommand) => {
@@ -254,6 +379,8 @@ export function ChatInput({isLoading, onSend, onStop}: Props) {
     };
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+        // 조합이 끝난 뒤 오는 진짜 키 입력에서 처리한다
+        if (isImeComposing(e)) return;
         if (mentionOpen && mentionFiles.length > 0) {
             if (e.key === "ArrowDown") {
                 e.preventDefault();
@@ -328,15 +455,7 @@ export function ChatInput({isLoading, onSend, onStop}: Props) {
             setMentionOpen(false);
             setMentionFiles([]);
         }
-        // scrollHeight 읽기는 강제 reflow를 유발하므로 rAF로 디퍼
-        if (resizeFrameRef.current != null) cancelAnimationFrame(resizeFrameRef.current);
-        resizeFrameRef.current = requestAnimationFrame(() => {
-            const el = textareaRef.current;
-            if (!el) return;
-            el.style.height = "44px";
-            el.style.height = `${el.scrollHeight}px`;
-            resizeFrameRef.current = null;
-        });
+        scheduleResize();
     };
 
     const addFiles = useCallback(async (files: File[]) => {
@@ -451,10 +570,12 @@ export function ChatInput({isLoading, onSend, onStop}: Props) {
                         <div className={cx("promptPills")}>
                             {prompts.map((p, i) => (
                                 <div key={i} className={cx("promptPill")}>
-                                    <span className={cx("promptPillText")}>{p}</span>
+                                    {/* 칩은 한 줄로 잘리므로 전체 내용은 툴팁으로 보여준다 */}
+                                    <span className={cx("promptPillText")} title={p}>{p}</span>
                                     <button
                                         className={cx("promptPillRemove")}
                                         onClick={() => handleRemovePrompt(i)}
+                                        title="이 프롬프트 삭제"
                                     >
                                         <FontAwesomeIcon icon={faXmark} />
                                     </button>
@@ -470,6 +591,7 @@ export function ChatInput({isLoading, onSend, onStop}: Props) {
                             value={newPromptInput}
                             onChange={(e) => setNewPromptInput(e.target.value)}
                             onKeyDown={(e) => {
+                                if (isImeComposing(e)) return;
                                 if (e.key === "Enter") {
                                     handleAddPrompt();
                                     setPromptInputOpen(false);
@@ -480,6 +602,18 @@ export function ChatInput({isLoading, onSend, onStop}: Props) {
                                 }
                             }}
                         />
+                        {/* 마우스를 올리거나 탭으로 포커스하면 안내문이 뜬다 */}
+                        <div className={cx("promptInfo")} tabIndex={0} aria-describedby="prompt-info-tip">
+                            <FontAwesomeIcon icon={faCircleInfo} />
+                            <div id="prompt-info-tip" role="tooltip" className={cx("promptInfoTip")}>
+                                <strong className={cx("promptInfoTitle")}>시스템 프롬프트 안내</strong>
+                                <ul className={cx("promptInfoList")}>
+                                    <li>추가·삭제는 다음 메시지부터 모든 대화에 적용됩니다.</li>
+                                    <li>대화 도중에 바꾸면 Claude가 그 대화의 이전 사고 내용을 이어받지 못할 수 있습니다.</li>
+                                    <li>백그라운드 작업이 실행 중일 때 바꾸면, 다음 메시지를 보낼 때 그 작업이 종료됩니다.</li>
+                                </ul>
+                            </div>
+                        </div>
                         <button
                             className={cx("promptAddBtn")}
                             onClick={() => {
@@ -599,6 +733,25 @@ export function ChatInput({isLoading, onSend, onStop}: Props) {
                     ))}
                 </div>
             )}
+            {queued && (
+                <div className={cx("queuedBar")}>
+                    <FontAwesomeIcon icon={faClock} className={cx("queuedIcon")} />
+                    <span className={cx("queuedLabel")}>응답이 끝나면 보냄</span>
+                    <span className={cx("queuedText")} title={buildMessage(queued).text}>
+                        {draftPreview(queued)}
+                    </span>
+                    <button
+                        className={cx("queuedBtn", "queuedBtnPrimary")}
+                        onClick={sendQueuedNow}
+                        title="지금 응답을 멈추고 바로 보냅니다"
+                    >
+                        지금 보내기
+                    </button>
+                    <button className={cx("queuedBtn")} onClick={editQueued} title="보내지 않고 입력창으로 되돌립니다">
+                        수정
+                    </button>
+                </div>
+            )}
             <div className={cx("inputRow")}>
                 <input
                     ref={fileInputRef}
@@ -610,7 +763,6 @@ export function ChatInput({isLoading, onSend, onStop}: Props) {
                 <button
                     className={cx("imageButton")}
                     onClick={() => fileInputRef.current?.click()}
-                    disabled={isLoading}
                     data-tooltip="파일 첨부"
                 >
                     <FontAwesomeIcon icon={faPaperclip} />
@@ -628,19 +780,34 @@ export function ChatInput({isLoading, onSend, onStop}: Props) {
                 <textarea
                     ref={textareaRef}
                     className={cx("textarea")}
-                    placeholder="메시지를 입력하세요... (Shift+Enter로 줄바꿈)"
+                    placeholder={
+                        isLoading
+                            ? "응답 중에도 미리 써 둘 수 있어요 — Enter를 누르면 끝나는 대로 보냅니다"
+                            : "메시지를 입력하세요... (Shift+Enter로 줄바꿈)"
+                    }
                     value={input}
                     onChange={handleInput}
                     onKeyDown={handleKeyDown}
                     onPaste={handlePaste}
                     onBlur={() => window.setTimeout(() => setMentionOpen(false), 120)}
                     rows={1}
-                    disabled={isLoading}
                 />
                 {isLoading ? (
-                    <button className={cx("stopButton")} onClick={onStop} data-tooltip="중지">
-                        <FontAwesomeIcon icon={faStop} />
-                    </button>
+                    <>
+                        {canSend && (
+                            <button
+                                className={cx("sendButton")}
+                                onClick={handleSend}
+                                data-tooltip="응답이 끝나면 보내기"
+                                aria-label="응답이 끝나면 보내기"
+                            >
+                                <FontAwesomeIcon icon={faClock} />
+                            </button>
+                        )}
+                        <button className={cx("stopButton")} onClick={onStop} data-tooltip="중지">
+                            <FontAwesomeIcon icon={faStop} />
+                        </button>
+                    </>
                 ) : (
                     <button
                         className={cx("sendButton")}

@@ -42,6 +42,30 @@
   transform: translateX(-50%) translateY(0);
 }
 
+/* 창 가장자리 버튼은 말풍선을 창 안쪽으로 펼친다. 정렬은 tooltip-guard.ts가 마우스를 올릴 때 정한다. */
+[data-tooltip-align="end"]::after {
+  right: 0;
+  left: auto;
+  transform: translateY(4px);
+}
+
+[data-tooltip-align="start"]::after {
+  left: 0;
+  transform: translateY(4px);
+}
+
+[data-tooltip-align]:hover::after {
+  transform: translateY(0);
+}
+
+[data-tooltip-align][data-tooltip-dir="down"]::after {
+  transform: translateY(-4px);
+}
+
+[data-tooltip-align][data-tooltip-dir="down"]:hover::after {
+  transform: translateY(0);
+}
+
 html,
 body,
 #root {

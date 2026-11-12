@@ -86,37 +86,58 @@ function extractEditPairs(name: string, input: unknown): EditPair[] {
 
 type DiffEntry = {type: "ctx" | "del" | "add"; text: string};
 
+// LCS 표 크기 상한 (줄 수 × 줄 수). 넘으면 표를 만들지 않고 통째로 -/+ 표시 — 화면이 멈추지 않게
+const MAX_DIFF_CELLS = 2_000_000;
+
 // 라인 단위 LCS — old와 new를 비교해서 공통 줄은 컨텍스트로, 다른 줄만 -/+로 표시.
+// 앞뒤의 같은 줄은 표 없이 먼저 떼어 낸다 (큰 파일의 일부만 고친 경우가 대부분이다).
+// 빈 문자열은 줄이 없는 것(Write는 old가 비어 있다 — 예전엔 빈 "-" 줄이 찍혔다), 끝 줄바꿈 하나는 빈 줄로 세지 않는다.
+function toLines(s: string): string[] {
+    return s === "" ? [] : s.replace(/\n$/, "").split("\n");
+}
+
 function diffLines(oldStr: string, newStr: string): DiffEntry[] {
-    const a = oldStr.split("\n");
-    const b = newStr.split("\n");
-    const m = a.length;
-    const n = b.length;
-    const dp: number[][] = Array.from({length: m + 1}, () => new Array(n + 1).fill(0));
-    for (let i = m - 1; i >= 0; i--) {
-        for (let j = n - 1; j >= 0; j--) {
-            if (a[i] === b[j]) dp[i][j] = dp[i + 1][j + 1] + 1;
-            else dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1]);
+    const a = toLines(oldStr);
+    const b = toLines(newStr);
+    let head = 0;
+    while (head < a.length && head < b.length && a[head] === b[head]) head++;
+    let tail = 0;
+    while (tail < a.length - head && tail < b.length - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;
+    const out: DiffEntry[] = a.slice(0, head).map((text) => ({type: "ctx", text}));
+    const am = a.slice(head, a.length - tail);
+    const bm = b.slice(head, b.length - tail);
+    const m = am.length;
+    const n = bm.length;
+    if (m * n > MAX_DIFF_CELLS) {
+        for (const text of am) out.push({type: "del", text});
+        for (const text of bm) out.push({type: "add", text});
+    } else {
+        const dp: number[][] = Array.from({length: m + 1}, () => new Array(n + 1).fill(0));
+        for (let i = m - 1; i >= 0; i--) {
+            for (let j = n - 1; j >= 0; j--) {
+                if (am[i] === bm[j]) dp[i][j] = dp[i + 1][j + 1] + 1;
+                else dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1]);
+            }
         }
-    }
-    const out: DiffEntry[] = [];
-    let i = 0;
-    let j = 0;
-    while (i < m && j < n) {
-        if (a[i] === b[j]) {
-            out.push({type: "ctx", text: a[i]});
-            i++;
-            j++;
-        } else if (dp[i + 1][j] >= dp[i][j + 1]) {
-            out.push({type: "del", text: a[i]});
-            i++;
-        } else {
-            out.push({type: "add", text: b[j]});
-            j++;
+        let i = 0;
+        let j = 0;
+        while (i < m && j < n) {
+            if (am[i] === bm[j]) {
+                out.push({type: "ctx", text: am[i]});
+                i++;
+                j++;
+            } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+                out.push({type: "del", text: am[i]});
+                i++;
+            } else {
+                out.push({type: "add", text: bm[j]});
+                j++;
+            }
         }
+        while (i < m) out.push({type: "del", text: am[i++]});
+        while (j < n) out.push({type: "add", text: bm[j++]});
     }
-    while (i < m) out.push({type: "del", text: a[i++]});
-    while (j < n) out.push({type: "add", text: b[j++]});
+    for (const text of a.slice(a.length - tail)) out.push({type: "ctx", text});
     return out;
 }
 
@@ -170,7 +191,7 @@ export function ToolRow({tool, defaultExpanded = false}: {tool: ToolActivity; de
     return (
         <div className={cx("toolRowGroup")}>
             <div
-                className={cx("toolRow", tool.status, {toolRowExpandable: expandable})}
+                className={cx("toolRow", tool.status, {toolRowExpandable: expandable, toolRowSub: !!tool.parentToolUseId})}
                 onClick={expandable ? () => setExpanded((v) => !v) : undefined}
             >
                 {expandable ? (
