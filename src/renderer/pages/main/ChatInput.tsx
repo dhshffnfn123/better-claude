@@ -1,3 +1,4 @@
+import type {ComponentProps} from "react";
 import {useCallback, useEffect, useMemo, useRef, useState} from "react";
 import classNames from "classnames/bind";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
@@ -35,6 +36,7 @@ import type {IconDefinition} from "@fortawesome/fontawesome-svg-core";
 import styles from "./chat.page.module.scss";
 import type {ImagePayload, TurnEnd} from "../../hooks/useClaudeChat";
 import {readFileAsImagePayload} from "../../hooks/useClaudeChat";
+import {onTab} from "../../tab-events";
 
 const cx = classNames.bind(styles);
 
@@ -54,8 +56,15 @@ const fileDir = (p: string) => {
 };
 
 // 확장자별 아이콘 + 색상. 없으면 기본 파일 아이콘.
-const FILE_ICONS: Record<string, {icon: IconDefinition; color: string}> = {
-    ts: {icon: faFileCode, color: "#3178c6"},
+// dark: 다크 모드에서 바탕에 묻히는 색만 따로 (없으면 color 그대로)
+interface FileIcon {
+    icon: IconDefinition;
+    color: string;
+    dark?: string;
+}
+
+const FILE_ICONS: Record<string, FileIcon> = {
+    ts: {icon: faFileCode, color: "#3178c6", dark: "#5b9be6"},
     tsx: {icon: faReact, color: "#61dafb"},
     js: {icon: faJs, color: "#f7df1e"},
     jsx: {icon: faReact, color: "#61dafb"},
@@ -64,12 +73,12 @@ const FILE_ICONS: Record<string, {icon: IconDefinition; color: string}> = {
     json: {icon: faFileCode, color: "#cbab38"},
     scss: {icon: faSass, color: "#cd6799"},
     sass: {icon: faSass, color: "#cd6799"},
-    css: {icon: faCss3Alt, color: "#2965f1"},
+    css: {icon: faCss3Alt, color: "#2965f1", dark: "#6b9bf5"},
     html: {icon: faHtml5, color: "#e34f26"},
-    md: {icon: faMarkdown, color: "#3a3d35"},
-    markdown: {icon: faMarkdown, color: "#3a3d35"},
-    py: {icon: faPython, color: "#3776ab"},
-    rs: {icon: faRust, color: "#b7410e"},
+    md: {icon: faMarkdown, color: "#3a3d35", dark: "var(--c-text)"},
+    markdown: {icon: faMarkdown, color: "#3a3d35", dark: "var(--c-text)"},
+    py: {icon: faPython, color: "#3776ab", dark: "#5b9bd5"},
+    rs: {icon: faRust, color: "#b7410e", dark: "#e0743c"},
     png: {icon: faFileImage, color: "#7e8c6a"},
     jpg: {icon: faFileImage, color: "#7e8c6a"},
     jpeg: {icon: faFileImage, color: "#7e8c6a"},
@@ -77,7 +86,7 @@ const FILE_ICONS: Record<string, {icon: IconDefinition; color: string}> = {
     webp: {icon: faFileImage, color: "#7e8c6a"},
     svg: {icon: faFileImage, color: "#7e8c6a"},
     pdf: {icon: faFilePdf, color: "#e5252a"},
-    csv: {icon: faFileCsv, color: "#1d6f42"},
+    csv: {icon: faFileCsv, color: "#1d6f42", dark: "#4fb07c"},
     zip: {icon: faFileZipper, color: "#a8a99a"},
     gz: {icon: faFileZipper, color: "#a8a99a"},
     tar: {icon: faFileZipper, color: "#a8a99a"},
@@ -90,13 +99,21 @@ const FILE_ICONS: Record<string, {icon: IconDefinition; color: string}> = {
     env: {icon: faGear, color: "#8a8f7a"},
     ini: {icon: faGear, color: "#8a8f7a"},
     conf: {icon: faGear, color: "#8a8f7a"},
-    sh: {icon: faTerminal, color: "#3a3d35"},
-    bash: {icon: faTerminal, color: "#3a3d35"},
-    zsh: {icon: faTerminal, color: "#3a3d35"},
+    sh: {icon: faTerminal, color: "#3a3d35", dark: "var(--c-text)"},
+    bash: {icon: faTerminal, color: "#3a3d35", dark: "var(--c-text)"},
+    zsh: {icon: faTerminal, color: "#3a3d35", dark: "var(--c-text)"},
     lock: {icon: faLock, color: "#a8a99a"},
 };
 
-const DEFAULT_FILE_ICON: {icon: IconDefinition; color: string} = {icon: faFile, color: "#c9a84c"};
+const DEFAULT_FILE_ICON: FileIcon = {icon: faFile, color: "#c9a84c"};
+
+// 색은 CSS 변수로 넘기고 실제 칠은 .mentionIcon/.mentionChipIcon이 테마에 맞춰 한다.
+// FontAwesomeIcon의 style 타입은 자기 변수(--fa-*)만 알아서 한 번 풀어서 넘긴다.
+function iconStyle(fi: FileIcon): ComponentProps<typeof FontAwesomeIcon>["style"] {
+    const vars: Record<string, string> = {"--icon": fi.color};
+    if (fi.dark) vars["--icon-dark"] = fi.dark;
+    return vars as unknown as ComponentProps<typeof FontAwesomeIcon>["style"];
+}
 
 // 한글처럼 조합해서 입력하는 중인 키 입력인가. 마지막 글자를 조합하는 중에 Enter를 누르면
 // 브라우저가 Enter를 두 번 보낸다(조합 중 표시가 붙은 것 → 확정 후 진짜 Enter). 첫 번째에 반응하면
@@ -105,7 +122,7 @@ export function isImeComposing(e: React.KeyboardEvent): boolean {
     return e.nativeEvent.isComposing || e.keyCode === 229;
 }
 
-function iconForFile(p: string): {icon: IconDefinition; color: string} {
+function iconForFile(p: string): FileIcon {
     const base = fileBase(p);
     const dot = base.lastIndexOf(".");
     const ext = dot > 0 ? base.slice(dot + 1).toLowerCase() : "";
@@ -172,6 +189,10 @@ function draftPreview(d: Draft): string {
 }
 
 interface Props {
+    // 이 입력창이 속한 탭 — 명령 목록·@멘션 파일 검색은 그 탭의 작업 폴더 기준이다
+    tabId: string;
+    // 보고 있는 탭이면 true. 탭으로 돌아오면 입력칸에 커서를 둔다.
+    active: boolean;
     isLoading: boolean;
     onSend: (message: string, images: ImagePayload[]) => void;
     onStop: () => void;
@@ -181,7 +202,7 @@ interface Props {
     resetSignal: number;
 }
 
-export function ChatInput({isLoading, onSend, onStop, turnEnd, resetSignal}: Props) {
+export function ChatInput({tabId, active, isLoading, onSend, onStop, turnEnd, resetSignal}: Props) {
     const [input, setInput] = useState("");
     const [selectedImages, setSelectedImages] = useState<ImagePayload[]>([]);
     const [selectedFiles, setSelectedFiles] = useState<{name: string; path: string}[]>([]);
@@ -211,11 +232,18 @@ export function ChatInput({isLoading, onSend, onStop, turnEnd, resetSignal}: Pro
     const seenResetRef = useRef(resetSignal);
 
     useEffect(() => {
-        window.electronAPI.getPrompts().then(setPrompts);
-        window.electronAPI.listCommands().then(setCommands);
+        window.electronAPI.listCommands(tabId).then(setCommands);
         // 작업 폴더가 바뀌거나 CLI가 새 스킬을 찾으면 목록이 다시 온다
-        return window.electronAPI.onCommands(setCommands);
-    }, []);
+        return onTab("commands", tabId, setCommands);
+    }, [tabId]);
+
+    // 시스템 프롬프트는 모든 탭이 같이 쓴다 — 다른 탭에서 바꿨을 수 있어 탭으로 돌아올 때마다 다시 읽는다.
+    // 돌아오면 바로 이어 쓸 수 있게 입력칸에 커서를 둔다.
+    useEffect(() => {
+        if (!active) return;
+        window.electronAPI.getPrompts().then(setPrompts);
+        textareaRef.current?.focus();
+    }, [active]);
 
     const filteredCommands = useMemo(() => {
         if (!commandsOpen) return [];
@@ -450,7 +478,7 @@ export function ChatInput({isLoading, onSend, onStop, turnEnd, resetSignal}: Pro
             mentionStartRef.current = mention.start;
             setMentionOpen(true);
             setActiveMention(0);
-            void window.electronAPI.searchFiles(mention.query).then(setMentionFiles);
+            void window.electronAPI.searchFiles(tabId, mention.query).then(setMentionFiles);
         } else {
             setMentionOpen(false);
             setMentionFiles([]);
@@ -658,7 +686,7 @@ export function ChatInput({isLoading, onSend, onStop, turnEnd, resetSignal}: Pro
                                 <FontAwesomeIcon
                                     icon={fi.icon}
                                     className={cx("mentionChipIcon")}
-                                    style={{color: fi.color}}
+                                    style={iconStyle(fi)}
                                 />
                                 <span className={cx("mentionChipName")}>{fileBase(f)}</span>
                                 <button
@@ -692,7 +720,7 @@ export function ChatInput({isLoading, onSend, onStop, turnEnd, resetSignal}: Pro
                                 <FontAwesomeIcon
                                     icon={fi.icon}
                                     className={cx("mentionIcon")}
-                                    style={{color: fi.color}}
+                                    style={iconStyle(fi)}
                                 />
                                 <span className={cx("mentionName")}>{fileBase(f)}</span>
                                 {dir && (

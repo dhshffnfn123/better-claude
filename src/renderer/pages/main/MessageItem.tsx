@@ -119,7 +119,8 @@ function MessageItemBase({msg, isStreaming, onImageClick, onRegenerate, onEditRe
     // 다 받은 답변만 복사할 수 있다 (첫 인사말 제외)
     const canCopy = msg.role === "assistant" && !msg.greeting && !isStreaming && msg.content.trim().length > 0;
     return (
-        <div className={cx("messageWrapper", msg.role)}>
+        // data-msg-id·data-role: 탭 화면이 "지금 읽는 답변"을 찾는 데 쓴다 (답변 처음으로 버튼)
+        <div className={cx("messageWrapper", msg.role)} data-msg-id={msg.id} data-role={msg.role}>
             <div className={cx("messageInner")}>
                 <div className={cx("sender")}>
                     {msg.role === "assistant" && (

@@ -10,6 +10,8 @@ export interface AppSettings {
     ultracode?: boolean;
     fastMode?: boolean;
     systemPrompts?: string[];
+    // 화면 테마 — system이면 macOS 화면 모드를 따른다
+    theme?: "system" | "light" | "dark";
 }
 
 function settingsPath(): string {

@@ -14,7 +14,6 @@ import {
     faFolderOpen,
     faXmark,
 } from "@fortawesome/free-solid-svg-icons";
-import "highlight.js/styles/github.css";
 import styles from "./chat.page.module.scss";
 import {copyText} from "../../clipboard";
 import {highlightFile} from "../../highlight";
@@ -128,7 +127,7 @@ function parseUnifiedDiff(text: string): {rows: DiffRow[]; binary: boolean; mode
 // 아주 큰 diff는 앞부분만 그린다 (화면이 멈추지 않게)
 const MAX_DIFF_ROWS = 5000;
 
-function GitDiffView({filePath, entry, version}: {filePath: string; entry: GitChange; version: number}) {
+function GitDiffView({tabId, filePath, entry, version}: {tabId: string; filePath: string; entry: GitChange; version: number}) {
     const [diff, setDiff] = useState<GitDiffResult | null>(null);
 
     useEffect(() => {
@@ -139,7 +138,7 @@ function GitDiffView({filePath, entry, version}: {filePath: string; entry: GitCh
     // 새 결과가 올 때까지 이전 화면을 그대로 둔다(깜빡이지 않게).
     useEffect(() => {
         let alive = true;
-        void window.electronAPI.gitDiff(filePath).then((d) => alive && setDiff(d));
+        void window.electronAPI.gitDiff(tabId, filePath).then((d) => alive && setDiff(d));
         return () => {
             alive = false;
         };
@@ -224,6 +223,7 @@ function formatTime(at: number): string {
 type ViewerTab = "content" | "claude" | "git";
 
 interface ViewerProps {
+    tabId: string;
     filePath: string;
     cwd: string;
     info?: ChangedFile;
@@ -235,7 +235,7 @@ interface ViewerProps {
     onClose: () => void;
 }
 
-function FileViewer({filePath, cwd, info, gitEntry, gitVersion, preferTab, reloadToken, onClose}: ViewerProps) {
+function FileViewer({tabId, filePath, cwd, info, gitEntry, gitVersion, preferTab, reloadToken, onClose}: ViewerProps) {
     const [tab, setTab] = useState<ViewerTab>(preferTab);
     const [view, setView] = useState<FileView | null>(null);
     const [hunks, setHunks] = useState<FileHunk[] | null>(null);
@@ -251,7 +251,7 @@ function FileViewer({filePath, cwd, info, gitEntry, gitVersion, preferTab, reloa
 
     useEffect(() => {
         let alive = true;
-        void window.electronAPI.readFileForView(filePath).then((v) => alive && setView(v));
+        void window.electronAPI.readFileForView(tabId, filePath).then((v) => alive && setView(v));
         return () => {
             alive = false;
         };
@@ -260,7 +260,7 @@ function FileViewer({filePath, cwd, info, gitEntry, gitVersion, preferTab, reloa
     useEffect(() => {
         if (!changed) return;
         let alive = true;
-        void window.electronAPI.getFileChanges(filePath).then((h) => alive && setHunks(h));
+        void window.electronAPI.getFileChanges(tabId, filePath).then((h) => alive && setHunks(h));
         return () => {
             alive = false;
         };
@@ -311,7 +311,7 @@ function FileViewer({filePath, cwd, info, gitEntry, gitVersion, preferTab, reloa
                     {folder && <span className={cx("fileViewerDir")}>{middleTruncate(folder, 60)}</span>}
                 </div>
                 <div className={cx("fileViewerActions")}>
-                    <button onClick={() => void window.electronAPI.revealFile(filePath)} title="Finder에서 보기">
+                    <button onClick={() => void window.electronAPI.revealFile(tabId, filePath)} title="Finder에서 보기">
                         <FontAwesomeIcon icon={faArrowUpRightFromSquare} />
                     </button>
                     <button onClick={copyPath} title="경로 복사">
@@ -364,7 +364,7 @@ function FileViewer({filePath, cwd, info, gitEntry, gitVersion, preferTab, reloa
                     )}
                 </div>
             ) : tab === "git" && gitEntry ? (
-                <GitDiffView filePath={filePath} entry={gitEntry} version={gitVersion} />
+                <GitDiffView tabId={tabId} filePath={filePath} entry={gitEntry} version={gitVersion} />
             ) : (
                 <div className={cx("changesView")}>
                     {hunks === null && <div className={cx("viewerNotice")}>불러오는 중…</div>}
@@ -450,6 +450,8 @@ function readView(): PanelView {
 const GIT_REFRESH_DELAY = 300;
 
 interface Props {
+    // 보고 있는 탭 — 트리·파일 읽기·Git 상태는 그 탭의 작업 폴더 기준이다
+    tabId: string;
     cwd: string;
     changed: ChangedFilesState;
     // 응답이 끝날 때마다 바뀐다 — Bash 등으로 바뀐 파일을 git 상태에 반영하려고 다시 읽는다
@@ -460,7 +462,7 @@ interface Props {
 }
 
 // 오른쪽 작업 파일 패널: 작업 폴더 트리 + Claude가 이 대화에서 고친 파일 + 마지막 커밋 이후 Git 변경 + 파일 보기
-export function FilesPanel({cwd, changed, refreshKey, width, onResize, onClose}: Props) {
+export function FilesPanel({tabId, cwd, changed, refreshKey, width, onResize, onClose}: Props) {
     const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
     const [listings, setListings] = useState<Record<string, Listing>>({});
     const [view, setView] = useState<PanelView>(readView);
@@ -476,12 +478,12 @@ export function FilesPanel({cwd, changed, refreshKey, width, onResize, onClose}:
 
     const loadGit = useCallback(() => {
         const id = ++gitReqRef.current;
-        void window.electronAPI.gitStatus().then((res) => {
+        void window.electronAPI.gitStatus(tabId).then((res) => {
             if (id !== gitReqRef.current) return; // 그사이 더 새 요청이 나갔다
             setGit(res);
             setGitVersion((v) => v + 1);
         });
-    }, []);
+    }, [tabId]);
 
     const scheduleGit = useCallback(
         (delay = GIT_REFRESH_DELAY) => {
@@ -533,9 +535,9 @@ export function FilesPanel({cwd, changed, refreshKey, width, onResize, onClose}:
 
     const load = useCallback(async (dir: string) => {
         setListings((cur) => (cur[dir] && cur[dir] !== "loading" ? cur : {...cur, [dir]: "loading"}));
-        const res = await window.electronAPI.listDir(dir);
+        const res = await window.electronAPI.listDir(tabId, dir);
         setListings((cur) => ({...cur, [dir]: res}));
-    }, []);
+    }, [tabId]);
 
     // 작업 폴더가 바뀌면 처음부터
     useEffect(() => {
@@ -832,6 +834,7 @@ export function FilesPanel({cwd, changed, refreshKey, width, onResize, onClose}:
             </div>
             {selected && (
                 <FileViewer
+                    tabId={tabId}
                     filePath={selected}
                     cwd={cwd}
                     info={changedMap.get(selected)}

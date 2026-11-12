@@ -90,6 +90,8 @@ function ToolSteps({steps}: {steps?: ToolStep[]}) {
 }
 
 interface Props {
+    // 보고 있는 탭 — 셸 출력은 그 탭의 작업에서 읽는다
+    tabId: string;
     tasks: BackgroundTask[];
     finished: FinishedTask[];
     top: number;
@@ -102,6 +104,7 @@ interface Props {
 
 // 상단 "백그라운드 N"을 누르면 뜨는 상세 패널: 실행 중인 작업 + 이 대화에서 최근 끝난 작업
 export function BackgroundTasksPanel({
+    tabId,
     tasks,
     finished,
     top,
@@ -127,20 +130,20 @@ export function BackgroundTasksPanel({
         const ids = finishedIds ? finishedIds.split(",") : [];
         if (ids.length === 0) return;
         let alive = true;
-        void Promise.all(ids.map(async (id) => [id, await window.electronAPI.getBackgroundOutput(id)] as const)).then(
+        void Promise.all(ids.map(async (id) => [id, await window.electronAPI.getBackgroundOutput(tabId, id)] as const)).then(
             (entries) => alive && setOutputs((cur) => ({...cur, ...Object.fromEntries(entries)}))
         );
         return () => {
             alive = false;
         };
-    }, [finishedIds]);
+    }, [finishedIds, tabId]);
     useEffect(() => {
         const ids = runningIds ? runningIds.split(",") : [];
         if (ids.length === 0) return;
         let alive = true;
         const load = async () => {
             const entries = await Promise.all(
-                ids.map(async (id) => [id, await window.electronAPI.getBackgroundOutput(id)] as const)
+                ids.map(async (id) => [id, await window.electronAPI.getBackgroundOutput(tabId, id)] as const)
             );
             if (alive) setOutputs((cur) => ({...cur, ...Object.fromEntries(entries)}));
         };
@@ -150,7 +153,7 @@ export function BackgroundTasksPanel({
             alive = false;
             window.clearInterval(timer);
         };
-    }, [runningIds]);
+    }, [runningIds, tabId]);
 
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {

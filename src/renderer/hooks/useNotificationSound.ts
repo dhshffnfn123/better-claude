@@ -32,6 +32,15 @@ function clampVolume(v: number): number {
     return Number.isFinite(v) ? Math.min(100, Math.max(0, Math.round(v))) : DEFAULT_VOLUME;
 }
 
+// 슬라이더 값 → 소리 배율. 귀는 소리 세기를 로그로 느껴서, 배율을 값에 정비례로 두면(예전)
+// 50→100이 +6 dB, 50→25가 −6 dB뿐이라 끝까지 밀어도 차이가 미세했다.
+// 제곱으로 두면 느끼는 크기가 값에 거의 비례한다: 50 = 1배(예전 기본 크기 그대로), 100 = 4배(+12 dB),
+// 25 = ¼(−12 dB), 10 = 1/25(−28 dB). 100에서도 두 음이 겹치는 순간까지 진폭이 1 아래라 찢어지지 않는다.
+export function volumeGain(v: number): number {
+    const x = v / DEFAULT_VOLUME;
+    return x * x;
+}
+
 let enabled = read(SOUND_KEY) !== "off";
 let volume = clampVolume(Number(read(VOLUME_KEY) ?? DEFAULT_VOLUME));
 let osEnabled = read(OS_KEY) !== "off";
@@ -46,57 +55,96 @@ function getContext(): AudioContext | null {
     return ctx;
 }
 
-// 사인파 하나만 쓰면 소리가 얄팍해서, 한 옥타브 위 배음을 작게 얹어 종소리에 가깝게 만든다.
-function chime(ac: AudioContext, at: number, freq: number, peak: number): void {
-    const partials: [number, number][] = [
-        [1, 1],
-        [2, 0.28],
-    ];
-    for (const [ratio, share] of partials) {
-        const osc = ac.createOscillator();
-        const gain = ac.createGain();
-        osc.type = "sine";
-        osc.frequency.value = freq * ratio;
-        // 0에서 시작하지 않으면 딱 하는 클릭음이 난다. 감쇠는 지수로 — 0은 못 넣으므로 0.0001.
-        gain.gain.setValueAtTime(0, at);
-        gain.gain.linearRampToValueAtTime(peak * share, at + 0.008);
-        gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.38);
-        osc.connect(gain).connect(ac.destination);
-        osc.start(at);
-        osc.stop(at + 0.4);
+// 음 하나 = [시작(초), 주파수(Hz), 세기]
+type Note = [number, number, number];
+
+// 응답 완료 — A5 → E6로 살짝 올라가는 짧은 차임.
+export const COMPLETION_NOTES: Note[] = [
+    [0, 880, 0.16],
+    [0.1, 1318.5, 0.13],
+];
+// Claude가 허용·답을 기다린다 — 완료음과 구분되게 E6 → B5로 내려간다.
+export const ATTENTION_NOTES: Note[] = [
+    [0, 1318.5, 0.14],
+    [0.12, 987.8, 0.13],
+];
+
+// 배음 = [배수, 세기 비율, 꼭대기에서 0.0001까지 줄어드는 시간(초)].
+// 기본(50% 이하): 사인파 하나는 얄팍해서 한 옥타브 위 배음을 작게 얹은 종소리 — 예전 소리 그대로.
+const QUIET_PARTIALS: [number, number, number][] = [
+    [1, 1, 0.372],
+    [2, 0.28, 0.372],
+    [3, 0, 0.25],
+];
+// 100%: 맥 음량을 작게 둬도 알림만 잘 들리게, 같은 최대 진폭 안에서 더 크게 들리는 모양.
+// 더 길게 울리고(귀는 짧은 소리를 작게 느낀다), 꼭대기에서 잠깐 머물고, 귀가 가장 예민한
+// 2~4 kHz에 3배 배음을 섞는다(첫머리가 또렷해진다). 길이·머묾·배음 후보를 오프라인으로 그려 비교해서 골랐다.
+const LOUD_PARTIALS: [number, number, number][] = [
+    [1, 1, 0.7],
+    [2, 0.32, 0.5],
+    [3, 0.2, 0.25],
+];
+const LOUD_HOLD = 0.04;
+const ATTACK = 0.008;
+
+// 음량 → 소리 모양. 50%를 넘으면 기본 모양에서 100% 모양으로 조금씩 바뀐다.
+export function chimeShape(v: number): {partials: [number, number, number][]; hold: number; gain: number} {
+    const loud = Math.min(1, Math.max(0, (v - DEFAULT_VOLUME) / DEFAULT_VOLUME));
+    const mix = (a: number, b: number) => a + (b - a) * loud;
+    return {
+        partials: QUIET_PARTIALS.map(([ratio, share, decay], i): [number, number, number] => [
+            ratio,
+            mix(share, LOUD_PARTIALS[i][1]),
+            mix(decay, LOUD_PARTIALS[i][2]),
+        ]),
+        hold: LOUD_HOLD * loud,
+        gain: volumeGain(v),
+    };
+}
+
+// 음들을 컨텍스트에 그린다 — 실제 재생과 오프라인 측정(OfflineAudioContext)이 같은 코드를 쓴다.
+export function scheduleNotes(ac: BaseAudioContext, start: number, notes: Note[], v: number, out: AudioNode = ac.destination): void {
+    const shape = chimeShape(v);
+    for (const [delay, freq, peak] of notes) {
+        const at = start + delay;
+        for (const [ratio, share, decay] of shape.partials) {
+            if (share <= 0) continue;
+            const osc = ac.createOscillator();
+            const gain = ac.createGain();
+            osc.type = "sine";
+            osc.frequency.value = freq * ratio;
+            const top = peak * shape.gain * share;
+            const end = at + ATTACK + shape.hold + decay;
+            // 0에서 시작하지 않으면 딱 하는 클릭음이 난다. 감쇠는 지수로 — 0은 못 넣으므로 0.0001.
+            gain.gain.setValueAtTime(0, at);
+            gain.gain.linearRampToValueAtTime(top, at + ATTACK);
+            if (shape.hold > 0) gain.gain.setValueAtTime(top, at + ATTACK + shape.hold);
+            gain.gain.exponentialRampToValueAtTime(0.0001, end);
+            osc.connect(gain).connect(out);
+            osc.start(at);
+            osc.stop(end + 0.02);
+        }
     }
 }
 
-// 두 음을 이어 친다. 음량 50%가 예전 크기, 100%면 두 배.
-function playNotes(notes: [number, number, number][]): void {
+// 두 음을 이어 친다. 음량 50%가 예전 크기 (배율은 volumeGain, 50% 위는 소리 모양도 바뀐다 — chimeShape).
+function playNotes(notes: Note[]): void {
     if (volume <= 0) return;
     const ac = getContext();
     if (!ac) return;
-    const scale = volume / DEFAULT_VOLUME;
-    const now = ac.currentTime;
-    for (const [delay, freq, peak] of notes) chime(ac, now + delay, freq, peak * scale);
+    scheduleNotes(ac, ac.currentTime, notes, volume);
 }
 
-// 응답 완료 — A5 → E6로 살짝 올라가는 짧은 차임.
 function completionNotes(): void {
-    playNotes([
-        [0, 880, 0.16],
-        [0.1, 1318.5, 0.13],
-    ]);
+    playNotes(COMPLETION_NOTES);
 }
 
 export function playCompletionSound(): void {
     if (enabled) completionNotes();
 }
 
-// Claude가 허용·답을 기다린다 — 완료음과 구분되게 E6 → B5로 내려간다.
 function playAttentionSound(): void {
-    if (enabled) {
-        playNotes([
-            [0, 1318.5, 0.14],
-            [0.12, 987.8, 0.13],
-        ]);
-    }
+    if (enabled) playNotes(ATTENTION_NOTES);
 }
 
 // 창이 앞에 있고 포커스가 있으면 사용자가 보고 있는 것으로 본다
@@ -104,21 +152,24 @@ function isAway(): boolean {
     return !document.hasFocus();
 }
 
-function showOsNotification(title: string, body: string): void {
-    if (osEnabled) void window.electronAPI.showNotification({title, body});
+// tabId가 있으면 알림을 눌렀을 때 그 탭으로 간다
+function showOsNotification(title: string, body: string, tabId?: string): void {
+    if (osEnabled) void window.electronAPI.showNotification({title, body, tabId});
 }
 
 // 응답이 끝났다: 소리는 늘(예전과 같다), macOS 알림은 앱을 보고 있지 않을 때만.
-export function notifyTurnDone(title: string, body: string): void {
+export function notifyTurnDone(title: string, body: string, tabId?: string): void {
     playCompletionSound();
-    if (isAway()) showOsNotification(title, body);
+    if (isAway()) showOsNotification(title, body, tabId);
 }
 
-// 허용 요청·질문: 앱을 보고 있으면 화면의 창으로 충분하다 — 보고 있지 않을 때만 소리와 알림.
-export function notifyNeedsInput(title: string, body: string): void {
-    if (!isAway()) return;
+// 허용 요청·질문: 그 탭을 보고 있으면 화면의 창으로 충분하다. 앱을 보고 있지 않거나(소리 + macOS 알림)
+// 다른 탭을 보고 있으면(소리 — 그 탭의 창은 지금 안 보인다) 알린다.
+export function notifyNeedsInput(title: string, body: string, otherTab = false, tabId?: string): void {
+    const away = isAway();
+    if (!away && !otherTab) return;
     playAttentionSound();
-    showOsNotification(title, body);
+    if (away) showOsNotification(title, body, tabId);
 }
 
 export function useNotificationSettings() {

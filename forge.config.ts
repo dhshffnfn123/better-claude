@@ -7,6 +7,7 @@ import { VitePlugin } from '@electron-forge/plugin-vite';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { AutoUnpackNativesPlugin } from '@electron-forge/plugin-auto-unpack-natives';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -37,6 +38,24 @@ const config: ForgeConfig = {
         }
         fs.mkdirSync(path.dirname(dest), { recursive: true });
         fs.cpSync(src, dest, { recursive: true });
+      }
+    },
+    // macOS: 다 만든 앱을 ad-hoc으로 다시 서명한다 (진짜 서명 osxSign이 없을 때만).
+    // FusesPlugin은 fuse를 바꾼 뒤 앱을 다시 서명하는데, 그 시점(packageAfterCopy)은 packager가
+    // Info.plist의 번들 ID·이름을 바꾸기 전이다. 그래서 완성된 앱은 com.github.Electron으로 서명된 채
+    // Info.plist만 바뀐 "깨진 서명"(codesign: invalid Info.plist)이 되고, macOS 알림 데몬(usernoted)이
+    // 이 앱의 알림 요청을 전부 거부했다(로그: "Denying message 3 … io.handoo.better-claude" — 재현함).
+    // 다시 서명하면 번들 ID로 서명되고, 첫 알림 때 macOS가 알림 허용을 묻는다.
+    postPackage: async (forgeConfig, { platform, outputPaths }) => {
+      if (platform !== 'darwin' || forgeConfig.packagerConfig.osxSign) return;
+      for (const dir of outputPaths) {
+        for (const entry of fs.readdirSync(dir)) {
+          if (!entry.endsWith('.app')) continue;
+          const app = path.join(dir, entry);
+          execFileSync('codesign', ['--force', '--deep', '--sign', '-', app], { stdio: 'inherit' });
+          // 서명이 맞는지 바로 확인한다 — 깨졌으면 여기서 빌드가 멈춘다
+          execFileSync('codesign', ['--verify', '--deep', '--strict', app], { stdio: 'inherit' });
+        }
       }
     },
   },

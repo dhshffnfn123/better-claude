@@ -5,8 +5,8 @@
   height: 100%;
   overflow: hidden;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  color: #3a3d35;
-  background-color: #f2f0eb;
+  color: var(--c-text);
+  background-color: var(--c-bg);
 }
 
 // 오버레이
@@ -20,7 +20,7 @@
 
   &.overlayVisible {
     pointer-events: auto;
-    background-color: rgba(0, 0, 0, 0.3);
+    background-color: var(--c-scrim);
   }
 }
 
@@ -34,8 +34,8 @@
   flex-direction: column;
   width: 260px;
   height: 100%;
-  color: #f2f0eb;
-  background-color: #3a3d35;
+  color: var(--c-sidebar-text);
+  background-color: var(--c-sidebar-bg);
   transition: transform 0.3s ease;
   transform: translateX(-100%);
 
@@ -48,13 +48,13 @@
   padding: 20px 24px;
   font-size: 16px;
   font-weight: 600;
-  color: #c9a84c;
-  border-bottom: 1px solid #4a5245;
+  color: var(--c-accent);
+  border-bottom: 1px solid var(--c-sidebar-border);
 }
 
 .sidebarNav {
   padding: 12px 0;
-  border-bottom: 1px solid #4a5245;
+  border-bottom: 1px solid var(--c-sidebar-border);
 }
 
 .navItem {
@@ -64,7 +64,7 @@
   transition: background-color 0.15s;
 
   &:hover {
-    background-color: #4a5245;
+    background-color: var(--c-sidebar-hover);
   }
 }
 
@@ -80,7 +80,7 @@
   padding: 6px 24px;
   font-size: 11px;
   font-weight: 600;
-  color: #8a8f7a;
+  color: var(--c-text-muted);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
@@ -94,7 +94,7 @@
   }
 
   &::-webkit-scrollbar-thumb {
-    background-color: #4a5245;
+    background-color: var(--c-sidebar-scrollbar);
     border-radius: 2px;
   }
 }
@@ -106,7 +106,7 @@
   transition: background-color 0.15s;
 
   &:hover {
-    background-color: #4a5245;
+    background-color: var(--c-sidebar-hover);
 
     .convDelete {
       opacity: 1;
@@ -117,7 +117,7 @@
 .convTitle {
   overflow: hidden;
   font-size: 13px;
-  color: #d8d5cc;
+  color: var(--c-sidebar-title);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -125,19 +125,19 @@
 .convMeta {
   margin-top: 2px;
   font-size: 10px;
-  color: #6a6f5e;
+  color: var(--c-text-2);
 }
 
 .convFolder {
   padding: 0 5px;
   margin-right: 6px;
-  color: #a0a896;
-  background-color: rgba(255, 255, 255, 0.06);
+  color: var(--c-sidebar-muted);
+  background-color: var(--c-sidebar-chip);
   border-radius: 4px;
 
   // 작업 폴더가 지워진 세션
   &.convFolderMissing {
-    color: #d98b6f;
+    color: var(--c-sidebar-warn);
     text-decoration: line-through;
   }
 }
@@ -152,7 +152,7 @@
   width: 24px;
   height: 24px;
   font-size: 11px;
-  color: #8a8f7a;
+  color: var(--c-text-muted);
   cursor: pointer;
   background: none;
   border: none;
@@ -162,8 +162,8 @@
   transform: translateY(-50%);
 
   &:hover {
-    color: #e74c3c;
-    background-color: rgba(231, 76, 60, 0.12);
+    color: var(--c-sidebar-danger);
+    background-color: var(--c-sidebar-danger-bg);
   }
 }
 
@@ -176,9 +176,9 @@
   padding: 0 24px;
   font-size: 18px;
   font-weight: 600;
-  color: #f2f0eb;
-  background-color: #4a5245;
-  border-bottom: 1px solid #3a3d35;
+  color: var(--c-header-text);
+  background-color: var(--c-header-bg);
+  border-bottom: 1px solid var(--c-header-border);
 }
 
 .headerIcon {
@@ -195,7 +195,7 @@
   height: 30px;
   padding: 0;
   font-size: 16px;
-  color: #a0a896;
+  color: var(--c-header-icon);
   cursor: pointer;
   background: none;
   border: none;
@@ -203,39 +203,39 @@
   transition: color 0.15s, background-color 0.15s;
 
   &:hover {
-    color: #f2f0eb;
-    background-color: rgba(255, 255, 255, 0.1);
+    color: var(--c-header-text);
+    background-color: var(--c-header-hover);
   }
 
   &.active {
-    color: #c9a84c;
+    color: var(--c-accent);
   }
 }
 
 .ultracodeToggle {
-  // 브라스 계열 토글들과 구분되는 보라색. 헤더 배경(#4a5245) 위에서 읽히도록
+  // 브라스 계열 토글들과 구분되는 보라색. 헤더 배경(--c-header-bg) 위에서 읽히도록
   // 채도를 낮춘 아메시스트로 잡았다.
   &.active {
-    color: #b79ae0;
-    background-color: rgba(167, 139, 216, 0.18);
+    color: var(--c-ultra);
+    background-color: var(--c-ultra-bg);
   }
 
   &.active:hover {
-    color: #cbb3ea;
-    background-color: rgba(167, 139, 216, 0.28);
+    color: var(--c-ultra-hover);
+    background-color: var(--c-ultra-bg-hover);
   }
 }
 
 .fastToggle {
   // ultracode(보라)·권한(브라스)과 구분되는 주황
   &.active {
-    color: #e8a25c;
-    background-color: rgba(232, 162, 92, 0.18);
+    color: var(--c-fast);
+    background-color: var(--c-fast-bg);
   }
 
   &.active:hover {
-    color: #f0b67a;
-    background-color: rgba(232, 162, 92, 0.28);
+    color: var(--c-fast-hover);
+    background-color: var(--c-fast-bg-hover);
   }
 
   &:disabled {
@@ -243,321 +243,14 @@
     opacity: 0.35;
 
     &:hover {
-      color: #a0a896;
+      color: var(--c-header-icon);
       background: none;
     }
   }
 }
 
-.profileWrap {
-  position: relative;
-}
-
-.profileButton {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  height: 30px;
-  padding: 0 10px;
-  font-family: inherit;
-  font-size: 12px;
-  color: #f2f0eb;
-  cursor: pointer;
-  background-color: rgba(255, 255, 255, 0.08);
-  border: none;
-  border-radius: 8px;
-  transition: background-color 0.15s;
-
-  &:hover:not(:disabled) {
-    background-color: rgba(255, 255, 255, 0.16);
-  }
-
-  &:disabled {
-    cursor: not-allowed;
-    opacity: 0.5;
-  }
-
-  &.active {
-    color: #c9a84c;
-    background-color: rgba(201, 168, 76, 0.18);
-  }
-}
-
-.profileButtonName {
-  max-width: 120px;
-  overflow: hidden;
-  font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.profileMenuBackdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 25;
-}
-
-.profileMenu {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 26;
-  display: flex;
-  flex-direction: column;
-  min-width: 200px;
-  padding: 6px;
-  background-color: #fff;
-  border: 1px solid #ddd8b0;
-  border-radius: 10px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
-}
-
-.profileMenuItem {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  padding: 8px 10px;
-  font-size: 13px;
-  color: #3a3d35;
-  cursor: pointer;
-  border-radius: 6px;
-  transition: background-color 0.1s;
-
-  &:hover {
-    background-color: #f2f0eb;
-  }
-
-  &.profileMenuItemActive {
-    color: #8b6330;
-    background-color: #f6f1e0;
-  }
-}
-
-.profileMenuItemName {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.profileMenuItemTitle {
-  overflow: hidden;
-  font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.profileMenuItemEmail {
-  overflow: hidden;
-  font-size: 11px;
-  color: #8a8f7a;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.profileMenuDivider {
-  height: 1px;
-  margin: 4px 2px;
-  background-color: #eae7de;
-}
-
-.loginSteps {
-  box-sizing: border-box;
-  width: 100%;
-  padding-left: 20px;
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.6;
-  color: #4a5245;
-  text-align: left;
-
-  li {
-    margin-bottom: 4px;
-  }
-
-  code {
-    padding: 1px 6px;
-    font-family: "SFMono-Regular", Consolas, monospace;
-    font-size: 12px;
-    color: #8b6330;
-    background-color: #f2f0eb;
-    border-radius: 4px;
-  }
-}
-
-.loginError {
-  width: 100%;
-  padding: 8px 12px;
-  font-size: 12px;
-  color: #c0392b;
-  text-align: left;
-  background-color: rgba(231, 76, 60, 0.08);
-  border-radius: 8px;
-}
-
-.loginLogDetails {
-  width: 100%;
-  font-size: 11px;
-  color: #8a8f7a;
-  text-align: left;
-
-  summary {
-    padding: 4px 0;
-    cursor: pointer;
-    user-select: none;
-  }
-}
-
-.loginLog {
-  box-sizing: border-box;
-  width: 100%;
-  max-height: 120px;
-  padding: 8px 10px;
-  margin: 4px 0 0;
-  overflow-y: auto;
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 10px;
-  line-height: 1.5;
-  color: #4a5245;
-  text-align: left;
-  white-space: pre-wrap;
-  word-break: break-all;
-  background-color: #f2f0eb;
-  border: 1px solid #ddd8b0;
-  border-radius: 8px;
-}
-
-.modalInput {
-  box-sizing: border-box;
-  width: 100%;
-  height: 40px;
-  padding: 0 14px;
-  margin: 4px 0;
-  font-family: inherit;
-  font-size: 13px;
-  color: #3a3d35;
-  background-color: #fff;
-  border: 1px solid #ddd8b0;
-  border-radius: 10px;
-  outline: none;
-  transition: border-color 0.15s;
-
-  &::placeholder {
-    color: #b0ad9e;
-  }
-
-  &:focus {
-    border-color: #c9a84c;
-  }
-}
-
-.importCheck {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  width: 100%;
-  font-size: 12px;
-  color: #4a5245;
-
-  code {
-    padding: 1px 5px;
-    font-family: "SFMono-Regular", Consolas, monospace;
-    font-size: 11px;
-    background-color: #f2f0eb;
-    border-radius: 4px;
-  }
-}
-
 .modalWide {
   width: 480px;
-}
-
-.profileManageList {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  width: 100%;
-}
-
-.profileManageItem {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  padding: 10px 12px;
-  background-color: #f2f0eb;
-  border-radius: 10px;
-}
-
-.profileManageItemName {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-  text-align: left;
-}
-
-.profileManageItemTitle {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  overflow: hidden;
-  font-size: 13px;
-  font-weight: 500;
-  color: #3a3d35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.profileManageItemEmail {
-  overflow: hidden;
-  font-size: 11px;
-  color: #8a8f7a;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-
-.profileManageBadge {
-  padding: 1px 6px;
-  font-size: 10px;
-  color: #8b6330;
-  background-color: #f6e4bf;
-  border-radius: 8px;
-}
-
-.profileManageActions {
-  display: flex;
-  gap: 4px;
-}
-
-.profileManageBtn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  font-size: 12px;
-  color: #8a8f7a;
-  cursor: pointer;
-  background: none;
-  border: none;
-  border-radius: 6px;
-  transition: color 0.15s, background-color 0.15s;
-
-  &:hover:not(:disabled) {
-    color: #4a5245;
-    background-color: rgba(0, 0, 0, 0.06);
-  }
-
-  &:disabled {
-    cursor: not-allowed;
-    opacity: 0.4;
-  }
-
-  &.danger:hover:not(:disabled) {
-    color: #e74c3c;
-    background-color: rgba(231, 76, 60, 0.1);
-  }
 }
 
 .menuButton {
@@ -569,14 +262,14 @@
   height: 28px;
   padding: 0;
   font-size: 18px;
-  color: #f2f0eb;
+  color: var(--c-header-text);
   cursor: pointer;
   background: none;
   border: none;
   transition: color 0.15s;
 
   &:hover {
-    color: #c9a84c;
+    color: var(--c-accent);
   }
 }
 
@@ -587,8 +280,8 @@
   align-items: center;
   height: 32px;
   padding: 0 12px 0 16px;
-  background-color: #eae7de;
-  border-bottom: 1px solid #ddd8b0;
+  background-color: var(--c-toolbar-bg);
+  border-bottom: 1px solid var(--c-border);
 }
 
 .cwdLeft {
@@ -602,21 +295,21 @@
   transition: background-color 0.15s;
 
   &:hover .cwdPath {
-    color: #4a5245;
+    color: var(--c-text-soft);
   }
 }
 
 .cwdIcon {
   flex-shrink: 0;
   font-size: 11px;
-  color: #a0a896;
+  color: var(--c-text-faint);
 }
 
 .cwdPath {
   overflow: hidden;
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 11px;
-  color: #8a8f7a;
+  color: var(--c-text-muted);
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -630,9 +323,9 @@
   padding: 0 20px 0 8px;
   font-family: inherit;
   font-size: 11px;
-  color: #4a5245;
+  color: var(--c-text-soft);
   cursor: pointer;
-  background-color: #ddd8b0;
+  background-color: var(--c-select-bg);
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath fill='%238a8f7a' d='M0 0l4 5 4-5z'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 6px center;
@@ -643,17 +336,17 @@
   appearance: none;
 
   &:hover {
-    background-color: #ccc8a0;
+    background-color: var(--c-select-bg-hover);
   }
 
   &:focus {
-    background-color: #ccc8a0;
+    background-color: var(--c-select-bg-hover);
   }
 
   &:disabled {
-    color: #8a8f7a;
+    color: var(--c-text-muted);
     cursor: default;
-    background-color: #d5d1ae;
+    background-color: var(--c-select-bg-disabled);
     opacity: 0.65;
   }
 }
@@ -665,21 +358,21 @@
   align-items: center;
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 11px;
-  color: #8a8f7a;
+  color: var(--c-text-muted);
   white-space: nowrap;
   cursor: default;
 
   &.sessionStatWarn {
-    color: #b08a2e;
+    color: var(--c-stat-warn);
   }
 
   &.sessionStatDanger {
-    color: #b5533c;
+    color: var(--c-danger);
   }
 }
 
 .backgroundStat {
-  color: #6f7d5f;
+  color: var(--c-task-text);
   cursor: pointer;
   border-radius: 4px;
   outline: none;
@@ -687,12 +380,12 @@
   &:hover,
   &:focus-visible,
   &.backgroundStatOpen {
-    color: #3a3d35;
+    color: var(--c-text);
   }
 
   // 실행 중인 건 없고 끝난 기록만 있을 때
   &.backgroundStatIdle {
-    color: #a0a896;
+    color: var(--c-text-faint);
   }
 }
 
@@ -714,9 +407,9 @@
   max-height: 70vh;
   padding: 12px;
   overflow: hidden;
-  background-color: #fff;
+  background-color: var(--c-elevated);
   border-radius: 12px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--sh-popover);
 }
 
 .bgPanelHeader {
@@ -732,7 +425,7 @@
   align-items: center;
   font-size: 13px;
   font-weight: 700;
-  color: #3a3d35;
+  color: var(--c-text);
 }
 
 .bgStopAll {
@@ -742,14 +435,14 @@
   padding: 4px 10px;
   font-size: 11px;
   font-weight: 600;
-  color: #b5533c;
+  color: var(--c-danger);
   cursor: pointer;
-  background-color: #fbeeea;
+  background-color: var(--c-danger-soft);
   border: none;
   border-radius: 6px;
 
   &:hover {
-    background-color: #f6dfd8;
+    background-color: var(--c-danger-soft-hover);
   }
 }
 
@@ -758,7 +451,7 @@
   margin: 6px 0 10px;
   font-size: 11px;
   line-height: 1.5;
-  color: #8a8f7a;
+  color: var(--c-text-muted);
 }
 
 .bgList {
@@ -774,7 +467,7 @@
   flex-direction: column;
   gap: 5px;
   padding: 10px 12px;
-  background-color: #f7f5ef;
+  background-color: var(--c-fill-subtle);
   border-radius: 8px;
 }
 
@@ -793,7 +486,7 @@
   overflow: hidden;
   font-size: 11px;
   font-weight: 600;
-  color: #6f7d5f;
+  color: var(--c-task-text);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -801,7 +494,7 @@
 .bgTaskElapsed {
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 11px;
-  color: #8a8f7a;
+  color: var(--c-text-muted);
 }
 
 .bgTaskStop {
@@ -812,22 +505,22 @@
   height: 20px;
   padding: 0;
   font-size: 11px;
-  color: #a0a896;
+  color: var(--c-text-faint);
   cursor: pointer;
   background: none;
   border: none;
   border-radius: 4px;
 
   &:hover {
-    color: #b5533c;
-    background-color: #fbeeea;
+    color: var(--c-danger);
+    background-color: var(--c-danger-soft);
   }
 }
 
 .bgTaskDesc {
   font-size: 12px;
   font-weight: 600;
-  color: #3a3d35;
+  color: var(--c-text);
   word-break: break-word;
 }
 
@@ -838,27 +531,27 @@
   padding: 5px 8px;
   overflow: hidden;
   font-size: 11px;
-  color: #4a5245;
+  color: var(--c-text-soft);
   text-overflow: ellipsis;
   white-space: nowrap;
-  background-color: #eeebe2;
+  background-color: var(--c-fill-neutral);
   border-radius: 5px;
 }
 
 .bgTaskActivity {
   font-size: 11px;
   line-height: 1.5;
-  color: #4a5245;
+  color: var(--c-text-soft);
 }
 
 .bgTaskMeta {
   font-size: 11px;
-  color: #8a8f7a;
+  color: var(--c-text-muted);
 }
 
 .bgTaskPrompt {
   font-size: 11px;
-  color: #8a8f7a;
+  color: var(--c-text-muted);
 
   summary {
     cursor: pointer;
@@ -869,7 +562,7 @@
     margin: 4px 0 0;
     overflow-y: auto;
     line-height: 1.5;
-    color: #4a5245;
+    color: var(--c-text-soft);
     white-space: pre-wrap;
   }
 }
@@ -883,41 +576,41 @@
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 11px;
   line-height: 1.45;
-  color: #e8e6df;
+  color: var(--c-terminal-text);
   word-break: break-all;
   white-space: pre-wrap;
-  background-color: #2f322b;
+  background-color: var(--c-terminal-bg);
   border-radius: 6px;
 }
 
 .bgOutputCut {
-  color: #8a8f7a;
+  color: var(--c-text-muted);
 }
 
 .bgFinishedHeader {
   padding-top: 6px;
   margin-top: 4px;
-  border-top: 1px solid #ece9de;
+  border-top: 1px solid var(--c-divider-alt);
 }
 
 .bgClear {
   padding: 3px 8px;
   font-size: 11px;
-  color: #8a8f7a;
+  color: var(--c-text-muted);
   cursor: pointer;
   background: none;
-  border: 1px solid #e3dfd2;
+  border: 1px solid var(--c-border-neutral);
   border-radius: 6px;
 
   &:hover {
-    color: #3a3d35;
-    background-color: #f2f0eb;
+    color: var(--c-text);
+    background-color: var(--c-fill);
   }
 }
 
 // 끝난 작업 카드 — 접혀 있고 눌러서 펼친다
 .bgTaskDone {
-  background-color: #fbfaf6;
+  background-color: var(--c-fill-subtle-2);
 
   summary {
     list-style: none;
@@ -940,18 +633,18 @@
   border-radius: 4px;
 
   &.completed {
-    color: #4f7a3f;
-    background-color: #e8f1e1;
+    color: var(--c-success-text);
+    background-color: var(--c-success-soft);
   }
 
   &.failed {
-    color: #b5533c;
-    background-color: #fbeeea;
+    color: var(--c-danger);
+    background-color: var(--c-danger-soft);
   }
 
   &.stopped {
-    color: #8a8f7a;
-    background-color: #eeebe2;
+    color: var(--c-text-muted);
+    background-color: var(--c-fill-neutral);
   }
 }
 
@@ -970,10 +663,10 @@
   min-width: 0;
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 11px;
-  color: #4a5245;
+  color: var(--c-text-soft);
 
   &.error {
-    color: #b5533c;
+    color: var(--c-danger);
   }
 }
 
@@ -981,14 +674,14 @@
   flex-shrink: 0;
   width: 10px;
   font-size: 9px;
-  color: #a0a896;
+  color: var(--c-text-faint);
 
   .done & {
-    color: #6f9a5f;
+    color: var(--c-ok);
   }
 
   .error & {
-    color: #b5533c;
+    color: var(--c-danger);
   }
 }
 
@@ -999,7 +692,7 @@
 
 .bgStepTarget {
   overflow: hidden;
-  color: #8a8f7a;
+  color: var(--c-text-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1007,7 +700,7 @@
 .bgOutputEmpty {
   padding: 6px 2px 0;
   font-size: 11px;
-  color: #a0a896;
+  color: var(--c-text-faint);
 }
 
 .backgroundStop {
@@ -1022,7 +715,7 @@
   border-radius: 4px;
 
   &:hover {
-    color: #b5533c;
+    color: var(--c-danger);
   }
 }
 
@@ -1031,15 +724,16 @@
   flex-shrink: 0;
 }
 
+// 버튼이라 기본 글꼴이 붙는데, font: inherit로 지우면 .sessionStat의 11px 고정폭 글꼴까지 지워져
+// MCP 표시만 16px로 커졌다 — 글꼴은 .sessionStat 것을 그대로 쓴다
 .mcpStat {
   padding: 0;
-  font: inherit;
   cursor: pointer;
   background: none;
   border: none;
 
   &:hover {
-    color: #4a5245;
+    color: var(--c-text-soft);
   }
 }
 
@@ -1061,9 +755,9 @@
   max-height: 320px;
   padding: 8px;
   overflow-y: auto;
-  background-color: #fff;
+  background-color: var(--c-elevated);
   border-radius: 10px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.16);
+  box-shadow: var(--sh-popover-sm);
 }
 
 .mcpPopoverHeader {
@@ -1073,21 +767,21 @@
   padding: 2px 6px 6px;
   font-size: 12px;
   font-weight: 700;
-  color: #3a3d35;
+  color: var(--c-text);
 }
 
 .mcpRefresh {
   padding: 2px 4px;
   font-size: 11px;
-  color: #8a8f7a;
+  color: var(--c-text-muted);
   cursor: pointer;
   background: none;
   border: none;
   border-radius: 4px;
 
   &:hover {
-    color: #3a3d35;
-    background-color: #f2f0eb;
+    color: var(--c-text);
+    background-color: var(--c-fill);
   }
 }
 
@@ -1101,34 +795,34 @@
   border-radius: 6px;
 
   &:hover {
-    background-color: #f7f5ef;
+    background-color: var(--c-fill-subtle);
   }
 }
 
 .mcpDot {
   width: 7px;
   height: 7px;
-  background-color: #a0a896;
+  background-color: var(--c-text-faint);
   border-radius: 50%;
 
   &.mcpDot-connected {
-    background-color: #6f9a5f;
+    background-color: var(--c-ok);
   }
 
   &.mcpDot-failed {
-    background-color: #b5533c;
+    background-color: var(--c-danger);
   }
 
   &.mcpDot-needs-auth,
   &.mcpDot-pending {
-    background-color: #c9a84c;
+    background-color: var(--c-accent);
   }
 }
 
 .mcpName {
   overflow: hidden;
   font-weight: 600;
-  color: #3a3d35;
+  color: var(--c-text);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1138,11 +832,11 @@
 .mcpHint {
   grid-column: 2;
   font-size: 11px;
-  color: #8a8f7a;
+  color: var(--c-text-muted);
 }
 
 .mcpError {
-  color: #b5533c;
+  color: var(--c-danger);
   word-break: break-all;
 }
 
@@ -1150,8 +844,8 @@
   padding: 4px 6px;
   margin-top: 2px;
   line-height: 1.45;
-  color: #8a6d1f;
-  background-color: #fbf6e6;
+  color: var(--c-accent-text);
+  background-color: var(--c-note-bg);
   border-radius: 5px;
 }
 
@@ -1160,7 +854,7 @@
   width: 36px;
   height: 5px;
   overflow: hidden;
-  background-color: #ddd8b0;
+  background-color: var(--c-gauge-track);
   border-radius: 3px;
 }
 
@@ -1193,7 +887,7 @@
   }
 
   &::-webkit-scrollbar-thumb {
-    background-color: #ddd8b0;
+    background-color: var(--c-scrollbar);
     border-radius: 3px;
   }
 }
@@ -1209,12 +903,12 @@
   width: 36px;
   height: 36px;
   font-size: 14px;
-  color: #4a5245;
+  color: var(--c-text-soft);
   cursor: pointer;
-  background-color: #fff;
-  border: 1px solid #e8e4d8;
+  background-color: var(--c-elevated);
+  border: 1px solid var(--c-divider);
   border-radius: 50%;
-  box-shadow: 0 2px 8px rgba(58, 61, 53, 0.15);
+  box-shadow: var(--sh-float);
   opacity: 0;
   pointer-events: none;
   transform: translateY(8px);
@@ -1227,9 +921,50 @@
   }
 
   &:hover {
-    color: #c9a84c;
-    background-color: #f7f4ea;
-    border-color: #c9a84c;
+    color: var(--c-accent);
+    background-color: var(--c-float-hover);
+    border-color: var(--c-accent);
+  }
+
+  &:active {
+    transform: translateY(1px);
+  }
+}
+
+// 긴 Claude 답변을 읽는 중 그 답변의 시작이 위로 가려지면 뜬다 — 오른쪽 위(맨 아래로 버튼과 같은 쪽)
+.jumpReplyButton {
+  position: absolute;
+  top: 12px;
+  right: 20px;
+  z-index: 5;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  height: 30px;
+  padding: 0 12px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--c-text-soft);
+  pointer-events: none;
+  cursor: pointer;
+  background-color: var(--c-elevated);
+  border: 1px solid var(--c-divider);
+  border-radius: 15px;
+  box-shadow: var(--sh-float);
+  opacity: 0;
+  transition: opacity 0.18s ease, transform 0.18s ease, background-color 0.15s, border-color 0.15s;
+  transform: translateY(-8px);
+
+  &.visible {
+    pointer-events: auto;
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  &:hover {
+    color: var(--c-accent);
+    background-color: var(--c-float-hover);
+    border-color: var(--c-accent);
   }
 
   &:active {
@@ -1267,15 +1002,15 @@
 }
 
 .noticeError {
-  color: #a54f32;
-  background-color: #faeee9;
-  border-color: #e8cfc4;
+  color: var(--c-error);
+  background-color: var(--c-error-soft);
+  border-color: var(--c-error-border);
 }
 
 .noticeWarning {
-  color: #8b6330;
-  background-color: #faf3e2;
-  border-color: #e8dcbc;
+  color: var(--c-warning-text);
+  background-color: var(--c-warning-soft);
+  border-color: var(--c-warning-border);
 }
 
 .noticeIcon {
@@ -1318,7 +1053,7 @@
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-all;
-  background-color: rgba(0, 0, 0, 0.04);
+  background-color: var(--c-tint-subtle);
   border-radius: 6px;
 }
 
@@ -1346,15 +1081,15 @@
   border-radius: 18px;
 
   .user & {
-    color: #fff;
-    background-color: #c9a84c;
+    color: var(--c-user-bubble-text);
+    background-color: var(--c-user-bubble-bg);
     border-bottom-right-radius: 4px;
   }
 
   .assistant & {
-    color: #3a3d35;
-    background-color: #fff;
-    border: 1px solid #ddd8b0;
+    color: var(--c-text);
+    background-color: var(--c-surface);
+    border: 1px solid var(--c-border);
     border-bottom-left-radius: 4px;
   }
 }
@@ -1385,16 +1120,16 @@
   align-items: center;
   padding: 4px 10px;
   font-size: 12px;
-  color: #8a8f7a;
+  color: var(--c-text-muted);
   cursor: pointer;
   background-color: transparent;
-  border: 1px solid #ddd8b0;
+  border: 1px solid var(--c-border);
   border-radius: 8px;
   transition: color 0.12s ease, background-color 0.12s ease;
 
   &:hover {
-    color: #3a3d35;
-    background-color: #f2f0eb;
+    color: var(--c-text);
+    background-color: var(--c-fill);
   }
 }
 
@@ -1405,8 +1140,8 @@
   width: 420px;
   max-width: 100%;
   padding: 10px;
-  background-color: #fff;
-  border: 1px solid #ddd8b0;
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-border);
   border-radius: 14px;
 }
 
@@ -1416,10 +1151,10 @@
   font-family: inherit;
   font-size: 14px;
   line-height: 1.5;
-  color: #3a3d35;
+  color: var(--c-text);
   resize: none;
-  background-color: #f2f0eb;
-  border: 1px solid #ddd8b0;
+  background-color: var(--c-input-bg);
+  border: 1px solid var(--c-border);
   border-radius: 10px;
   outline: none;
 }
@@ -1433,37 +1168,26 @@
 .editBtn {
   padding: 6px 14px;
   font-size: 13px;
-  color: #3a3d35;
+  color: var(--c-text);
   cursor: pointer;
-  background-color: #f2f0eb;
-  border: 1px solid #ddd8b0;
+  background-color: var(--c-fill);
+  border: 1px solid var(--c-border);
   border-radius: 8px;
   transition: background-color 0.12s ease;
 
   &:hover {
-    background-color: #e8e4d8;
+    background-color: var(--c-fill-strong);
   }
 }
 
 .editBtnPrimary {
-  color: #fff;
-  background-color: #c9a84c;
-  border-color: #c9a84c;
+  color: var(--c-on-accent);
+  background-color: var(--c-accent);
+  border-color: var(--c-accent);
 
   &:hover {
-    background-color: #b89a44;
+    background-color: var(--c-accent-hover);
   }
-}
-
-.statusBar {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  padding: 8px 24px;
-  font-size: 12px;
-  color: #8a8f7a;
-  background-color: #f2f0eb;
-  border-top: 1px solid #e8e4d8;
 }
 
 .statusDots {
@@ -1475,7 +1199,7 @@
     display: inline-block;
     width: 5px;
     height: 5px;
-    background-color: #c9a84c;
+    background-color: var(--c-accent);
     border-radius: 50%;
     animation: bounce 1.2s ease-in-out infinite;
 
@@ -1492,8 +1216,8 @@
   display: inline-block;
   width: 12px;
   height: 12px;
-  border: 2px solid #ddd8b0;
-  border-top-color: #c9a84c;
+  border: 2px solid var(--c-border);
+  border-top-color: var(--c-accent);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -1510,9 +1234,9 @@
   gap: 6px;
   padding: 10px 24px;
   font-size: 12px;
-  color: #8a8f7a;
-  background-color: #f2f0eb;
-  border-top: 1px solid #e8e4d8;
+  color: var(--c-text-muted);
+  background-color: var(--c-bg);
+  border-top: 1px solid var(--c-divider);
 }
 
 .activityHeader {
@@ -1520,7 +1244,7 @@
   gap: 12px;
   align-items: center;
   font-size: 12px;
-  color: #6a6f5e;
+  color: var(--c-text-2);
 }
 
 .activityLabel {
@@ -1528,7 +1252,7 @@
   gap: 8px;
   align-items: center;
   font-weight: 500;
-  color: #4a5245;
+  color: var(--c-text-soft);
 }
 
 .activitySpacer {
@@ -1538,16 +1262,16 @@
 .activityTimer {
   font-family: "SF Mono", Menlo, Consolas, monospace;
   font-size: 11px;
-  color: #8a8f7a;
+  color: var(--c-text-muted);
 }
 
 .activityTokens {
   padding: 2px 8px;
   font-family: "SF Mono", Menlo, Consolas, monospace;
   font-size: 11px;
-  color: #6a6f5e;
-  background-color: #fff;
-  border: 1px solid #e8e4d8;
+  color: var(--c-text-2);
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-divider);
   border-radius: 10px;
 }
 
@@ -1558,23 +1282,12 @@
   max-height: 260px;
   padding: 6px 0 2px 4px;
   overflow-y: auto;
-  border-top: 1px dashed #e8e4d8;
+  border-top: 1px dashed var(--c-divider);
 }
 
 .toolRowGroup {
   display: flex;
   flex-direction: column;
-}
-
-.messageToolList {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  margin-top: 8px;
-  padding: 6px 8px;
-  background-color: #f9f6e8;
-  border: 1px solid #e8e3c0;
-  border-radius: 8px;
 }
 
 .toolRow {
@@ -1586,12 +1299,12 @@
   font-family: "SF Mono", Menlo, Consolas, monospace;
   font-size: 11px;
   line-height: 1.5;
-  color: #4a5245;
+  color: var(--c-text-soft);
   border-radius: 4px;
   transition: background-color 0.15s;
 
   &:hover {
-    background-color: #ece9de;
+    background-color: var(--c-hover-alt);
   }
 
   // 서브에이전트(Agent 도구)가 쓴 도구 — 들여 써서 구분한다
@@ -1601,22 +1314,22 @@
   }
 
   &.running .toolIcon {
-    color: #c9a84c;
+    color: var(--c-accent);
   }
 
   &.done .toolIcon {
-    color: #5a8a5a;
+    color: var(--c-tool-done);
   }
 
   &.error {
-    color: #a54f32;
+    color: var(--c-error);
 
     .toolIcon {
-      color: #a54f32;
+      color: var(--c-error);
     }
 
     .toolName {
-      color: #a54f32;
+      color: var(--c-error);
     }
   }
 }
@@ -1629,7 +1342,7 @@
   flex-shrink: 0;
   width: 10px;
   font-size: 9px;
-  color: #8a8f7a;
+  color: var(--c-text-muted);
 }
 
 .toolDiff {
@@ -1639,8 +1352,8 @@
   font-family: "SF Mono", Menlo, Consolas, monospace;
   font-size: 11px;
   line-height: 1.5;
-  background-color: #fbf8eb;
-  border: 1px solid #e8e3c0;
+  background-color: var(--c-diff-bg);
+  border: 1px solid var(--c-diff-border);
   border-radius: 4px;
 }
 
@@ -1648,7 +1361,7 @@
   padding: 4px 0;
 
   & + & {
-    border-top: 1px dashed #e8e3c0;
+    border-top: 1px dashed var(--c-diff-border);
   }
 }
 
@@ -1656,7 +1369,7 @@
   padding: 0 8px 2px;
   font-size: 10px;
   font-weight: 600;
-  color: #8a8f7a;
+  color: var(--c-text-muted);
 }
 
 .diffLine {
@@ -1679,30 +1392,30 @@
 }
 
 .diffRemove {
-  background-color: rgba(220, 38, 38, 0.08);
+  background-color: var(--c-diff-del-bg);
 
   .diffMarker,
   .diffText {
-    color: #991b1b;
+    color: var(--c-diff-del-text);
   }
 }
 
 .diffAdd {
-  background-color: rgba(34, 197, 94, 0.1);
+  background-color: var(--c-diff-add-bg);
 
   .diffMarker,
   .diffText {
-    color: #14532d;
+    color: var(--c-diff-add-text);
   }
 }
 
 .diffContext {
   .diffMarker {
-    color: #b5b099;
+    color: var(--c-text-ghost);
   }
 
   .diffText {
-    color: #6a6f5a;
+    color: var(--c-diff-context-text);
   }
 }
 
@@ -1715,18 +1428,18 @@
 .toolName {
   flex-shrink: 0;
   font-weight: 600;
-  color: #3a3d35;
+  color: var(--c-text);
 }
 
 .toolInput {
   min-width: 0;
-  color: #8a8f7a;
+  color: var(--c-text-muted);
   word-break: break-all;
 }
 
 .thinkingSection {
   padding-top: 4px;
-  border-top: 1px dashed #e8e4d8;
+  border-top: 1px dashed var(--c-divider);
 }
 
 .thinkingToggle {
@@ -1735,7 +1448,7 @@
   align-items: center;
   padding: 4px 6px;
   font-size: 11px;
-  color: #6a6f5e;
+  color: var(--c-text-2);
   cursor: pointer;
   background: none;
   border: none;
@@ -1743,8 +1456,8 @@
   transition: background-color 0.15s, color 0.15s;
 
   &:hover {
-    color: #3a3d35;
-    background-color: #ece9de;
+    color: var(--c-text);
+    background-color: var(--c-hover-alt);
   }
 }
 
@@ -1756,10 +1469,10 @@
   font-family: "SF Mono", Menlo, Consolas, monospace;
   font-size: 11px;
   line-height: 1.6;
-  color: #4a5245;
+  color: var(--c-text-soft);
   white-space: pre-wrap;
-  background-color: #fff;
-  border: 1px solid #e8e4d8;
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-divider);
   border-radius: 6px;
 }
 
@@ -1767,7 +1480,7 @@
   position: fixed;
   inset: 0;
   z-index: 30;
-  background-color: rgba(0, 0, 0, 0.4);
+  background-color: var(--c-modal-scrim);
 }
 
 .modal {
@@ -1782,28 +1495,28 @@
   width: 360px;
   padding: 32px 28px;
   text-align: center;
-  background-color: #fff;
+  background-color: var(--c-elevated);
   border-radius: 16px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--sh-modal);
   transform: translate(-50%, -50%);
 }
 
 .modalIcon {
   font-size: 28px;
-  color: #c9a84c;
+  color: var(--c-accent);
 }
 
 .modalTitle {
   margin: 0;
   font-size: 16px;
   font-weight: 700;
-  color: #3a3d35;
+  color: var(--c-text);
 }
 
 .modalDesc {
   margin: 0;
   font-size: 13px;
-  color: #8a8f7a;
+  color: var(--c-text-muted);
 }
 
 .modalPath {
@@ -1812,9 +1525,9 @@
   width: 100%;
   padding: 8px 12px;
   font-size: 12px;
-  color: #4a5245;
+  color: var(--c-text-soft);
   word-break: break-all;
-  background-color: #f2f0eb;
+  background-color: var(--c-fill);
   border-radius: 8px;
 }
 
@@ -1827,22 +1540,22 @@
   padding: 8px 12px;
   font-size: 13px;
   font-weight: 600;
-  color: #4a5245;
+  color: var(--c-text-soft);
   cursor: pointer;
   background: none;
-  border: 1px dashed #c9c4a0;
+  border: 1px dashed var(--c-border-strong);
   border-radius: 10px;
   transition: background-color 0.15s;
 
   &:hover {
-    background-color: #f2f0eb;
+    background-color: var(--c-fill);
   }
 }
 
 .modalAlwaysHint {
   margin: -4px 0 0;
   font-size: 11px;
-  color: #a0a896;
+  color: var(--c-text-faint);
 }
 
 .modalAlwaysRule {
@@ -1851,7 +1564,7 @@
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 11px;
   font-weight: 400;
-  color: #8a8f7a;
+  color: var(--c-text-muted);
   white-space: nowrap;
 }
 
@@ -1875,9 +1588,9 @@
   margin: 0;
   font-size: 11px;
   line-height: 1.5;
-  color: #8a6d1f;
+  color: var(--c-accent-text);
   text-align: left;
-  background-color: #fbf6e6;
+  background-color: var(--c-note-bg);
   border-radius: 8px;
 }
 
@@ -1887,9 +1600,9 @@
   width: 100%;
   padding: 6px 10px;
   font-size: 12px;
-  color: #4a5245;
+  color: var(--c-text-soft);
   white-space: nowrap;
-  background-color: #f2f0eb;
+  background-color: var(--c-fill);
   border-radius: 6px;
 }
 
@@ -1915,13 +1628,13 @@
  }
 
   &.deny {
-    color: #8a8f7a;
-    background-color: #f2f0eb;
+    color: var(--c-text-muted);
+    background-color: var(--c-fill);
   }
 
   &.allow {
-    color: #fff;
-    background-color: #4a5245;
+    color: var(--c-on-fill);
+    background-color: var(--c-primary);
   }
 }
 
@@ -1955,42 +1668,42 @@
       padding: 1px 5px;
       font-family: "SFMono-Regular", Consolas, monospace;
       font-size: 12px;
-      background-color: rgba(0, 0, 0, 0.06);
+      background-color: var(--c-tint);
       border-radius: 4px;
     }
     pre {
       padding: 12px;
       margin: 8px 0;
       overflow-x: auto;
-      background-color: #2c2c2c;
+      background-color: var(--c-code-bg);
       border-radius: 8px;
       code {
         padding: 0;
         font-size: 12px;
-        color: #e8d9b5;
+        color: var(--c-code-text);
         background: none;
       }
     }
     blockquote {
       padding-left: 10px;
       margin: 6px 0;
-      color: #8a8f7a;
-      border-left: 3px solid #ddd8b0;
+      color: var(--c-text-muted);
+      border-left: 3px solid var(--c-border);
     }
     table {
  margin: 8px 0; font-size: 13px; border-collapse: collapse;
  }
     th, td {
- padding: 5px 10px; border: 1px solid #ddd8b0;
+ padding: 5px 10px; border: 1px solid var(--c-border);
  }
     th {
- font-weight: 600; background-color: #f2f0eb;
+ font-weight: 600; background-color: var(--c-fill);
  }
     hr {
- margin: 10px 0; border: none; border-top: 1px solid #ddd8b0;
+ margin: 10px 0; border: none; border-top: 1px solid var(--c-border);
  }
     a {
- color: #8b6330; text-decoration: underline;
+ color: var(--c-link); text-decoration: underline;
  }
   }
 }
@@ -2005,7 +1718,7 @@
     display: inline-block;
     width: 6px;
     height: 6px;
-    background-color: #aaa89a;
+    background-color: var(--c-dots);
     border-radius: 50%;
     animation: bounce 1.2s ease-in-out infinite;
 
@@ -2033,7 +1746,7 @@
   align-items: center;
   margin-bottom: 4px;
   font-size: 11px;
-  color: #8a8f7a;
+  color: var(--c-text-muted);
 
   .user & {
     justify-content: flex-end;
@@ -2050,8 +1763,8 @@
 .tokenBadge {
   padding: 1px 6px;
   font-size: 10px;
-  color: #a0a896;
-  background-color: #e8e4d8;
+  color: var(--c-token-badge-text);
+  background-color: var(--c-fill-strong);
   border-radius: 10px;
 }
 
@@ -2060,12 +1773,12 @@
   display: flex;
   flex-direction: column;
   gap: 0;
-  background-color: #fff;
-  border-top: 1px solid #ddd8b0;
+  background-color: var(--c-surface);
+  border-top: 1px solid var(--c-border);
 }
 
 .inputAreaDragging {
-  background-color: #faf6e6;
+  background-color: var(--c-drop-bg);
 }
 
 .dragOverlay {
@@ -2078,10 +1791,10 @@
   justify-content: center;
   font-size: 14px;
   font-weight: 600;
-  color: #8a7a3a;
+  color: var(--c-drop-text);
   pointer-events: none;
-  background-color: rgba(245, 239, 214, 0.85);
-  border: 2px dashed #c9a84c;
+  background-color: var(--c-drop-overlay);
+  border: 2px dashed var(--c-accent);
   border-radius: 4px;
 }
 
@@ -2094,17 +1807,17 @@
   max-height: 240px;
   margin-bottom: 6px;
   overflow-y: auto;
-  background-color: #fff;
-  border: 1px solid #ddd8b0;
+  background-color: var(--c-elevated);
+  border: 1px solid var(--c-border);
   border-radius: 8px;
-  box-shadow: 0 -4px 16px rgba(58, 61, 53, 0.1);
+  box-shadow: var(--sh-dropdown);
 
   &::-webkit-scrollbar {
     width: 6px;
   }
 
   &::-webkit-scrollbar-thumb {
-    background-color: #ddd8b0;
+    background-color: var(--c-scrollbar);
     border-radius: 3px;
   }
 }
@@ -2115,14 +1828,14 @@
   gap: 2px;
   padding: 8px 14px;
   cursor: pointer;
-  border-bottom: 1px solid #f2f0eb;
+  border-bottom: 1px solid var(--c-divider-faint);
 
   &:last-child {
     border-bottom: none;
   }
 
   &.commandItemActive {
-    background-color: #eae7de;
+    background-color: var(--c-item-active);
   }
 }
 
@@ -2136,19 +1849,19 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 13px;
   font-weight: 600;
-  color: #3a3d35;
+  color: var(--c-text);
 }
 
 .commandHint {
   font-weight: 400;
-  color: #a0a896;
+  color: var(--c-text-faint);
 }
 
 .commandSource {
   margin-left: auto;
   font-size: 9px;
   font-weight: 600;
-  color: #c9a84c;
+  color: var(--c-accent);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
@@ -2156,7 +1869,7 @@
 .commandDesc {
   overflow: hidden;
   font-size: 11px;
-  color: #8a8f7a;
+  color: var(--c-text-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2170,17 +1883,17 @@
   max-height: 260px;
   margin-bottom: 6px;
   overflow-y: auto;
-  background-color: #fffdf7;
-  border: 1px solid #e3dcc0;
+  background-color: var(--c-surface-warm);
+  border: 1px solid var(--c-border-soft);
   border-radius: 10px;
-  box-shadow: 0 -6px 20px rgba(58, 61, 53, 0.12);
+  box-shadow: var(--sh-dropdown-2);
 
   &::-webkit-scrollbar {
     width: 6px;
   }
 
   &::-webkit-scrollbar-thumb {
-    background-color: #ddd8b0;
+    background-color: var(--c-scrollbar);
     border-radius: 3px;
   }
 }
@@ -2193,7 +1906,7 @@
   cursor: pointer;
 
   &.mentionItemActive {
-    background-color: #f3edda;
+    background-color: var(--c-mention-active);
   }
 }
 
@@ -2208,7 +1921,7 @@
   flex-shrink: 0;
   font-size: 13px;
   font-weight: 600;
-  color: #3a3d35;
+  color: var(--c-text);
 }
 
 .mentionPath {
@@ -2219,13 +1932,13 @@
   margin-left: auto;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
-  color: #a8a99a;
+  color: var(--c-mention-path);
 }
 
 .mentionPathIcon {
   flex-shrink: 0;
   font-size: 9px;
-  color: #c4c5b4;
+  color: var(--c-mention-path-icon);
 }
 
 .mentionPathText {
@@ -2253,15 +1966,15 @@
   align-items: center;
   max-width: 260px;
   padding: 3px 6px 3px 10px;
-  background-color: #eae7de;
-  border: 1px solid #ddd8b0;
+  background-color: var(--c-chip-bg);
+  border: 1px solid var(--c-border);
   border-radius: 5px;
 }
 
 .promptPillText {
   overflow: hidden;
   font-size: 11px;
-  color: #4a5245;
+  color: var(--c-text-soft);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2274,7 +1987,7 @@
   width: 14px;
   height: 14px;
   font-size: 9px;
-  color: #8a8f7a;
+  color: var(--c-text-muted);
   cursor: pointer;
   background: none;
   border: none;
@@ -2282,8 +1995,8 @@
   transition: color 0.15s, background-color 0.15s;
 
   &:hover {
-    color: #c0392b;
-    background-color: rgba(0, 0, 0, 0.06);
+    color: var(--c-danger-strong);
+    background-color: var(--c-tint);
   }
 }
 
@@ -2301,18 +2014,18 @@
   padding: 0 10px;
   font-family: inherit;
   font-size: 12px;
-  color: #3a3d35;
-  background-color: #fff;
-  border: 1px solid #ddd8b0;
+  color: var(--c-text);
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-border);
   border-radius: 10px;
   outline: none;
 
   &::placeholder {
-    color: #b0ad9e;
+    color: var(--c-placeholder-2);
   }
 
   &:focus {
-    border-color: #c9a84c;
+    border-color: var(--c-accent);
   }
 }
 
@@ -2327,15 +2040,15 @@
   padding: 10px 12px;
   font-size: 11px;
   line-height: 1.55;
-  color: #f2f0eb;
+  color: var(--c-tooltip-text);
   text-align: left;
   white-space: normal;
   pointer-events: none;
   cursor: default;
   visibility: hidden;
-  background-color: #3a3d35;
+  background-color: var(--c-tooltip-bg);
   border-radius: 8px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--sh-tooltip);
   opacity: 0;
   transition: opacity 0.15s, transform 0.15s, visibility 0.15s;
   transform: translateY(4px);
@@ -2347,7 +2060,7 @@
     right: 11px;
     content: "";
     border: 5px solid transparent;
-    border-top-color: #3a3d35;
+    border-top-color: var(--c-tooltip-bg);
   }
 }
 
@@ -2374,14 +2087,14 @@
   width: 20px;
   height: 28px;
   font-size: 13px;
-  color: #a0a896;
+  color: var(--c-text-faint);
   cursor: help;
   outline: none;
   transition: color 0.15s;
 
   &:hover,
   &:focus-visible {
-    color: #4a5245;
+    color: var(--c-text-soft);
   }
 
   &:hover .promptInfoTip,
@@ -2400,25 +2113,27 @@
   width: 28px;
   height: 28px;
   font-size: 11px;
-  color: #f2f0eb;
+  color: var(--c-on-primary);
   cursor: pointer;
-  background-color: #4a5245;
+  background-color: var(--c-primary);
   border: none;
   border-radius: 50%;
   transition: background-color 0.15s;
 
   &:hover:not(:disabled) {
-    background-color: #3a3d35;
+    background-color: var(--c-primary-hover);
   }
 
+  // 다크에서는 아이콘까지 흐리게 해야 꺼진 버튼으로 보인다 (라이트 값은 --c-on-primary와 같다)
   &:disabled {
+    color: var(--c-on-primary-disabled);
     cursor: not-allowed;
-    background-color: #ddd8b0;
+    background-color: var(--c-primary-disabled);
   }
 }
 
 .promptBtnActive {
-  color: #c9a84c !important;
+  color: var(--c-accent) !important;
 }
 
 .promptBtnBadge {
@@ -2433,8 +2148,8 @@
   padding: 0 3px;
   font-size: 8px;
   font-weight: 700;
-  color: #fff;
-  background-color: #c9a84c;
+  color: var(--c-on-accent);
+  background-color: var(--c-accent);
   border-radius: 6px;
 }
 
@@ -2455,7 +2170,7 @@
   width: 64px;
   height: 64px;
   object-fit: cover;
-  border: 1px solid #ddd8b0;
+  border: 1px solid var(--c-border);
   border-radius: 8px;
 }
 
@@ -2469,15 +2184,15 @@
   width: 18px;
   height: 18px;
   font-size: 9px;
-  color: #fff;
+  color: var(--c-on-fill);
   cursor: pointer;
-  background-color: #8a8f7a;
+  background-color: var(--c-fill-muted);
   border: none;
   border-radius: 50%;
   transition: background-color 0.15s;
 
   &:hover {
-    background-color: #3a3d35;
+    background-color: var(--c-primary-hover);
   }
 }
 
@@ -2490,15 +2205,15 @@
   height: 64px;
   padding: 0 14px;
   font-size: 12px;
-  color: #3a3d35;
-  background-color: #f5efd6;
-  border: 1px solid #ddd8b0;
+  color: var(--c-text);
+  background-color: var(--c-attach-bg);
+  border: 1px solid var(--c-border);
   border-radius: 8px;
 }
 
 .filePreviewIcon {
   font-size: 11px;
-  color: #8a8f7a;
+  color: var(--c-text-muted);
 }
 
 .filePreviewName {
@@ -2522,15 +2237,28 @@
   max-width: 240px;
   padding: 4px 6px 4px 10px;
   font-size: 12px;
-  color: #3a3d35;
-  background-color: #fffdf7;
-  border: 1px solid #e3dcc0;
+  color: var(--c-text);
+  background-color: var(--c-surface-warm);
+  border: 1px solid var(--c-border-soft);
   border-radius: 999px;
 }
 
 .mentionChipIcon {
   flex-shrink: 0;
   font-size: 12px;
+}
+
+// 파일 종류별 아이콘 색은 ChatInput의 FILE_ICONS가 --icon(라이트)·--icon-dark(다크)로 넘긴다
+.mentionIcon,
+.mentionChipIcon {
+  color: var(--icon);
+}
+
+@media (prefers-color-scheme: dark) {
+  .mentionIcon,
+  .mentionChipIcon {
+    color: var(--icon-dark, var(--icon));
+  }
 }
 
 .mentionChipName {
@@ -2548,7 +2276,7 @@
   width: 16px;
   height: 16px;
   font-size: 9px;
-  color: #8a8f7a;
+  color: var(--c-text-muted);
   cursor: pointer;
   background-color: transparent;
   border: none;
@@ -2556,8 +2284,8 @@
   transition: color 0.15s, background-color 0.15s;
 
   &:hover {
-    color: #fff;
-    background-color: #8a8f7a;
+    color: var(--c-on-fill);
+    background-color: var(--c-fill-muted);
   }
 }
 
@@ -2578,7 +2306,7 @@
   height: 44px;
   margin-bottom: 1px;
   font-size: 15px;
-  color: #a0a896;
+  color: var(--c-text-faint);
   cursor: pointer;
   background: none;
   border: none;
@@ -2586,8 +2314,8 @@
   transition: color 0.15s, background-color 0.15s;
 
   &:hover:not(:disabled) {
-    color: #4a5245;
-    background-color: #f2f0eb;
+    color: var(--c-text-soft);
+    background-color: var(--c-fill);
   }
 
   &:disabled {
@@ -2609,7 +2337,7 @@
   max-height: 180px;
   cursor: pointer;
   object-fit: cover;
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  border: 1px solid var(--c-image-border);
   border-radius: 10px;
   transition: transform 0.12s ease, opacity 0.12s ease;
 
@@ -2628,7 +2356,7 @@
   justify-content: center;
   padding: 40px;
   cursor: zoom-out;
-  background-color: rgba(0, 0, 0, 0.8);
+  background-color: var(--c-lightbox-scrim);
 }
 
 .lightboxImage {
@@ -2637,7 +2365,7 @@
   cursor: default;
   object-fit: contain;
   border-radius: 8px;
-  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--sh-lightbox);
 }
 
 .lightboxClose {
@@ -2650,15 +2378,15 @@
   width: 40px;
   height: 40px;
   font-size: 20px;
-  color: #fff;
+  color: var(--c-lightbox-fg);
   cursor: pointer;
-  background-color: rgba(255, 255, 255, 0.12);
+  background-color: var(--c-lightbox-btn);
   border: none;
   border-radius: 50%;
   transition: background-color 0.12s ease;
 
   &:hover {
-    background-color: rgba(255, 255, 255, 0.25);
+    background-color: var(--c-lightbox-btn-hover);
   }
 }
 
@@ -2671,23 +2399,23 @@
   font-family: inherit;
   font-size: 14px;
   line-height: 1.5;
-  color: #3a3d35;
+  color: var(--c-text);
   resize: none;
-  background-color: #f2f0eb;
-  border: 1px solid #ddd8b0;
+  background-color: var(--c-input-bg);
+  border: 1px solid var(--c-border);
   border-radius: 12px;
   outline: none;
 
   // 좁은 폭(작업 파일 패널을 열었을 때 등)에서 안내문이 두 줄로 넘어가 잘리지 않게 한 줄로 줄인다
   &::placeholder {
     overflow: hidden;
-    color: #aaa89a;
+    color: var(--c-placeholder);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   &:focus {
-    border-color: #c9a84c;
+    border-color: var(--c-accent);
   }
 }
 
@@ -2699,15 +2427,15 @@
   width: 44px;
   height: 44px;
   font-size: 14px;
-  color: #fff;
+  color: var(--c-on-danger);
   cursor: pointer;
-  background-color: #c0392b;
+  background-color: var(--c-danger-fill);
   border: none;
   border-radius: 12px;
   transition: background-color 0.2s;
 
   &:hover {
-    background-color: #a93226;
+    background-color: var(--c-danger-fill-hover);
   }
 }
 
@@ -2719,20 +2447,22 @@
   width: 44px;
   height: 44px;
   font-size: 16px;
-  color: #f2f0eb;
+  color: var(--c-on-primary);
   cursor: pointer;
-  background-color: #4a5245;
+  background-color: var(--c-primary);
   border: none;
   border-radius: 12px;
   transition: background-color 0.2s;
 
   &:hover {
-    background-color: #3a3d35;
+    background-color: var(--c-primary-hover);
   }
 
+  // 다크에서는 아이콘까지 흐리게 해야 꺼진 버튼으로 보인다 (라이트 값은 --c-on-primary와 같다)
   &:disabled {
+    color: var(--c-on-primary-disabled);
     cursor: not-allowed;
-    background-color: #ddd8b0;
+    background-color: var(--c-primary-disabled);
   }
 }
 
@@ -2772,10 +2502,10 @@
   padding: 2px 8px;
   font-size: 10px;
   font-weight: 600;
-  color: #8b6330;
+  color: var(--c-tag-text);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  background-color: #f5ecd9;
+  background-color: var(--c-tag-bg);
   border-radius: 4px;
 }
 
@@ -2783,12 +2513,12 @@
   font-size: 14px;
   font-weight: 600;
   line-height: 1.5;
-  color: #3a3d35;
+  color: var(--c-text);
 }
 
 .questionHint {
   font-size: 11px;
-  color: #8a8f7a;
+  color: var(--c-text-muted);
 }
 
 .optionList {
@@ -2805,19 +2535,19 @@
   font-family: inherit;
   text-align: left;
   cursor: pointer;
-  background-color: #fff;
-  border: 1px solid #ddd8b0;
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-border);
   border-radius: 8px;
   transition: background-color 0.12s, border-color 0.12s;
 
   &:hover {
-    background-color: #faf8ef;
-    border-color: #c9a84c;
+    background-color: var(--c-option-hover-bg);
+    border-color: var(--c-accent);
   }
 
   &.optionItemActive {
-    background-color: #faf3e2;
-    border-color: #c9a84c;
+    background-color: var(--c-option-active-bg);
+    border-color: var(--c-accent);
   }
 }
 
@@ -2830,14 +2560,14 @@
   height: 16px;
   margin-top: 2px;
   font-size: 9px;
-  color: #fff;
-  background-color: #fff;
-  border: 1px solid #ddd8b0;
+  color: var(--c-on-accent);
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-border);
   border-radius: 4px;
 
   .optionItemActive & {
-    background-color: #c9a84c;
-    border-color: #c9a84c;
+    background-color: var(--c-accent);
+    border-color: var(--c-accent);
   }
 }
 
@@ -2851,13 +2581,13 @@
 .optionLabel {
   font-size: 13px;
   font-weight: 600;
-  color: #3a3d35;
+  color: var(--c-text);
 }
 
 .optionDesc {
   font-size: 12px;
   line-height: 1.45;
-  color: #8a8f7a;
+  color: var(--c-text-muted);
 }
 
 .questionCustom {
@@ -2870,19 +2600,19 @@
   font-family: inherit;
   font-size: 12px;
   line-height: 1.5;
-  color: #3a3d35;
+  color: var(--c-text);
   resize: none;
-  background-color: #fff;
-  border: 1px solid #e8e4d8;
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-divider);
   border-radius: 8px;
   outline: none;
 
   &::placeholder {
-    color: #a8a99a;
+    color: var(--c-placeholder-3);
   }
 
   &:focus {
-    border-color: #c9a84c;
+    border-color: var(--c-accent);
   }
 }
 
@@ -2912,9 +2642,9 @@
   font-size: 9px;
   font-weight: 700;
   line-height: 15px;
-  color: #3a3d35;
+  color: var(--c-accent-ink);
   text-align: center;
-  background-color: #c9a84c;
+  background-color: var(--c-accent);
   border-radius: 8px;
 }
 
@@ -2926,8 +2656,8 @@
   flex-shrink: 0;
   min-width: 240px;
   max-width: 70%;
-  background-color: #faf9f6;
-  border-left: 1px solid #e0dccf;
+  background-color: var(--c-panel-bg);
+  border-left: 1px solid var(--c-panel-border);
 }
 
 .filesResize {
@@ -2940,7 +2670,7 @@
   cursor: col-resize;
 
   &:hover {
-    background-color: rgba(201, 168, 76, 0.35);
+    background-color: var(--c-resize-hover);
   }
 }
 
@@ -2951,7 +2681,7 @@
   align-items: center;
   height: 40px;
   padding: 0 6px 0 12px;
-  border-bottom: 1px solid #e8e4d8;
+  border-bottom: 1px solid var(--c-divider);
 }
 
 .filesTitle {
@@ -2960,7 +2690,7 @@
   overflow: hidden;
   font-size: 13px;
   font-weight: 700;
-  color: #3a3d35;
+  color: var(--c-text);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2971,7 +2701,7 @@
   height: 26px;
   padding: 0 7px;
   font-size: 12px;
-  color: #6a6f5e;
+  color: var(--c-text-2);
   white-space: nowrap;
   cursor: pointer;
   background: none;
@@ -2979,13 +2709,13 @@
   border-radius: 6px;
 
   &:hover {
-    background-color: #efece4;
+    background-color: var(--c-hover);
   }
 
   &.active {
     font-weight: 600;
-    color: #8a6d1f;
-    background-color: #f3ead0;
+    color: var(--c-accent-text);
+    background-color: var(--c-accent-soft);
   }
 }
 
@@ -3002,7 +2732,7 @@
   }
 
   &::-webkit-scrollbar-thumb {
-    background-color: #ddd8b0;
+    background-color: var(--c-scrollbar);
     border-radius: 3px;
   }
 }
@@ -3018,12 +2748,12 @@
   align-items: center;
   height: 24px;
   padding-right: 8px;
-  color: #3a3d35;
+  color: var(--c-text);
   white-space: nowrap;
   cursor: pointer;
 
   &:hover {
-    background-color: #efece4;
+    background-color: var(--c-hover);
   }
 }
 
@@ -3037,25 +2767,25 @@
 
 .treeRowSelected,
 .treeRowSelected:hover {
-  background-color: #ebe4cc;
+  background-color: var(--c-selected);
 }
 
 .treeChevron {
   flex-shrink: 0;
   width: 10px;
   font-size: 9px;
-  color: #a0a896;
+  color: var(--c-text-faint);
 }
 
 .treeIcon {
   flex-shrink: 0;
   width: 13px;
   font-size: 12px;
-  color: #b5b099;
+  color: var(--c-text-ghost);
 }
 
 .treeRowDir .treeIcon {
-  color: #c9a84c;
+  color: var(--c-accent);
 }
 
 // 가운데 생략: 앞부분만 줄어들고 끝 8글자는 늘 보인다
@@ -3078,7 +2808,7 @@
 
 .treeRowChanged .treeName {
   font-weight: 600;
-  color: #7a5f12;
+  color: var(--c-changed-text);
 }
 
 .treeBadge {
@@ -3087,28 +2817,28 @@
   font-size: 10px;
   font-weight: 600;
   line-height: 16px;
-  color: #8a6d1f;
-  background-color: #f3ead0;
+  color: var(--c-accent-text);
+  background-color: var(--c-accent-soft);
   border-radius: 8px;
 }
 
 .treeRowRecent .treeBadge {
-  color: #fff;
-  background-color: #c9a84c;
+  color: var(--c-on-accent);
+  background-color: var(--c-accent);
 }
 
 .treeDot {
   flex-shrink: 0;
   width: 6px;
   height: 6px;
-  background-color: #c9a84c;
+  background-color: var(--c-accent);
   border-radius: 50%;
 }
 
 .treeNote {
   padding: 4px 8px 4px 0;
   font-size: 11px;
-  color: #a0a896;
+  color: var(--c-text-faint);
 }
 
 .treeSection {
@@ -3116,8 +2846,8 @@
   margin-top: 6px;
   font-size: 11px;
   font-weight: 700;
-  color: #8a8f7a;
-  border-top: 1px solid #e8e4d8;
+  color: var(--c-text-muted);
+  border-top: 1px solid var(--c-divider);
 }
 
 .fileViewer {
@@ -3125,8 +2855,8 @@
   flex: 1;
   flex-direction: column;
   min-height: 0;
-  background-color: #fff;
-  border-top: 1px solid #e0dccf;
+  background-color: var(--c-surface);
+  border-top: 1px solid var(--c-panel-border);
 }
 
 .fileViewerHead {
@@ -3144,14 +2874,14 @@
   min-width: 0;
   font-size: 13px;
   font-weight: 600;
-  color: #3a3d35;
+  color: var(--c-text);
 }
 
 .fileViewerDir {
   overflow: hidden;
   font-size: 11px;
   font-weight: 400;
-  color: #8a8f7a;
+  color: var(--c-text-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3166,15 +2896,15 @@
     height: 26px;
     padding: 0;
     font-size: 12px;
-    color: #8a8f7a;
+    color: var(--c-text-muted);
     cursor: pointer;
     background: none;
     border: none;
     border-radius: 6px;
 
     &:hover {
-      color: #3a3d35;
-      background-color: #efece4;
+      color: var(--c-text);
+      background-color: var(--c-hover);
     }
   }
 }
@@ -3185,34 +2915,34 @@
   gap: 2px;
   align-items: center;
   padding: 0 10px;
-  border-bottom: 1px solid #e8e4d8;
+  border-bottom: 1px solid var(--c-divider);
 }
 
 .fileViewerTab {
   padding: 6px 8px;
   margin-bottom: -1px;
   font-size: 12px;
-  color: #8a8f7a;
+  color: var(--c-text-muted);
   cursor: pointer;
   background: none;
   border: none;
   border-bottom: 2px solid transparent;
 
   &:hover {
-    color: #3a3d35;
+    color: var(--c-text);
   }
 
   &.active {
     font-weight: 600;
-    color: #3a3d35;
-    border-bottom-color: #c9a84c;
+    color: var(--c-text);
+    border-bottom-color: var(--c-accent);
   }
 }
 
 .fileViewerCopied {
   margin-left: auto;
   font-size: 11px;
-  color: #6b8f4e;
+  color: var(--c-copied-text);
 }
 
 .codeView,
@@ -3234,7 +2964,7 @@
   padding: 6px 12px;
   font-size: 11px;
   line-height: 1.5;
-  color: #8a8f7a;
+  color: var(--c-text-muted);
 }
 
 .changesView .viewerNotice {
@@ -3261,11 +2991,11 @@
   padding: 8px 8px 8px 10px;
   margin: 0;
   font: inherit;
-  color: #b5b099;
+  color: var(--c-text-ghost);
   text-align: right;
   user-select: none;
-  background-color: #faf9f6;
-  border-right: 1px solid #efece4;
+  background-color: var(--c-panel-bg);
+  border-right: 1px solid var(--c-divider-soft);
 }
 
 .codeBody {
@@ -3274,12 +3004,13 @@
   margin: 0;
   font: inherit;
 
-  // highlight.js 테마의 기본 여백·스크롤을 없애 줄 번호와 줄이 맞게
+  // 기본 여백·스크롤 없이 — 줄 번호와 줄이 맞게
   :global(.hljs) {
     display: block;
     padding: 0;
     overflow: visible;
     font: inherit;
+    color: var(--c-syn-text);
     background: transparent;
   }
 }
@@ -3292,7 +3023,7 @@
   margin-bottom: 4px;
   font-size: 11px;
   font-weight: 600;
-  color: #6a6f5e;
+  color: var(--c-text-2);
 }
 
 .changeItem .toolDiff {
@@ -3306,7 +3037,7 @@
   flex-shrink: 0;
   gap: 2px;
   padding: 6px 8px;
-  border-bottom: 1px solid #e8e4d8;
+  border-bottom: 1px solid var(--c-divider);
 }
 
 .filesViewBtn {
@@ -3319,7 +3050,7 @@
   height: 26px;
   padding: 0 6px;
   font-size: 12px;
-  color: #6a6f5e;
+  color: var(--c-text-2);
   white-space: nowrap;
   cursor: pointer;
   background: none;
@@ -3327,13 +3058,13 @@
   border-radius: 6px;
 
   &:hover {
-    background-color: #efece4;
+    background-color: var(--c-hover);
   }
 
   &.active {
     font-weight: 600;
-    color: #3a3d35;
-    background-color: #ebe4cc;
+    color: var(--c-text);
+    background-color: var(--c-selected);
   }
 }
 
@@ -3342,8 +3073,8 @@
   font-size: 10px;
   font-weight: 700;
   line-height: 15px;
-  color: #8a6d1f;
-  background-color: #f3ead0;
+  color: var(--c-accent-text);
+  background-color: var(--c-accent-soft);
   border-radius: 8px;
 }
 
@@ -3356,42 +3087,42 @@
   padding: 6px 10px 8px;
   margin-bottom: 4px;
   font-size: 12px;
-  color: #6a6f5e;
-  border-bottom: 1px dashed #e8e4d8;
+  color: var(--c-text-2);
+  border-bottom: 1px dashed var(--c-divider);
 }
 
 .gitBranchIcon {
   font-size: 11px;
-  color: #8a8f7a;
+  color: var(--c-text-muted);
 }
 
 .gitBranchName {
   min-width: 0;
   overflow: hidden;
   font-weight: 600;
-  color: #3a3d35;
+  color: var(--c-text);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .gitBranchMeta {
   font-size: 11px;
-  color: #8a8f7a;
+  color: var(--c-text-muted);
 }
 
 .gitSummary {
   margin-left: auto;
   font-size: 11px;
-  color: #8a8f7a;
+  color: var(--c-text-muted);
   white-space: nowrap;
 }
 
 .gitAdd {
-  color: #3f7d32;
+  color: var(--c-git-add);
 }
 
 .gitDel {
-  color: #b5443a;
+  color: var(--c-git-del);
 }
 
 .gitCounts {
@@ -3413,35 +3144,35 @@
 
 .gitBadge-modified,
 .gitBadge-typechange {
-  color: #8a6d1f;
-  background-color: #f3ead0;
+  color: var(--c-accent-text);
+  background-color: var(--c-accent-soft);
 }
 
 .gitBadge-added,
 .gitBadge-untracked,
 .gitBadge-copied {
-  color: #2f6a24;
-  background-color: #e3f1dc;
+  color: var(--c-git-added-text);
+  background-color: var(--c-git-added-bg);
 }
 
 .gitBadge-deleted {
-  color: #9b3a31;
-  background-color: #f8e1de;
+  color: var(--c-git-deleted-text);
+  background-color: var(--c-git-deleted-bg);
 }
 
 .gitBadge-renamed {
-  color: #2d5f86;
-  background-color: #dfeaf3;
+  color: var(--c-git-renamed-text);
+  background-color: var(--c-git-renamed-bg);
 }
 
 .gitBadge-conflict {
-  color: #fff;
-  background-color: #c0392b;
+  color: var(--c-on-danger);
+  background-color: var(--c-danger-fill);
 }
 
 // 지운 파일은 이름에 줄을 긋는다
 .treeRowGone .treeName {
-  color: #a0a896;
+  color: var(--c-text-faint);
   text-decoration: line-through;
 }
 
@@ -3465,17 +3196,17 @@
   padding: 3px 10px;
   margin-top: 4px;
   overflow: hidden;
-  color: #8a8f7a;
+  color: var(--c-text-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
-  background-color: #f3f0e6;
+  background-color: var(--c-hunk-bg);
 }
 
 .gitDiffNote {
   padding: 1px 10px 1px 74px;
   font-family: -apple-system, BlinkMacSystemFont, sans-serif;
   font-size: 11px;
-  color: #a0a896;
+  color: var(--c-text-faint);
 }
 
 .gitDiffRow {
@@ -3486,7 +3217,7 @@
   flex-shrink: 0;
   width: 30px;
   padding-right: 4px;
-  color: #c2bda8;
+  color: var(--c-line-no);
   text-align: right;
   user-select: none;
 }
@@ -3495,7 +3226,7 @@
   flex-shrink: 0;
   width: 14px;
   font-weight: 700;
-  color: #b5b099;
+  color: var(--c-text-ghost);
   text-align: center;
   user-select: none;
 }
@@ -3504,26 +3235,26 @@
   flex: 1;
   min-width: 0;
   padding-right: 10px;
-  color: #3a3d35;
+  color: var(--c-text);
   word-break: break-all;
   white-space: pre-wrap;
 }
 
 .gitDiffAdd {
-  background-color: rgba(34, 197, 94, 0.1);
+  background-color: var(--c-diff-add-bg);
 
   .gitDiffMarker,
   .gitDiffText {
-    color: #14532d;
+    color: var(--c-diff-add-text);
   }
 }
 
 .gitDiffDel {
-  background-color: rgba(220, 38, 38, 0.08);
+  background-color: var(--c-diff-del-bg);
 
   .gitDiffMarker,
   .gitDiffText {
-    color: #991b1b;
+    color: var(--c-diff-del-text);
   }
 }
 
@@ -3536,17 +3267,16 @@
     bottom: 0;
     z-index: 6;
     max-width: calc(100% - 40px);
-    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.12);
+    box-shadow: var(--sh-panel);
   }
 }
 
 // ── 채팅 코드 블록 (MessageItem의 CodeBlock) ──
-// 기존 어두운 배경(#2c2c2c)을 그대로 쓰고, 그 위에서 읽히는 따뜻한 색으로 칠한다.
-// highlight.js의 github 테마(파일 보기용, 밝은 배경)가 같은 클래스에 색을 넣으므로 여기서 모두 덮어쓴다.
+// 라이트·다크 모두 어두운 판(--c-code-bg) 위에 따뜻한 문법 색(--c-synd-*)으로 칠한다.
 .codeBlock {
   margin: 8px 0;
   overflow: hidden;
-  background-color: #2c2c2c;
+  background-color: var(--c-code-bg);
   border-radius: 8px;
 }
 
@@ -3557,8 +3287,8 @@
   height: 28px;
   padding: 0 6px 0 12px;
   font-size: 11px;
-  color: #a8a28c;
-  background-color: #363633;
+  color: var(--c-code-head-text);
+  background-color: var(--c-code-head-bg);
 }
 
 .codeBlockLang {
@@ -3571,15 +3301,15 @@
   align-items: center;
   padding: 3px 8px;
   font-size: 11px;
-  color: #c8c0a8;
+  color: var(--c-code-copy);
   cursor: pointer;
   background: none;
   border: none;
   border-radius: 5px;
 
   &:hover {
-    color: #f2ead3;
-    background-color: rgba(255, 255, 255, 0.08);
+    color: var(--c-code-copy-hover);
+    background-color: var(--c-code-hover-bg);
   }
 }
 
@@ -3589,29 +3319,28 @@
 }
 
 .codeBlockPre {
-  // 토큰 색 — github 테마(파일 보기용)가 같은 클래스에 넣은 색을 모두 덮는다.
-  // 클래스가 하나인 것 먼저, 둘 이상인 것(더 구체적인 것)은 뒤에.
+  // 토큰 색. 클래스가 하나인 것 먼저, 둘 이상인 것(더 구체적인 것)은 뒤에.
   :global(.hljs-keyword),
   :global(.hljs-doctag),
   :global(.hljs-template-tag),
   :global(.hljs-template-variable),
   :global(.hljs-bullet) {
-    color: #e78a4e;
+    color: var(--c-synd-keyword);
   }
 
   :global(.hljs-type),
   :global(.hljs-built_in),
   :global(.hljs-symbol) {
-    color: #d8a657;
+    color: var(--c-synd-type);
   }
 
   :global(.hljs-title) {
-    color: #a9b665;
+    color: var(--c-synd-title);
   }
 
   :global(.hljs-string),
   :global(.hljs-regexp) {
-    color: #89b482;
+    color: var(--c-synd-string);
   }
 
   :global(.hljs-number),
@@ -3620,14 +3349,14 @@
   :global(.hljs-selector-attr),
   :global(.hljs-selector-class),
   :global(.hljs-selector-id) {
-    color: #d3869b;
+    color: var(--c-synd-number);
   }
 
   :global(.hljs-attr),
   :global(.hljs-attribute),
   :global(.hljs-meta),
   :global(.hljs-property) {
-    color: #7daea3;
+    color: var(--c-synd-attr);
   }
 
   :global(.hljs-name),
@@ -3635,14 +3364,14 @@
   :global(.hljs-selector-tag),
   :global(.hljs-selector-pseudo),
   :global(.hljs-tag) {
-    color: #ea6962;
+    color: var(--c-synd-tag);
   }
 
   :global(.hljs-comment),
   :global(.hljs-code),
   :global(.hljs-formula) {
     font-style: italic;
-    color: #928374;
+    color: var(--c-synd-comment);
   }
 
   :global(.hljs-operator),
@@ -3654,7 +3383,7 @@
 
   :global(.hljs-section) {
     font-weight: 700;
-    color: #d8a657;
+    color: var(--c-synd-type);
   }
 
   :global(.hljs-emphasis) {
@@ -3668,36 +3397,160 @@
   }
 
   :global(.hljs-addition) {
-    color: #a9b665;
-    background-color: rgba(169, 182, 101, 0.14);
+    color: var(--c-synd-title);
+    background-color: var(--c-synd-add-bg);
   }
 
   :global(.hljs-deletion) {
-    color: #ea6962;
-    background-color: rgba(234, 105, 98, 0.14);
+    color: var(--c-synd-tag);
+    background-color: var(--c-synd-del-bg);
   }
 
   :global(.hljs-variable.language_),
   :global(.hljs-meta .hljs-keyword) {
-    color: #e78a4e;
+    color: var(--c-synd-keyword);
   }
 
   :global(.hljs-title.class_) {
-    color: #d8a657;
+    color: var(--c-synd-type);
   }
 
   :global(.hljs-title.function_) {
-    color: #a9b665;
+    color: var(--c-synd-title);
   }
 
   :global(.hljs-meta .hljs-string) {
-    color: #89b482;
+    color: var(--c-synd-string);
   }
 
   :global(.hljs-title.class_.inherited__) {
-    color: #d8a657;
+    color: var(--c-synd-type);
   }
 }
+
+// 파일 보기(FilesPanel)의 문법 색 — 라이트는 highlight.js github 테마와 같은 색, 다크는 위의 어두운 바탕용 색.
+// 선택자와 순서는 github 테마를 그대로 옮겼다(클래스 하나짜리 먼저, 둘 이상은 뒤에). 위 코드 블록 규칙과
+// 감싼 요소가 달라 서로 겹치지 않는데, stylelint는 :global() 안을 보지 않고 같은 선택자로 여겨 순서를 탓한다.
+// 같은 이유로 위쪽 .codeBody(여백·글꼴)와 합치지 않고 코드 블록 규칙 뒤에 따로 둔다.
+/* stylelint-disable no-descending-specificity, no-duplicate-selectors */
+.codeBody {
+  :global(.hljs-keyword),
+  :global(.hljs-doctag),
+  :global(.hljs-template-tag),
+  :global(.hljs-template-variable) {
+    color: var(--c-syn-keyword);
+  }
+
+  :global(.hljs-type) {
+    color: var(--c-syn-type);
+  }
+
+  :global(.hljs-title) {
+    color: var(--c-syn-title);
+  }
+
+  :global(.hljs-attr),
+  :global(.hljs-attribute),
+  :global(.hljs-meta) {
+    color: var(--c-syn-attr);
+  }
+
+  :global(.hljs-literal),
+  :global(.hljs-number),
+  :global(.hljs-variable),
+  :global(.hljs-selector-attr),
+  :global(.hljs-selector-class),
+  :global(.hljs-selector-id) {
+    color: var(--c-syn-number);
+  }
+
+  :global(.hljs-operator) {
+    color: var(--c-syn-operator);
+  }
+
+  :global(.hljs-regexp),
+  :global(.hljs-string) {
+    color: var(--c-syn-string);
+  }
+
+  :global(.hljs-built_in),
+  :global(.hljs-symbol) {
+    color: var(--c-syn-builtin);
+  }
+
+  :global(.hljs-comment),
+  :global(.hljs-code),
+  :global(.hljs-formula) {
+    color: var(--c-syn-comment);
+  }
+
+  :global(.hljs-name),
+  :global(.hljs-quote),
+  :global(.hljs-selector-tag),
+  :global(.hljs-selector-pseudo) {
+    color: var(--c-syn-name);
+  }
+
+  :global(.hljs-subst) {
+    color: var(--c-syn-plain);
+  }
+
+  :global(.hljs-section) {
+    font-weight: 700;
+    color: var(--c-syn-section);
+  }
+
+  :global(.hljs-bullet) {
+    color: var(--c-syn-bullet);
+  }
+
+  :global(.hljs-emphasis) {
+    font-style: italic;
+    color: var(--c-syn-plain);
+  }
+
+  :global(.hljs-strong) {
+    font-weight: 700;
+    color: var(--c-syn-plain);
+  }
+
+  :global(.hljs-addition) {
+    color: var(--c-syn-add);
+    background-color: var(--c-syn-add-bg);
+  }
+
+  :global(.hljs-deletion) {
+    color: var(--c-syn-del);
+    background-color: var(--c-syn-del-bg);
+  }
+
+  :global(.hljs-property) {
+    color: var(--c-syn-property);
+  }
+
+  :global(.hljs-tag) {
+    color: var(--c-syn-tag);
+  }
+
+  :global(.hljs-variable.language_),
+  :global(.hljs-meta .hljs-keyword) {
+    color: var(--c-syn-keyword);
+  }
+
+  :global(.hljs-title.class_),
+  :global(.hljs-title.class_.inherited__) {
+    color: var(--c-syn-title-class);
+  }
+
+  :global(.hljs-title.function_) {
+    color: var(--c-syn-title);
+  }
+
+  :global(.hljs-meta .hljs-string) {
+    color: var(--c-syn-string);
+  }
+}
+/* stylelint-enable no-descending-specificity, no-duplicate-selectors */
 
 // ── 응답 중 미리 써 둔 메시지 (ChatInput) ──
 .queuedBar {
@@ -3707,28 +3560,28 @@
   padding: 8px 12px;
   margin: 10px 24px 0;
   font-size: 12px;
-  color: #6a6f5e;
-  background-color: #fbf6e3;
-  border: 1px dashed #d9c98f;
+  color: var(--c-text-2);
+  background-color: var(--c-queued-bg);
+  border: 1px dashed var(--c-queued-border);
   border-radius: 10px;
 }
 
 .queuedIcon {
   flex-shrink: 0;
-  color: #b8962e;
+  color: var(--c-queued-icon);
 }
 
 .queuedLabel {
   flex-shrink: 0;
   font-weight: 600;
-  color: #8a6d1f;
+  color: var(--c-accent-text);
 }
 
 .queuedText {
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  color: #3a3d35;
+  color: var(--c-text);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3737,26 +3590,26 @@
   flex-shrink: 0;
   padding: 3px 9px;
   font-size: 12px;
-  color: #6a6f5e;
+  color: var(--c-text-2);
   cursor: pointer;
-  background-color: #fff;
-  border: 1px solid #e3dcc0;
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-border-soft);
   border-radius: 6px;
 
   &:hover {
-    color: #3a3d35;
-    background-color: #f7f3e6;
+    color: var(--c-text);
+    background-color: var(--c-queued-btn-hover);
   }
 }
 
 .queuedBtnPrimary {
-  color: #f2f0eb;
-  background-color: #4a5245;
-  border-color: #4a5245;
+  color: var(--c-on-primary);
+  background-color: var(--c-primary);
+  border-color: var(--c-primary);
 
   &:hover {
-    color: #fff;
-    background-color: #3a3d35;
+    color: var(--c-on-fill);
+    background-color: var(--c-primary-hover);
   }
 }
 
@@ -3779,10 +3632,10 @@
   padding: 12px 14px;
   font-size: 12px;
   font-weight: 400;
-  color: #3a3d35;
-  background-color: #fff;
+  color: var(--c-text);
+  background-color: var(--c-elevated);
   border-radius: 12px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--sh-popover);
 }
 
 .notifyTitle {
@@ -3812,7 +3665,7 @@
 .notifyHint {
   font-size: 11px;
   line-height: 1.5;
-  color: #8a8f7a;
+  color: var(--c-text-muted);
 }
 
 .notifyVolume {
@@ -3828,7 +3681,7 @@
 .notifyVolumeIcon {
   flex-shrink: 0;
   font-size: 12px;
-  color: #8a8f7a;
+  color: var(--c-text-muted);
 }
 
 // 채워진 부분까지 색을 칠한 가로 슬라이더 (--fill = 현재 값 %)
@@ -3837,7 +3690,7 @@
   min-width: 0;
   height: 4px;
   cursor: pointer;
-  background: linear-gradient(to right, #c9a84c var(--fill), #e6e1d2 var(--fill));
+  background: linear-gradient(to right, var(--c-accent) var(--fill), var(--c-range-track) var(--fill));
   border-radius: 2px;
   outline: none;
   appearance: none;
@@ -3845,14 +3698,14 @@
   &::-webkit-slider-thumb {
     width: 14px;
     height: 14px;
-    background-color: #fff;
-    border: 2px solid #c9a84c;
+    background-color: var(--c-knob);
+    border: 2px solid var(--c-accent);
     border-radius: 50%;
     appearance: none;
   }
 
   &:focus-visible::-webkit-slider-thumb {
-    box-shadow: 0 0 0 3px rgba(201, 168, 76, 0.3);
+    box-shadow: var(--sh-focus-ring);
   }
 
   &:disabled {
@@ -3864,7 +3717,7 @@
   flex-shrink: 0;
   width: 34px;
   font-variant-numeric: tabular-nums;
-  color: #6a6f5e;
+  color: var(--c-text-2);
   text-align: right;
 }
 
@@ -3874,9 +3727,9 @@
   height: 26px;
   padding: 0;
   font-size: 10px;
-  color: #6a6f5e;
+  color: var(--c-text-2);
   cursor: pointer;
-  background-color: #f2f0eb;
+  background-color: var(--c-fill);
   border: none;
   border-radius: 6px;
 
@@ -3885,15 +3738,15 @@
   }
 
   &:hover:not(:disabled) {
-    color: #3a3d35;
-    background-color: #e8e4d8;
+    color: var(--c-text);
+    background-color: var(--c-fill-strong);
   }
 }
 
 .notifyDivider {
   height: 1px;
   margin: 2px 0;
-  background-color: #efece4;
+  background-color: var(--c-divider-soft);
 }
 
 .notifyTestBtn {
@@ -3903,9 +3756,9 @@
   align-self: flex-start;
   padding: 5px 10px;
   font-size: 12px;
-  color: #3a3d35;
+  color: var(--c-text);
   cursor: pointer;
-  background-color: #f2f0eb;
+  background-color: var(--c-fill);
   border: none;
   border-radius: 6px;
 
@@ -3915,7 +3768,7 @@
   }
 
   &:hover:not(:disabled) {
-    background-color: #e8e4d8;
+    background-color: var(--c-fill-strong);
   }
 }
 
@@ -3923,7 +3776,7 @@
   margin: 0;
   font-size: 11px;
   line-height: 1.5;
-  color: #a0a896;
+  color: var(--c-text-faint);
 }
 
 // 켜기/끄기 스위치
@@ -3934,14 +3787,14 @@
   height: 20px;
   padding: 0;
   cursor: pointer;
-  background-color: #d6d1c2;
+  background-color: var(--c-switch-off);
   border: none;
   border-radius: 10px;
   transition: background-color 0.15s;
 }
 
 .switchOn {
-  background-color: #c9a84c;
+  background-color: var(--c-accent);
 }
 
 .switchKnob {
@@ -3950,12 +3803,282 @@
   left: 2px;
   width: 16px;
   height: 16px;
-  background-color: #fff;
+  background-color: var(--c-knob);
   border-radius: 50%;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--sh-knob);
   transition: transform 0.15s;
 
   .switchOn & {
     transform: translateX(14px);
   }
+}
+
+// ── 화면 테마 (ThemeSettings) — 알림 설정 창(.notifyPopover)을 같이 쓴다 ──
+.themePopover {
+  width: 240px;
+}
+
+.themeOptions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.themeOption {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  padding: 8px;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-radius: 8px;
+
+  // 팝업 바탕 위라 --c-hover(파일 패널용)로는 다크에서 거의 안 보인다
+  &:hover {
+    background-color: var(--c-fill);
+  }
+}
+
+.themeOptionActive,
+.themeOptionActive:hover {
+  background-color: var(--c-selected);
+}
+
+.themeOptionIcon {
+  flex-shrink: 0;
+  width: 16px;
+  font-size: 13px;
+  color: var(--c-text-muted);
+}
+
+.themeOptionText {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.themeOptionCheck {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--c-accent);
+}
+
+// ── 탭 (TabStrip, ChatTabView) ──
+// 머리줄과 같은 어두운 띠 위에 탭을 두고, 보고 있는 탭은 아래 작업 폴더 줄과 같은 색이라 이어져 보인다(크롬처럼).
+// 창이 좁으면 제목이 두 줄로 꺾였다 — 한 줄로 두고 끝을 줄인다
+.headerTitle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.headerSpacer {
+  flex: 1;
+}
+
+.tabStrip {
+  display: flex;
+  flex-shrink: 0;
+  gap: 4px;
+  align-items: flex-end;
+  height: 36px;
+  padding: 0 10px 0 8px;
+  background-color: var(--c-header-bg);
+}
+
+.tabList {
+  display: flex;
+  flex: 0 1 auto;
+  gap: 2px;
+  align-items: flex-end;
+  min-width: 0;
+  height: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+// 폭은 flex-basis가 아니라 width로 준다. basis로 주면 .tabList(auto 폭)가 탭 내용 폭만큼만 잡혀서,
+// 자리가 남는데도 탭이 ~110px로 줄어 폴더명·제목이 잘렸다. 자리가 모자라면 96px까지 줄고, 그 다음은 옆으로 넘긴다.
+.tab {
+  position: relative;
+  display: flex;
+  flex: 0 1 auto;
+  gap: 6px;
+  align-items: center;
+  width: 200px;
+  min-width: 96px;
+  height: 30px;
+  padding: 0 4px 0 10px;
+  font-size: 12px;
+  color: var(--c-header-icon);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  border-radius: 8px 8px 0 0;
+
+  &:hover {
+    color: var(--c-header-text);
+    background-color: var(--c-header-hover);
+  }
+}
+
+.tabActive,
+.tabActive:hover {
+  color: var(--c-text);
+  background-color: var(--c-toolbar-bg);
+}
+
+// 폴더 이름이 길면 가운데를 줄인다 — 끝 몇 글자는 늘 보이게 (TabStrip의 FolderName)
+.tabFolder {
+  display: flex;
+  flex-shrink: 0;
+  min-width: 0;
+  max-width: 40%;
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.tabFolderHead {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tabFolderTail {
+  flex-shrink: 0;
+}
+
+.tabTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tabClose {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  font-size: 10px;
+  color: inherit;
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  opacity: 0.6;
+
+  &:hover {
+    background-color: var(--c-header-hover);
+    opacity: 1;
+  }
+}
+
+.tabActive .tabClose:hover {
+  background-color: var(--c-hover);
+}
+
+.tabSpinner {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--c-accent);
+}
+
+.tabAttention {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--c-tab-attention);
+}
+
+.tabUnseen {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  background-color: var(--c-accent);
+  border-radius: 50%;
+}
+
+// 백그라운드 작업(dev 서버 등)이 도는 탭 — 톱니 + 개수. 색은 탭 글자색을 따른다.
+.tabBg {
+  display: flex;
+  flex-shrink: 0;
+  gap: 3px;
+  align-items: center;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+
+// 탭이 넘쳐 가려진 쪽 가장자리를 흐리게 한다 — 스크롤바를 숨겨 두어 더 있는지 안 보이므로.
+// 마스크는 투명도만 쓴다(#000 = 불투명). 색이 아니라 테마와 무관하다.
+.tabListFadeLeft {
+  mask-image: linear-gradient(to right, transparent, #000 28px);
+}
+
+.tabListFadeRight {
+  mask-image: linear-gradient(to left, transparent, #000 28px);
+}
+
+.tabListFadeLeft.tabListFadeRight {
+  mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+}
+
+.tabNew {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  margin-bottom: 3px;
+  font-size: 12px;
+  color: var(--c-header-icon);
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-radius: 6px;
+
+  &:hover {
+    color: var(--c-header-text);
+    background-color: var(--c-header-hover);
+  }
+}
+
+// 탭 하나의 대화 화면 — 보고 있는 탭만 보이고, 나머지는 숨긴 채 응답을 계속 받는다
+.tabView {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.tabViewHidden {
+  display: none;
+}
+
+// 사이드바 대화 기록: 탭으로 열려 있는 대화
+.convOpen {
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 15px;
+  color: var(--c-accent);
+  border: 1px solid var(--c-accent);
+  border-radius: 6px;
 }

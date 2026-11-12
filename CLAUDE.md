@@ -19,7 +19,26 @@ Code, comments, and UI strings are in Korean. Match the existing language when e
 `@electron/packager` to unpack the cached Electron zip) stalls after a few files, so `package`/`make`
 hang forever at "Copying files" with ~0% CPU. Same zip extracts in <1s on Node 22.
 
-There is no test runner configured.
+**The packaged macOS app is re-signed ad-hoc in `postPackage`** (`forge.config.ts`, skipped when a
+real `osxSign` is configured). FusesPlugin re-signs the app right after flipping fuses
+(`packageAfterCopy`), but that is *before* @electron/packager rewrites Info.plist (bundle id, names) —
+so the finished app was signed as `com.github.Electron` with a modified Info.plist (`codesign
+--verify`: "invalid Info.plist", error -67030), and macOS's notification daemon rejected every
+notification from it: `usernoted … Denying message 3 from connection <LegacyConnection identifier:
+io.handoo.better-claude>` (reproduced with a bundle in the same state; re-signing fixed it). Re-signed,
+the first notification makes macOS ask for permission. To read such logs use **`/usr/bin/log show`** —
+in zsh, plain `log` is a builtin and silently prints nothing.
+
+There is no test runner configured. Verifying in the running app (CDP on `--remote-debugging-port`,
+main via `--inspect`):
+
+- **`npm start -- --user-data-dir=<dir>`** gives the dev app its own `settings.json` / `tabs.json`
+  (Electron honours the switch — verified), so it can run next to the owner's installed app without
+  the two overwriting each other's tabs.
+- **An occluded window stops rendering**: `visibilityState` is `hidden`, rAF never fires, scroll events
+  and smooth scrolling stall — scroll-driven UI looks broken in tests. `setBackgroundThrottling(false)`
+  did not survive a reload; `W.setAlwaysOnTop(true, "floating"); W.showInactive()` (from the main
+  debugger) brings it forward without taking keyboard focus.
 
 **Typecheck with `npx -p typescript@5.6.3 tsc --noEmit -p .`, not the project's own `tsc`.** The pinned
 TypeScript 4.5 cannot parse current `.d.ts` files in `node_modules`, and when there are syntax errors
@@ -72,9 +91,9 @@ Things that are load-bearing:
   (`background_tasks_changed` count > 0). The input is a push queue (`createInputQueue`): a message
   sent meanwhile goes into the same process; a follow-up turn the CLI starts itself is announced with
   `chat:turn_start` and rendered as a new reply. With no background tasks, the input is closed at
-  `result` (otherwise `for await` waits forever). If the query options changed (`optionsKey()`), or on
-  `chat:new` / resume / cwd change, the process is closed — `q.close()` also kills its background
-  shells (verified).
+  `result` (otherwise `for await` waits forever). If the query options changed (`optionsKey()`), or
+  when the tab's conversation is reset (`resetConversation`: `tabs:open`, cwd change, session delete)
+  or the tab is closed, the process is closed — `q.close()` also kills its background shells (verified).
 - **Stop is immediate and does not wait for main.** The renderer closes the turn itself
   (`finishRef` in `useClaudeChat`: listeners off, running tools marked 중지됨, modals closed).
   `chat:stop` marks the session `stopped` — `pump` then forwards nothing more — and sends **no**
@@ -94,7 +113,7 @@ Things that are load-bearing:
   "changed" and `pump` re-sends the list then (otherwise an agent-launched shell showed no output).
   Agent activity: subagent tool_use/tool_result carry `parent_tool_use_id` = the Agent call's
   `task_started.tool_use_id`, recorded as `recentTools` (last 6, with status). Finished tasks:
-  `task_notification` (status, summary, usage) → module-level `finishedTasks` (last 10, survives the
+  `task_notification` (status, summary, usage) → the tab's `finishedTasks` (last 10, survives the
   CLI process exiting, cleared on new chat / resume / cwd change / "지우기"). Exit code is parsed from
   the summary ("… failed with exit code N") first — the output file's "[exited with code N]" line may
   not be written yet at notification time. `chat:background` sends `{running, finished}`.
@@ -195,17 +214,94 @@ files Bash creates.
 type in main because each event may carry only one window. The `usage_EXPERIMENTAL…` API is avoided
 on purpose.
 
-Sessions resume via the `resume` option. Model, effort, ultracode, fastMode and system prompts are
-persisted in `userData/settings.json` (`settings.save` in each setter, `loadChatSettings()` in
-`whenReady`). The permission shield (`skipPermissions`) is deliberately **not** persisted: "allow
-all" is the owner's preferred default, and "ask" is a per-conversation mode — main resets it to allow
-all on `chat:new` and cwd change. The renderer must re-read it (`chat:get_permissions`) on mount and
-after every new conversation (`startNewConversation`). The original bug was the UI not following that
-reset: the shield kept showing "ask" while tools ran unasked.
+Sessions resume via the `resume` option. Model, effort, ultracode and fastMode are per tab (see Tabs);
+the last values set in any tab, and the system prompts, are persisted in `userData/settings.json`
+(`settings.save` in each setter, `loadChatSettings()` in `whenReady`) as `defaults` for tabs that have
+nothing to inherit from. The permission shield (`skipPermissions`, per tab) is deliberately **not**
+persisted: "allow all" is the owner's preferred default, and "ask" is a per-conversation mode — main
+resets it to allow all whenever a tab's conversation is reset (`resetConversation`), and the renderer
+mirrors every reset (`tabs:open` returns the value; folder change / session delete apply `clearedTab`).
+The original bug was the UI not following that reset: the shield kept showing "ask" while tools ran unasked.
+
+### Tabs (parallel conversations)
+
+Each tab is an independent conversation with its own CLI process, so several can respond at once.
+
+- **main keeps one `ChatTab` per tab id** (`tabs` map, created on first use by `tabFor(event, tabId)`).
+  Everything that used to be a module-level "current conversation" lives on it: `cwd`, `sessionId`,
+  model/effort/ultracode/fastMode, `skipPermissions`, `live`, `stopEpoch`, `replaceFirst`,
+  `unsavedGrants`, changed files, finished background tasks, the git status cache. Still global:
+  `defaults`, system prompts, `grantsBySession` (keyed by session id), plan usage (one account — the
+  header shows it for all tabs), the per-folder probe cache.
+- **IPC**: every per-tab request takes `tabId` first; every per-tab event goes out through
+  `send(tab, channel, payload)` as `(tabId, payload)`. The preload exposes them as `onTabEvent(name, cb)`
+  (`TAB_EVENTS` maps names to channels), and `src/renderer/tab-events.ts` (`onTab(event, tabId, cb)` /
+  `onAnyTab`) keeps **one** `ipcRenderer` listener per channel and routes by tab id, instead of every
+  tab stacking its own listeners. Pending permission promises remember their tab;
+  `settlePendingPermissions(tab, …)` settles only that tab's, so stopping one tab never answers another's modal.
+- **`tabs:open(tabId, init)`** (re)starts a tab: `resetConversation`, applies `{cwd, sessionId, model,
+  effort, ultracode, fastMode}` (missing values keep the tab's own, which start from `defaults`),
+  recomputes changed files from the session, probes the folder, and returns
+  `{cwd, cwdMissing, sessionMissing, model, effort, ultracode, fastMode, skipPermissions}`.
+  A restored tab's session may be gone (deleted in the terminal, or cleaned up by the CLI as old):
+  `getSessionMessages` returns `[]` for a missing session and resuming it fails every send with "No
+  conversation found with session ID" (both verified), so `tabs:open` checks `getSessionInfo` (no `dir`
+  = all projects; `undefined` = missing; on error assume it exists), clears `sessionId` and returns
+  `sessionMissing` — the tab becomes a new conversation in the same folder, with a notice.
+  The renderer calls it lazily (`ensureOpened`) the first time a tab is shown, so restored tabs nobody
+  looks at cost nothing; after the await it re-checks the tab's `gen` and opens again if the tab was
+  repurposed meanwhile. **`tabs:close`** bumps `stopEpoch`, restores a pending `replaceFirst`, closes
+  the live query (the CLI process is gone after closing a responding tab — verified) and settles its
+  permissions. The renderer asks first when the tab is responding or has background tasks; closing
+  the last tab opens a fresh one with the same folder and settings.
+- **Persistence**: `userData/tabs.json` through json-store (`tabs:load` / `tabs:save`, `cleanSavedTabs`
+  validates, ≤50 tabs) = `{tabs: [{id, sessionId, cwd, title, model, effort, ultracode, fastMode}],
+  activeId}`, saved 400 ms after a change. A restart brings back the tabs and the active one; the
+  permission shield and running work do not survive.
+- **Settings are per tab.** A new tab inherits the current tab's folder and model/effort/ultracode/fast.
+- **Renderer**: `chat.page.tsx` is the shell — `TabMeta[]`, sidebar, header, cwd bar, files panel
+  (`key={active.id}`), notifications, persistence. `ChatTabView` (memoized) is one per tab and **all of
+  them stay mounted**; inactive ones are `display: none`, so typed text, the send queue, scroll
+  position, open modals and streams survive switching. Status flows up through per-tab `callbacks`
+  (cached per id so the memo holds): loading, attention (permission/question → orange `!` on the tab;
+  the modal only shows in that tab), turn end (a tab that finishes while you're elsewhere gets a dot),
+  the first user message (title, until the CLI's session summary arrives via `refreshSessions`).
+- **Opening a conversation from the sidebar**: already open in a tab → switch to it ("열린 탭" badge);
+  the current tab is blank (never sent) → open it there; otherwise → a new tab. Deleting a session
+  clears every tab that had it (main in `sessions:delete`, renderer `clearedTab`).
+- **Tab strip** (`TabStrip.tsx`): status icon (orange `!` / spinner / unseen dot), folder name
+  (middle-truncated), title, `⚙ N` while the tab has running background tasks (same count as its
+  "백그라운드 N" — a dev server in a tab you're not looking at stays visible), close. Tabs are 200px
+  (`width`, not `flex-basis` — with a basis the auto-width list sized to the tabs' content and they
+  shrank to ~110px with room to spare) and shrink to 96px, then the list scrolls sideways with its
+  scrollbar hidden: `useOverflowScroll` turns vertical wheel into horizontal scroll (Chromium does not
+  do this by itself — verified) and fades the edge that hides tabs (`tabListFadeLeft/Right`, a mask).
+- **Closing the window, reloading or quitting while work runs asks first** — decided in main, so it
+  works even if the renderer is stuck. `busySummary()`: a tab is responding while a `chat:send` is in
+  flight (`tab.sending`, covers spawning the CLI) or its live turn is active (CLI-started follow-ups
+  too); background = non-ambient `bgMembers`. `confirmStopWork()` shows a sync `showMessageBoxSync`
+  ("응답 중인 탭 N개, 백그라운드 작업 M개가 있습니다"). Hooks: `before-quit` (asks once, then `quitting`
+  stops the window `close` handler from asking again), `guardWindow()` on every created window (`close`
+  asks; `closed` → `disposeTabsOf` — on macOS the app outlives its window and the CLIs kept running
+  headless, permission requests unanswerable, and reopening killed the active tab's work), and the
+  View menu's own 새로고침 items (the `reload` role cannot ask). A renderer that starts again (reload,
+  DevTools ⌘R) calls `tabs:load` first, which disposes that webContents' leftover tabs. `send()` drops
+  events from a disposed tab, so a late `chat:done` from a closed CLI cannot end a turn in the tab
+  restored under the same id. **Signals don't ask** (`installSignalQuit`, called in `whenReady`):
+  Chromium installs its own SIGINT/SIGTERM/SIGHUP handler before `ready` — first signal = graceful
+  quit through `before-quit` (so it showed the dialog), next one = default action, i.e. instant death
+  that orphaned the CLI and its `sleep` (both verified). Node's `process.on` only registers with the OS
+  for a signal's first listener, so it must run after `ready` to win; a second signal disposes all
+  tabs and `app.exit`s. macOS logout/shutdown is not a signal (it arrives as `before-quit`) and asks.
+- **Shortcuts** live in the app menu (`src/main/menu.ts`): ⌘T new tab, ⌘W close tab (the default
+  menu's ⌘W closed the whole window), ⌘⇧W close window, ⌃Tab / ⌃⇧Tab next/previous, ⌘1–8, ⌘9 last.
+  Items send `menu:tab` to the focused window; the shell acts on it. Verified by clicking the menu items
+  from main — synthetic key events (CDP `Input.dispatchKeyEvent`, `webContents.sendInputEvent`) never
+  reach the native menu, so the accelerators themselves can't be tested that way.
 
 ### JSON files in `userData`
 
-`settings.json` goes through `src/main/services/json-store.ts`. A missing
+`settings.json` and `tabs.json` go through `src/main/services/json-store.ts`. A missing
 file yields the default; a file that fails to parse is **renamed** to `*.corrupt-<timestamp>.json`
 before the default is returned — never treat a parse error as "empty" and write over it (that used
 to wipe the app's old `conversations.json` history). Writes go to a temp file and `rename` over the original.
@@ -243,7 +339,8 @@ All renderer↔main calls go through `window.electronAPI` (defined in `src/prelo
 2. Expose it in `src/preload.ts` via `contextBridge`.
 3. Add the type to the `Window.electronAPI` interface in `src/declarations.d.ts`.
 
-All three must agree.
+All three must agree. Anything about one conversation is per tab: the request takes `tabId` first and
+the event is sent with `send(tab, …)` and added to `TAB_EVENTS` in the preload (see Tabs).
 
 ### External backend at `http://localhost:8080`
 
@@ -253,12 +350,20 @@ All three must agree.
 
 The sidebar lists `listSessions()` (all projects, terminal sessions included) and opens one with
 `getSessionMessages()` → `sessionToMessages()` (drops subagent entries, attaches `tool_result` to its
-`tool_use`, shows `<command-name>` entries as `/cmd args`). Resuming moves `currentCwd` to the
-session's `cwd`. The CLI finds the session from any folder, so if that folder no longer exists
-the resume still succeeds and continues in whatever folder is current (verified). `chat:resume_session`
+`tool_use`, shows `<command-name>` entries as `/cmd args`). Opening one in a tab sets the tab's `cwd` to
+the session's `cwd`. The CLI finds the session from any folder, so if that folder no longer exists
+the resume still succeeds and continues in whatever folder is current (verified). `tabs:open`
 therefore returns `{cwd, cwdMissing}` and the renderer warns; `sessions:list` marks `cwdMissing` too.
 Delete = `deleteSession()`, which also removes it from the terminal's `/resume`. The app no longer
 keeps its own copy; the old `userData/conversations.json` is left on disk but unused.
+
+**Token badges on loaded messages** ("N tokens" next to 나 / Claude): live turns take them from
+`result.usage` (input → the user message, output → the reply). `sessionToMessages` rebuilds the same
+numbers from each response's `message.usage` in the transcript — the sum over a turn's responses equals
+`result.usage` (verified on a tool-using turn: 2+2 / 83+7 = 4 / 90). The transcript writes one response
+as several lines (one per content block) that all repeat the same usage, so it counts **once per
+`message.id`** — per line came out 2–3× too high. Before this, restored tabs (every app start) showed
+no badges at all.
 
 ### Per-folder CLI info (`probeFolder`)
 
@@ -272,26 +377,26 @@ and `commands_changed` system messages are pushed as `chat:commands`.
 
 Right-hand panel, closed by default: the working folder as a lazily loaded tree (`files:list_dir` per
 expanded folder), files Claude changed in this conversation marked, click a file to view it (highlight.js
-`lib/common` + `github.css`; not highlighted above 400K chars) or its change history (`ToolDiff`).
+`lib/common`, colours from `--c-syn-*`; not highlighted above 400K chars) or its change history (`ToolDiff`).
 Open/width/"바뀐 파일만" live in `localStorage` (`filesPanel.*`). Under 760px it overlays the chat.
 
 - **Tracking lives in main** (`trackFileEdits`, called in `pump` for every message, subagents included,
   before the subagent drop): a Write/Edit/MultiEdit/NotebookEdit `tool_use` is remembered in
   `pendingEdits` and counted only when its `tool_result` is not an error (a failed Edit does not mark the
   file — verified). Bash-made changes are not tracked. Up to 50 hunks per file are kept for the history tab.
-- **Paths**: `file_path` is resolved against `currentCwd` (Claude does send relative paths — observed), then
+- **Paths**: `file_path` is resolved against the tab's `cwd` (Claude does send relative paths — observed), then
   mapped from the real path back to the app's spelling of the cwd (`toCwdPath`). The CLI works in the
   realpath (`/tmp` → `/private/tmp`; verified with a symlinked cwd), but the tree is drawn from the app's
   path, so without this the file landed in "작업 폴더 밖".
 - **"방금"** = `lastTurn === turn`. `fileTurn` increments in `beginTurn`, which re-sends the list so the
   previous response's marks drop to "수정 N" as soon as a new response starts.
-- **Reset** on `chat:new` / folder change / resume. Resume recomputes from the transcript
+- **Reset** whenever the tab's conversation is reset; opening a session recomputes from the transcript
   (`loadChangedFilesFromSession`); `changedFilesGen` discards a recompute that finishes after the user
   already moved to another conversation (it used to leak into the new one). Edit times come from each
   entry's `timestamp` (`entryTime`) — present at runtime though `SessionMessage`'s type omits it;
   without it every history entry showed the time the conversation was opened.
 - **File access is restricted in main**: `files:list_dir` / `files:read` / `files:reveal` accept only
-  absolute paths inside `realpath(currentCwd)` or files Claude changed in this conversation (outside ones
+  absolute paths inside `realpath(tab.cwd)` or files Claude changed in this conversation (outside ones
   are listed under "작업 폴더 밖"). Symlinks pointing out of the cwd are refused. Reads cap at 1 MB; a NUL
   byte in the first 8 KB means binary.
 - **Three views** (`filesPanel.view`; the old `filesPanel.onlyChanged` maps to "claude"): 전체 (tree),
@@ -318,29 +423,76 @@ Open/width/"바뀐 파일만" live in `localStorage` (`filesPanel.*`). Under 760
   queues a `Draft` (raw text + attachments; queuing again merges into it) shown as "응답이 끝나면 보냄".
   `useClaudeChat` exposes `turnEnd {seq, stopped}` from `finish`. Normal end → the draft is sent;
   stopped → it goes back into the input (in front of anything typed since — nothing is dropped); "지금
-  보내기" = stop, then send (`sendAfterStopRef`). Changing conversation bumps `resetSignal`
-  (`conversationSeq` in `chat.page`, in `startNewConversation` / `handleLoadSession`) → draft goes back to
-  the input. That is load-bearing: `chat:new` mid-turn → `closeLive` → `pump`'s `finally` still sends
-  `chat:done`, which would otherwise auto-send the draft into the *new* conversation.
-- **Notifications** (`hooks/useNotificationSound.ts`): the renderer decides, main (`notify:show`) only
-  displays. Turn done → chime always (as before) + macOS notification when `!document.hasFocus()`.
-  Permission request / question → only when away: a different (descending) chime + notification.
+  보내기" = stop, then send (`sendAfterStopRef`). Changing the tab's conversation (a session loaded into
+  it, folder change, session delete) bumps `resetSignal` (`conversationSeq` in `ChatTabView`, on a new
+  `load` / `resetToken`) → draft goes back to the input. That is load-bearing: a reset mid-turn →
+  `closeLive` → `pump`'s `finally` still sends `chat:done`, which would otherwise auto-send the draft
+  into the *new* conversation.
+- **Notifications** (`hooks/useNotificationSound.ts`): the shell decides (per tab, in its `callbacks`),
+  main (`notify:show`) only displays. Title = the tab's folder name (last path segment), body = what
+  happened + a one-line summary; clicking it switches to the tab that raised it (`tabId` → main →
+  `notify:clicked` → shell). Turn done → chime always (as before) + macOS notification when
+  `!document.hasFocus()`. Permission request / question → a different (descending) chime when away
+  **or when it is in a tab you are not looking at** (its modal is hidden there), + notification when away.
   Notifications are `silent: true` — the app's own chime follows the volume setting (0–100, 50 = the
-  original loudness). Main keeps each `Notification` in a Set (otherwise it is garbage-collected and the
+  original loudness). The slider is squared (`volumeGain`): loudness is heard logarithmically, and the
+  old linear gain spanned only −6…+6 dB between 25 and 100 ("barely changes"). Squared: 25 = −12 dB,
+  100 = +12 dB. The app cannot be louder than the Mac's output volume (the owner keeps it low and
+  wants only alerts louder) — raising the system volume around each chime was rejected (blasts
+  whatever else is playing, dangerous in earphones, can be left high). Instead, above 50 the chime
+  itself morphs (`chimeShape`) to sound louder at the same peak: longer ring (0.38 → 0.7 s), a 40 ms
+  hold at the top, a 3rd harmonic in the 2–4 kHz band. ≤50 is sample-identical to before. Measured by
+  rendering the real `scheduleNotes` into an `OfflineAudioContext` (K-weighted momentary loudness):
+  100% is +5.6 dB over the squared-only chime (−10.7 LUFS vs −27.7 at 50), peak 0.89 — no clipping. Main keeps each `Notification` in a Set (otherwise it is garbage-collected and the
   click handler is lost) and closes them all on `browser-window-focus`. Settings live in `localStorage`
   (`better-claude:notification-sound` / `-volume`, `better-claude:os-notifications`). The ad-hoc-signed
   dev Electron does get notifications presented on macOS 26 (`show` event fired — verified).
+- **"답변 처음으로"** (`ChatTabView`, top-right pill): while the Claude reply that crosses the top edge of
+  the message list has its start hidden (>48px above, and >40px of it still below the edge), the
+  button jumps to that reply's header (12px margin) and releases bottom-following. The reply at the top
+  edge is found by binary search over `:scope > [data-msg-id]` (`MessageItem` sets `data-msg-id` /
+  `data-role`). It is measured on scroll **and** after `messages` change / the tab becomes visible —
+  right after a conversation loads, the scroll event can come before layout settles and the button
+  stayed hidden.
 - **Copy buttons go through main** (`clipboard:write` → Electron `clipboard`): `navigator.clipboard`
   rejects when the document isn't focused (e.g. DevTools focused) — verified.
 - **Code highlighting** is shared (`src/renderer/highlight.ts`). Chat fences render through the `pre`
   override in `MARKDOWN_COMPONENTS` (`CodeBlock`: language label + copy). Fences without a language are
-  not highlighted (auto-detect misfires on command output). `github.css` (light, for the files panel) is
-  global, so chat code blocks re-colour every one of its token selectors under `.codeBlockPre` (dark) —
-  single-class selectors first, compound ones after (cascade + stylelint order).
+  not highlighted (auto-detect misfires on command output). No highlight.js theme CSS is imported: chat
+  code blocks (dark in both themes) colour tokens under `.codeBlockPre` with `--c-synd-*`; the file viewer
+  colours them under `.codeBody` with `--c-syn-*` (light = the github theme's exact colours, dark = the
+  `--c-synd-*` palette). Both keep github's selector order — single-class selectors first, compound ones
+  after; the `.codeBody` block sits after `.codeBlockPre` with a stylelint-disable comment, because
+  stylelint ignores what is inside `:global()` and sees them as the same selectors.
+
+### Colours and dark mode (`src/renderer/styles/theme.css`)
+
+Every colour the renderer uses is a CSS variable in `theme.css` (imported first in `renderer/main.tsx`):
+`:root` = light values, `@media (prefers-color-scheme: dark) { :root { … } }` = dark overrides; a token
+without a dark line is the same in both (header/sidebar/code-block colours were already dark). `--c-*`
+are colours, `--sh-*` whole `box-shadow` values (dark adds a 1px light ring — shadows vanish on dark
+backgrounds). SCSS must not use colour literals any more — add a token (role name, not hue) instead.
+Tokens are split by role even when the light value is the same (`#3a3d35` is `--c-text` but also
+`--c-sidebar-bg` / `--c-tooltip-bg`), because the roles diverge in dark. Don't reuse names that
+components set inline: `--fill` (notification slider %) and `--icon` / `--icon-dark` (`FILE_ICONS` in
+`ChatInput.tsx` pass per-file-type icon colours this way so `.mentionIcon` can switch them in dark).
+
+- **Which theme** = main's `nativeTheme.themeSource` (`system` | `light` | `dark`), persisted as
+  `settings.json` `theme`, applied in `loadChatSettings()` before the window exists; `theme:get` /
+  `theme:set` IPC; header button `ThemeSettings.tsx`. Setting `themeSource` is what flips the renderer's
+  `prefers-color-scheme` (live, no reload) and native UI (select popups, dialogs); `color-scheme: light
+  dark` on `:root` lets default controls/scrollbars follow. Nothing in the renderer stores the theme.
+- **Window `backgroundColor`** (`create-main-window.ts`, `SPLASH_BG`) = the splash colour for the current
+  theme (`--c-header-bg`); without it the default white flashed before the first paint in dark mode.
+- **Light mode was moved to tokens without visual change** — verified by compiling the SCSS, replacing
+  every `var(--token)` with its light value and diffing against the pre-token CSS (identical), plus
+  computed-style comparisons in the running app (file-viewer tokens, @mention icons, whole panels).
+  To preview dark without touching settings: CDP `Emulation.setEmulatedMedia` with
+  `prefers-color-scheme: dark`, or set `nativeTheme.themeSource` from a main-process debugger.
 
 ### Renderer layout
 
-React 19 + `react-router-dom` v7 with `createHashRouter` (hash routing because `file://` loading rules out `BrowserRouter`). One route: `/` → `chat.page.tsx`. Streaming chat state lives in the `useClaudeChat` hook (`src/renderer/hooks/useClaudeChat.ts`); subscriptions to IPC events are set up per-message-send and torn down on `chat:done`. UI uses antd + FontAwesome + SCSS modules (`*.module.scss`).
+React 19 + `react-router-dom` v7 with `createHashRouter` (hash routing because `file://` loading rules out `BrowserRouter`). One route: `/` → `chat.page.tsx`, the tab shell (see Tabs). Streaming chat state lives in `useClaudeChat(tabId, callbacks)` (`src/renderer/hooks/useClaudeChat.ts`, one per `ChatTabView`); its IPC subscriptions go through `tab-events.ts`, are set up per message send and torn down on `chat:done`. UI uses antd + FontAwesome + SCSS modules (`*.module.scss`).
 
 Hover tooltips are CSS-only (`data-tooltip` / `data-tooltip-dir="down"` → `::after` in
 `styles/index.css`), centered by default. `src/renderer/tooltip-guard.ts` (installed in

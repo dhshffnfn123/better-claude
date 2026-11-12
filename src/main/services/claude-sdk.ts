@@ -1,5 +1,6 @@
 import type {
     deleteSession,
+    getSessionInfo,
     getSessionMessages,
     listSessions,
     McpServerStatus,
@@ -34,6 +35,8 @@ interface SdkModule {
     // CLI 세션 기록(~/.claude/projects) — 터미널에서 한 대화도 포함된다
     listSessions: typeof listSessions;
     getSessionMessages: typeof getSessionMessages;
+    // 없는 세션이면 undefined (getSessionMessages는 빈 배열이라 구분이 안 된다)
+    getSessionInfo: typeof getSessionInfo;
     deleteSession: typeof deleteSession;
 }
 

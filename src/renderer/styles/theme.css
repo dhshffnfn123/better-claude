@@ -1,0 +1,454 @@
+/* 앱의 모든 색 — 라이트 값이 기본, 다크 값은 맨 아래 prefers-color-scheme: dark에서 덮어쓴다.
+   다크/라이트 선택은 main의 nativeTheme.themeSource(시스템 따름·라이트·다크)가 정하고,
+   그 결과가 prefers-color-scheme으로 들어온다. 색을 바꿀 때는 여기만 고치면 된다. */
+
+:root {
+  /* 기본 컨트롤(선택 상자 목록, 기본 스크롤바 등)도 테마를 따르게 */
+  color-scheme: light dark;
+
+  /* 바탕과 표면 */
+  --c-bg: #f2f0eb;
+  --c-panel-bg: #faf9f6;
+  --c-toolbar-bg: #eae7de;
+  --c-surface: #fff;
+  --c-surface-warm: #fffdf7;
+  --c-elevated: #fff;
+  --c-input-bg: #f2f0eb;
+
+  /* 채움 — 버튼·칩·마우스 올림·선택 */
+  --c-fill: #f2f0eb;
+  --c-fill-strong: #e8e4d8;
+  --c-fill-subtle: #f7f5ef;
+  --c-fill-subtle-2: #fbfaf6;
+  --c-fill-neutral: #eeebe2;
+  --c-fill-muted: #8a8f7a;
+  --c-hover: #efece4;
+  --c-hover-alt: #ece9de;
+  --c-float-hover: #f7f4ea;
+  --c-selected: #ebe4cc;
+  --c-item-active: #eae7de;
+  --c-chip-bg: #eae7de;
+  --c-tint: rgba(0, 0, 0, 0.06);
+  --c-tint-subtle: rgba(0, 0, 0, 0.04);
+
+  /* 글자 */
+  --c-text: #3a3d35;
+  --c-text-soft: #4a5245;
+  --c-text-2: #6a6f5e;
+  --c-text-muted: #8a8f7a;
+  --c-text-faint: #a0a896;
+  /* 메시지의 "N tokens" 배지 글자 — 라이트는 흐린 글자 그대로, 다크는 금색(아래) */
+  --c-token-badge-text: #a0a896;
+  --c-text-ghost: #b5b099;
+  --c-placeholder: #aaa89a;
+  --c-placeholder-2: #b0ad9e;
+  --c-placeholder-3: #a8a99a;
+  --c-dots: #aaa89a;
+  --c-link: #8b6330;
+
+  /* 테두리·구분선 */
+  --c-border: #ddd8b0;
+  --c-border-soft: #e3dcc0;
+  --c-border-neutral: #e3dfd2;
+  --c-border-strong: #c9c4a0;
+  --c-divider: #e8e4d8;
+  --c-divider-alt: #ece9de;
+  --c-divider-soft: #efece4;
+  --c-divider-faint: #f2f0eb;
+  --c-panel-border: #e0dccf;
+
+  /* 강조색(브라스) */
+  --c-accent: #c9a84c;
+  --c-accent-hover: #b89a44;
+  --c-accent-text: #8a6d1f;
+  --c-accent-soft: #f3ead0;
+  --c-accent-ink: #3a3d35;
+  --c-on-accent: #fff;
+  --c-changed-text: #7a5f12;
+  --c-resize-hover: rgba(201, 168, 76, 0.35);
+  --c-user-bubble-bg: #c9a84c;
+  --c-user-bubble-text: #fff;
+
+  /* 주 버튼(올리브) */
+  --c-primary: #4a5245;
+  --c-primary-hover: #3a3d35;
+  --c-primary-disabled: #ddd8b0;
+  --c-on-primary: #f2f0eb;
+  --c-on-primary-disabled: #f2f0eb;
+  --c-on-fill: #fff;
+
+  /* 머리줄 — 원래 어두운 띠라 글자·아이콘 색은 그대로 */
+  --c-header-bg: #4a5245;
+  --c-header-border: #3a3d35;
+  --c-header-text: #f2f0eb;
+  --c-header-icon: #a0a896;
+  --c-header-hover: rgba(255, 255, 255, 0.1);
+  --c-ultra: #b79ae0;
+  --c-ultra-bg: rgba(167, 139, 216, 0.18);
+  --c-ultra-hover: #cbb3ea;
+  --c-ultra-bg-hover: rgba(167, 139, 216, 0.28);
+  --c-fast: #e8a25c;
+  --c-fast-bg: rgba(232, 162, 92, 0.18);
+  --c-fast-hover: #f0b67a;
+  --c-fast-bg-hover: rgba(232, 162, 92, 0.28);
+  --c-tab-attention: #e8a25c;
+
+  /* 사이드바 — 원래 어두운 판이라 글자 색은 그대로 */
+  --c-sidebar-bg: #3a3d35;
+  --c-sidebar-border: #4a5245;
+  --c-sidebar-hover: #4a5245;
+  --c-sidebar-scrollbar: #4a5245;
+  --c-sidebar-text: #f2f0eb;
+  --c-sidebar-title: #d8d5cc;
+  --c-sidebar-muted: #a0a896;
+  --c-sidebar-chip: rgba(255, 255, 255, 0.06);
+  --c-sidebar-warn: #d98b6f;
+  --c-sidebar-danger: #e74c3c;
+  --c-sidebar-danger-bg: rgba(231, 76, 60, 0.12);
+
+  /* 툴팁(입력창 시스템 프롬프트 안내) */
+  --c-tooltip-bg: #3a3d35;
+  --c-tooltip-text: #f2f0eb;
+
+  /* 상태 — 위험·오류·경고·성공 */
+  --c-danger: #b5533c;
+  --c-danger-strong: #c0392b;
+  --c-danger-soft: #fbeeea;
+  --c-danger-soft-hover: #f6dfd8;
+  --c-danger-fill: #c0392b;
+  --c-danger-fill-hover: #a93226;
+  --c-on-danger: #fff;
+  --c-error: #a54f32;
+  --c-error-soft: #faeee9;
+  --c-error-border: #e8cfc4;
+  --c-warning-text: #8b6330;
+  --c-warning-soft: #faf3e2;
+  --c-warning-border: #e8dcbc;
+  --c-stat-warn: #b08a2e;
+  --c-note-bg: #fbf6e6;
+  --c-ok: #6f9a5f;
+  --c-success-text: #4f7a3f;
+  --c-success-soft: #e8f1e1;
+  --c-tool-done: #5a8a5a;
+  --c-copied-text: #6b8f4e;
+  --c-task-text: #6f7d5f;
+  --c-tag-text: #8b6330;
+  --c-tag-bg: #f5ecd9;
+  --c-option-active-bg: #faf3e2;
+  --c-option-hover-bg: #faf8ef;
+
+  /* 가리개·라이트박스 */
+  --c-scrim: rgba(0, 0, 0, 0.3);
+  --c-modal-scrim: rgba(0, 0, 0, 0.4);
+  --c-lightbox-scrim: rgba(0, 0, 0, 0.8);
+  --c-lightbox-btn: rgba(255, 255, 255, 0.12);
+  --c-lightbox-btn-hover: rgba(255, 255, 255, 0.25);
+  --c-lightbox-fg: #fff;
+  --c-image-border: rgba(255, 255, 255, 0.3);
+
+  /* 선택 상자·게이지·스크롤바 */
+  --c-select-bg: #ddd8b0;
+  --c-select-bg-hover: #ccc8a0;
+  --c-select-bg-disabled: #d5d1ae;
+  --c-gauge-track: #ddd8b0;
+  --c-scrollbar: #ddd8b0;
+
+  /* 변경(diff) */
+  --c-diff-bg: #fbf8eb;
+  --c-diff-border: #e8e3c0;
+  --c-diff-add-bg: rgba(34, 197, 94, 0.1);
+  --c-diff-add-text: #14532d;
+  --c-diff-del-bg: rgba(220, 38, 38, 0.08);
+  --c-diff-del-text: #991b1b;
+  --c-diff-context-text: #6a6f5a;
+  --c-hunk-bg: #f3f0e6;
+  --c-line-no: #c2bda8;
+
+  /* Git 변경 보기 */
+  --c-git-add: #3f7d32;
+  --c-git-del: #b5443a;
+  --c-git-added-text: #2f6a24;
+  --c-git-added-bg: #e3f1dc;
+  --c-git-deleted-text: #9b3a31;
+  --c-git-deleted-bg: #f8e1de;
+  --c-git-renamed-text: #2d5f86;
+  --c-git-renamed-bg: #dfeaf3;
+
+  /* 코드 블록·터미널 출력 — 원래 어두운 판, 다크에선 표면보다 더 어둡게 */
+  --c-code-bg: #2c2c2c;
+  --c-code-head-bg: #363633;
+  --c-code-head-text: #a8a28c;
+  --c-code-copy: #c8c0a8;
+  --c-code-copy-hover: #f2ead3;
+  --c-code-hover-bg: rgba(255, 255, 255, 0.08);
+  --c-code-text: #e8d9b5;
+  --c-terminal-bg: #2f322b;
+  --c-terminal-text: #e8e6df;
+
+  /* 어두운 바탕용 문법 색 (채팅 코드 블록, 다크 모드의 파일 보기) */
+  --c-synd-keyword: #e78a4e;
+  --c-synd-type: #d8a657;
+  --c-synd-title: #a9b665;
+  --c-synd-string: #89b482;
+  --c-synd-number: #d3869b;
+  --c-synd-attr: #7daea3;
+  --c-synd-tag: #ea6962;
+  --c-synd-comment: #928374;
+  --c-synd-add-bg: rgba(169, 182, 101, 0.14);
+  --c-synd-del-bg: rgba(234, 105, 98, 0.14);
+
+  /* 파일 보기의 문법 색 — 라이트는 github 테마 그대로, 다크는 위의 어두운 바탕용 색 */
+  --c-syn-text: #24292e;
+  --c-syn-keyword: #d73a49;
+  --c-syn-type: #d73a49;
+  --c-syn-title: #6f42c1;
+  --c-syn-title-class: #6f42c1;
+  --c-syn-attr: #005cc5;
+  --c-syn-number: #005cc5;
+  --c-syn-operator: #005cc5;
+  --c-syn-string: #032f62;
+  --c-syn-builtin: #e36209;
+  --c-syn-comment: #6a737d;
+  --c-syn-name: #22863a;
+  --c-syn-plain: #24292e;
+  --c-syn-section: #005cc5;
+  --c-syn-bullet: #735c0f;
+  --c-syn-add: #22863a;
+  --c-syn-add-bg: #f0fff4;
+  --c-syn-del: #b31d28;
+  --c-syn-del-bg: #ffeef0;
+  --c-syn-property: currentColor;
+  --c-syn-tag: currentColor;
+
+  /* 입력창 주변 — 첨부·@멘션·끌어다 놓기·대기 메시지 */
+  --c-attach-bg: #f5efd6;
+  --c-mention-active: #f3edda;
+  --c-mention-path: #a8a99a;
+  --c-mention-path-icon: #c4c5b4;
+  --c-drop-bg: #faf6e6;
+  --c-drop-text: #8a7a3a;
+  --c-drop-overlay: rgba(245, 239, 214, 0.85);
+  --c-queued-bg: #fbf6e3;
+  --c-queued-border: #d9c98f;
+  --c-queued-icon: #b8962e;
+  --c-queued-btn-hover: #f7f3e6;
+
+  /* 알림 설정 — 슬라이더·스위치 */
+  --c-range-track: #e6e1d2;
+  --c-switch-off: #d6d1c2;
+  --c-knob: #fff;
+
+  /* 그림자 — 다크에선 그림자가 잘 안 보여 1px 테두리 빛을 더한다 */
+  --sh-popover: 0 8px 28px rgba(0, 0, 0, 0.18);
+  --sh-popover-sm: 0 6px 24px rgba(0, 0, 0, 0.16);
+  --sh-modal: 0 8px 32px rgba(0, 0, 0, 0.18);
+  --sh-float: 0 2px 8px rgba(58, 61, 53, 0.15);
+  --sh-dropdown: 0 -4px 16px rgba(58, 61, 53, 0.1);
+  --sh-dropdown-2: 0 -6px 20px rgba(58, 61, 53, 0.12);
+  --sh-tooltip: 0 6px 20px rgba(0, 0, 0, 0.18);
+  --sh-panel: -8px 0 24px rgba(0, 0, 0, 0.12);
+  --sh-lightbox: 0 8px 40px rgba(0, 0, 0, 0.5);
+  --sh-focus-ring: 0 0 0 3px rgba(201, 168, 76, 0.3);
+  --sh-knob: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* 바탕과 표면 */
+    --c-bg: #1b1d18;
+    --c-panel-bg: #262922;
+    --c-toolbar-bg: #22251f;
+    --c-surface: #2d3029;
+    --c-surface-warm: #33362e;
+    --c-elevated: #363a31;
+    --c-input-bg: #1f211c;
+
+    /* 채움 — 버튼·칩·마우스 올림·선택 */
+    --c-fill: #43473c;
+    --c-fill-strong: #4d5146;
+    --c-fill-subtle: #292c25;
+    --c-fill-subtle-2: #2f322a;
+    --c-fill-neutral: #3d4137;
+    --c-fill-muted: #5e6255;
+    --c-hover: #383c32;
+    --c-hover-alt: #30342b;
+    --c-float-hover: #41453a;
+    --c-selected: #4a452c;
+    --c-item-active: #4d472e;
+    --c-chip-bg: #3c4036;
+    --c-tint: rgba(255, 255, 255, 0.08);
+    --c-tint-subtle: rgba(255, 255, 255, 0.05);
+
+    /* 글자 */
+    --c-text: #e8e4d8;
+    --c-text-soft: #d5d1c3;
+    --c-text-2: #b8b6a7;
+    --c-text-muted: #a5a897;
+    --c-text-faint: #7d8173;
+    /* 흐린 글자(#7d8173)는 배지 바탕(#4d5146) 위에서 대비 2:1로 잘 안 보였다 — 강조 글자색(accent-text)과
+       같은 금색으로, 대비 약 4.5:1 */
+    --c-token-badge-text: #dcbf6a;
+    --c-text-ghost: #666a5d;
+    --c-placeholder: #777b6d;
+    --c-placeholder-2: #777b6d;
+    --c-placeholder-3: #777b6d;
+    --c-dots: #7d8173;
+    --c-link: #e0bb6e;
+
+    /* 테두리·구분선 */
+    --c-border: #464a3e;
+    --c-border-soft: #4a4e42;
+    --c-border-neutral: #464a3f;
+    --c-border-strong: #565b4b;
+    --c-divider: #3a3e34;
+    --c-divider-alt: #44483d;
+    --c-divider-soft: #42463b;
+    --c-divider-faint: #44483d;
+    --c-panel-border: #3a3e34;
+
+    /* 강조색(브라스) */
+    --c-accent-hover: #d6b75e;
+    --c-accent-text: #dcbf6a;
+    --c-accent-soft: #3d3720;
+    --c-accent-ink: #1b1d18;
+    --c-on-accent: #1b1d18;
+    --c-changed-text: #e2c46c;
+    --c-user-bubble-bg: #6e5c27;
+    --c-user-bubble-text: #f7f0dc;
+
+    /* 주 버튼(올리브) */
+    --c-primary: #59634f;
+    --c-primary-hover: #67725b;
+    --c-primary-disabled: #3d4137;
+    --c-on-primary-disabled: #73776a;
+
+    /* 머리줄 — 원래 어두운 띠라 글자·아이콘 색은 그대로 */
+    --c-header-bg: #2b3027;
+    --c-header-border: #161812;
+
+    /* 사이드바 — 원래 어두운 판이라 글자 색은 그대로 */
+    --c-sidebar-bg: #23261f;
+    --c-sidebar-border: #33372e;
+    --c-sidebar-hover: #31352c;
+    --c-sidebar-scrollbar: #3d4137;
+
+    /* 툴팁(입력창 시스템 프롬프트 안내) */
+    --c-tooltip-bg: #4b4f44;
+    --c-tooltip-text: #f4f1e6;
+
+    /* 상태 — 위험·오류·경고·성공 */
+    --c-danger: #ef917a;
+    --c-danger-strong: #f07a68;
+    --c-danger-soft: #3d2622;
+    --c-danger-soft-hover: #4a2d28;
+    --c-danger-fill: #b53a2d;
+    --c-danger-fill-hover: #c94636;
+    --c-error: #e58b6d;
+    --c-error-soft: #3a2620;
+    --c-error-border: #5c3a30;
+    --c-warning-text: #e0b26e;
+    --c-warning-soft: #37301f;
+    --c-warning-border: #5a4c2c;
+    --c-stat-warn: #d9b45a;
+    --c-note-bg: #2e2a1c;
+    --c-ok: #84b273;
+    --c-success-text: #9cc98a;
+    --c-success-soft: #27341f;
+    --c-tool-done: #7fb07a;
+    --c-copied-text: #93bd78;
+    --c-task-text: #a3b192;
+    --c-tag-text: #e0b26e;
+    --c-tag-bg: #3b3424;
+    --c-option-active-bg: #403822;
+    --c-option-hover-bg: #363a31;
+
+    /* 가리개·라이트박스 */
+    --c-scrim: rgba(0, 0, 0, 0.5);
+    --c-modal-scrim: rgba(0, 0, 0, 0.6);
+
+    /* 선택 상자·게이지·스크롤바 */
+    --c-select-bg: #393c32;
+    --c-select-bg-hover: #43473b;
+    --c-select-bg-disabled: #2e3129;
+    --c-gauge-track: #3f4338;
+    --c-scrollbar: #474b40;
+
+    /* 변경(diff) */
+    --c-diff-bg: #22251e;
+    --c-diff-border: #3b3e31;
+    --c-diff-add-bg: rgba(74, 185, 110, 0.16);
+    --c-diff-add-text: #a3dba8;
+    --c-diff-del-bg: rgba(240, 90, 80, 0.16);
+    --c-diff-del-text: #f3a69e;
+    --c-diff-context-text: #a9ac99;
+    --c-hunk-bg: #373b31;
+    --c-line-no: #6b6f62;
+
+    /* Git 변경 보기 */
+    --c-git-add: #8fca7d;
+    --c-git-del: #ec8b80;
+    --c-git-added-text: #94cf83;
+    --c-git-added-bg: #263522;
+    --c-git-deleted-text: #f0a097;
+    --c-git-deleted-bg: #3d2522;
+    --c-git-renamed-text: #8fc0e6;
+    --c-git-renamed-bg: #1f3040;
+
+    /* 코드 블록·터미널 출력 — 원래 어두운 판, 다크에선 표면보다 더 어둡게 */
+    --c-code-bg: #161714;
+    --c-code-head-bg: #1f201c;
+    --c-terminal-bg: #161714;
+
+    /* 파일 보기의 문법 색 — 라이트는 github 테마 그대로, 다크는 위의 어두운 바탕용 색 */
+    --c-syn-text: var(--c-code-text);
+    --c-syn-keyword: var(--c-synd-keyword);
+    --c-syn-type: var(--c-synd-type);
+    --c-syn-title: var(--c-synd-title);
+    --c-syn-title-class: var(--c-synd-type);
+    --c-syn-attr: var(--c-synd-attr);
+    --c-syn-number: var(--c-synd-number);
+    --c-syn-operator: currentColor;
+    --c-syn-string: var(--c-synd-string);
+    --c-syn-builtin: var(--c-synd-type);
+    --c-syn-comment: var(--c-synd-comment);
+    --c-syn-name: var(--c-synd-tag);
+    --c-syn-plain: currentColor;
+    --c-syn-section: var(--c-synd-type);
+    --c-syn-bullet: var(--c-synd-keyword);
+    --c-syn-add: var(--c-synd-title);
+    --c-syn-add-bg: var(--c-synd-add-bg);
+    --c-syn-del: var(--c-synd-tag);
+    --c-syn-del-bg: var(--c-synd-del-bg);
+    --c-syn-property: var(--c-synd-attr);
+    --c-syn-tag: var(--c-synd-tag);
+
+    /* 입력창 주변 — 첨부·@멘션·끌어다 놓기·대기 메시지 */
+    --c-attach-bg: #353123;
+    --c-mention-active: #4d472e;
+    --c-mention-path: #8a8e7e;
+    --c-mention-path-icon: #6b6f61;
+    --c-drop-bg: #2b2a1f;
+    --c-drop-text: #d9c27a;
+    --c-drop-overlay: rgba(40, 38, 28, 0.95);
+    --c-queued-bg: #3a3422;
+    --c-queued-border: #6a5c31;
+    --c-queued-icon: #d4b45a;
+    --c-queued-btn-hover: #42463b;
+
+    /* 알림 설정 — 슬라이더·스위치 */
+    --c-range-track: #4c5045;
+    --c-switch-off: #4b4f43;
+    --c-knob: #f2efe6;
+
+    /* 그림자 — 다크에선 그림자가 잘 안 보여 1px 테두리 빛을 더한다 */
+    --sh-popover: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 10px 30px rgba(0, 0, 0, 0.5);
+    --sh-popover-sm: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 8px 26px rgba(0, 0, 0, 0.5);
+    --sh-modal: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 12px 36px rgba(0, 0, 0, 0.55);
+    --sh-float: 0 0 0 1px rgba(255, 255, 255, 0.05), 0 2px 8px rgba(0, 0, 0, 0.45);
+    --sh-dropdown: 0 -4px 16px rgba(0, 0, 0, 0.4);
+    --sh-dropdown-2: 0 -6px 20px rgba(0, 0, 0, 0.45);
+    --sh-tooltip: 0 6px 20px rgba(0, 0, 0, 0.5);
+    --sh-panel: -8px 0 24px rgba(0, 0, 0, 0.45);
+    --sh-knob: 0 1px 2px rgba(0, 0, 0, 0.5);
+  }
+}

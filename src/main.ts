@@ -1,8 +1,10 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Notification, shell } from "electron";
-import { createMainWindow } from "./main/windows/create-main-window";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, Notification, shell } from "electron";
+import { createMainWindow, windowBackground } from "./main/windows/create-main-window";
+import { installAppMenu } from "./main/menu";
 import * as api from "./main/services/api-client";
 import {resetCache as resetClaudePathCache, resolveClaudePath, validateClaudeBinary} from "./main/services/claude-path";
 import * as settings from "./main/services/settings";
+import {readJsonFile, writeJsonFile} from "./main/services/json-store";
 import {expandPathForChildProcesses} from "./main/services/path-expander";
 import {loadSdk} from "./main/services/claude-sdk";
 import {getGitDiff, getGitStatus} from "./main/services/git-changes";
@@ -29,37 +31,130 @@ import fs from "fs";
 import path from "path";
 import {randomUUID} from "crypto";
 
-let sessionId: string | null = null;
-let skipPermissions = true;
-let lastUserMessage = "";
-let currentCwd: string = os.homedir();
-// 아래 채팅 설정의 기본값. 앱 시작 시 settings.json에 저장된 값으로 덮어쓴다(loadChatSettings).
-let currentModel = "claude-opus-5-5";
-let currentEffort = "xhigh";
-let ultracode = false;
-let fastMode = false;
+// 채팅 설정은 탭마다 따로 있다(ChatTab). 이건 렌더러가 설정을 넘기지 않고 연 탭(첫 탭 등)이 받는 기본값으로,
+// 탭에서 설정을 바꿀 때마다 그 값으로 바뀌고 settings.json에 저장된다(loadChatSettings가 앱 시작 때 읽는다).
+const defaults = {model: "claude-opus-5-5", effort: "xhigh", ultracode: false, fastMode: false};
 let systemPrompts: string[] = [];
 
 function loadChatSettings() {
     const saved = settings.load();
-    if (typeof saved.model === "string" && saved.model) currentModel = saved.model;
-    if (typeof saved.effort === "string" && saved.effort) currentEffort = saved.effort;
-    if (typeof saved.ultracode === "boolean") ultracode = saved.ultracode;
-    if (typeof saved.fastMode === "boolean") fastMode = saved.fastMode;
+    if (typeof saved.model === "string" && saved.model) defaults.model = saved.model;
+    if (typeof saved.effort === "string" && saved.effort) defaults.effort = saved.effort;
+    if (typeof saved.ultracode === "boolean") defaults.ultracode = saved.ultracode;
+    if (typeof saved.fastMode === "boolean") defaults.fastMode = saved.fastMode;
     if (Array.isArray(saved.systemPrompts)) {
         systemPrompts = saved.systemPrompts.filter((p): p is string => typeof p === "string");
     }
+    nativeTheme.themeSource = isThemeSource(saved.theme) ? saved.theme : "system";
+}
+
+type ThemeSource = "system" | "light" | "dark";
+
+// ── 탭 ─────────────────────────────────────────────────────────────────────────
+// 탭 하나 = 대화 하나. 세션·작업 폴더·채팅 설정·권한 모드·CLI 프로세스·파일 패널과 백그라운드 기록을 탭마다 따로 둔다.
+// 탭 id는 렌더러가 정해서(tabs:open) 모든 요청에 싣고, main이 보내는 이벤트에는 첫 인자로 탭 id를 붙인다(send).
+// 응답 중인 탭마다 CLI 프로세스가 하나씩 돈다. 쉬는 탭은 프로세스가 없다(응답이 끝나면 닫는다 — LiveSession 참고).
+interface ChatTab {
+    id: string;
+    sender: Electron.WebContents;
+    cwd: string;
+    sessionId: string | null;
+    model: string;
+    effort: string;
+    ultracode: boolean;
+    fastMode: boolean;
+    // 방패: 기본 "전체 허용", "확인 모드"는 이 대화에서만 쓰는 임시 모드
+    skipPermissions: boolean;
+    lastUserMessage: string;
+    // 세션 ID가 아직 없는 새 대화에서 "항상 허용"한 것 — ID가 정해지면 grantsBySession으로 옮긴다
+    unsavedGrants: SessionGrants;
+    live: LiveSession | null;
+    // 진행 중인 chat:send 수 — CLI를 띄우는 동안(live가 아직 없음)도 "응답 중"으로 세려고 (창 닫기·종료 확인)
+    sending: number;
+    // 중지 버튼이 눌린 횟수. sendTurn이 CLI를 띄우는 도중(await 사이)에 중지되면 이 값이 바뀐 걸 보고 턴을 시작하지 않는다.
+    stopEpoch: number;
+    // 첫 메시지를 재생성·편집하면 앞에 이어갈 지점이 없어 새 세션으로 시작한다.
+    // 새 세션이 실제로 생기면 옛 세션을 지우고(handleSdkMessage), 생기지 못하고 끝나면 되돌린다.
+    replaceFirst: {oldSid: string} | null;
+    // 스트리밍으로 이미 렌더러에 보낸 assistant 메시지 id. 턴마다 비운다.
+    streamedMessageIds: Set<string>;
+    // 작업 파일 패널: Claude가 이 대화에서 고친 파일
+    changedFiles: Map<string, ChangedFileInfo>;
+    // 결과가 오기 전의 수정 시도 (tool_use id → 내용). 성공 결과가 오면 changedFiles에 반영한다.
+    pendingEdits: Map<string, {path: string; hunks: Omit<FileHunk, "at">[]}>;
+    fileTurn: number;
+    // 비울 때마다 올린다 — 세션 기록을 읽는 동안 다른 대화로 옮겼으면 그 결과를 버리기 위해
+    changedFilesGen: number;
+    // 이 대화에서 최근에 끝난 백그라운드 작업 (최신순). CLI 프로세스가 끝나도 남는다.
+    finishedTasks: FinishedTask[];
+    // 끝난 셸 작업의 출력 파일 (작업 id → 경로) — 끝난 뒤에도 출력을 보여주려고
+    finishedOutputFiles: Map<string, string>;
+    // "Git 변경" 보기의 마지막 결과와 진행 중인 요청
+    lastGit: {cwd: string; root: string; initial: boolean; byPath: Map<string, GitChange>} | null;
+    gitInFlight: {cwd: string; promise: Promise<GitStatusResult>} | null;
+}
+
+const tabs = new Map<string, ChatTab>();
+
+function createTab(id: string, sender: Electron.WebContents): ChatTab {
+    return {
+        id,
+        sender,
+        cwd: os.homedir(),
+        sessionId: null,
+        ...defaults,
+        skipPermissions: true,
+        lastUserMessage: "",
+        unsavedGrants: emptyGrants(),
+        live: null,
+        sending: 0,
+        stopEpoch: 0,
+        replaceFirst: null,
+        streamedMessageIds: new Set(),
+        changedFiles: new Map(),
+        pendingEdits: new Map(),
+        fileTurn: 0,
+        changedFilesGen: 0,
+        finishedTasks: [],
+        finishedOutputFiles: new Map(),
+        lastGit: null,
+        gitInFlight: null,
+    };
+}
+
+// 요청을 보낸 탭. 렌더러가 tabs:open 전에 보낸 요청이어도 탭을 만들어 받는다(기본 설정·홈 폴더).
+function tabFor(event: Electron.IpcMainInvokeEvent, id: unknown): ChatTab {
+    const key = typeof id === "string" && id ? id : "default";
+    let tab = tabs.get(key);
+    if (!tab) {
+        tab = createTab(key, event.sender);
+        tabs.set(key, tab);
+    }
+    tab.sender = event.sender;
+    return tab;
+}
+
+// 탭의 이벤트를 렌더러로 — 첫 인자가 탭 id다.
+// 없앤 탭(닫음·창 닫음·화면 새로 시작)의 늦은 이벤트는 버린다 — 정리된 CLI의 마지막 chat:done이
+// 같은 id로 다시 연 탭(새로고침 뒤 복원)에 들어가 새 턴을 끝내 버리지 않게.
+function send(tab: ChatTab, channel: string, payload?: unknown) {
+    if (tabs.get(tab.id) !== tab) return;
+    if (!tab.sender.isDestroyed()) tab.sender.send(channel, tab.id, payload);
+}
+
+function isThemeSource(v: unknown): v is ThemeSource {
+    return v === "system" || v === "light" || v === "dark";
 }
 
 // DB 기록용 세션별 상태
 const ensuredSessions = new Set<string>();
 const nextMessageIndex = new Map<string, number>();
 
-async function recordTokenUsage(sid: string, inputTokens: number, outputTokens: number) {
+async function recordTokenUsage(tab: ChatTab, sid: string, inputTokens: number, outputTokens: number) {
     try {
         if (!ensuredSessions.has(sid)) {
-            const title = lastUserMessage.slice(0, 60) || "새 대화";
-            await api.createConversation({ sessionId: sid, title, cwd: currentCwd });
+            const title = tab.lastUserMessage.slice(0, 60) || "새 대화";
+            await api.createConversation({ sessionId: sid, title, cwd: tab.cwd });
             const existing = await api.getTokenUsages(sid);
             nextMessageIndex.set(sid, existing.length);
             ensuredSessions.add(sid);
@@ -67,8 +162,8 @@ async function recordTokenUsage(sid: string, inputTokens: number, outputTokens: 
         const idx = nextMessageIndex.get(sid) ?? 0;
         const saved = await api.postTokenUsage(sid, {
             messageIndex: idx,
-            model: currentModel,
-            effort: effectiveEffort(),
+            model: tab.model,
+            effort: effectiveEffort(tab),
             inputTokens,
             outputTokens,
         });
@@ -80,8 +175,8 @@ async function recordTokenUsage(sid: string, inputTokens: number, outputTokens: 
 
 // ultracode는 xhigh 고정 모드라(CLI의 /effort 메뉴 설명 그대로 "xhigh + dynamic
 // workflow orchestration"), 켜져 있으면 드롭다운 값 대신 xhigh를 쓴다.
-function effectiveEffort(): string {
-    return ultracode ? "xhigh" : currentEffort;
+function effectiveEffort(tab: ChatTab): string {
+    return tab.ultracode ? "xhigh" : tab.effort;
 }
 
 // 턴을 시작하지 않는 query. 아무것도 yield하지 않는 입력 스트림이라 CLI는 초기화만 하고 기다린다.
@@ -159,9 +254,9 @@ function probeFolder(cwd: string, refresh = false): FolderInfo {
 // CLI가 지원하는 모델 목록. 실패하면 null → 렌더러가 내장 목록으로 대체한다.
 let modelCache: ModelInfo[] | null = null;
 
-async function loadModels(): Promise<ModelInfo[] | null> {
+async function loadModels(cwd: string = os.homedir()): Promise<ModelInfo[] | null> {
     if (modelCache) return modelCache;
-    const init = await probeFolder(currentCwd).init;
+    const init = await probeFolder(cwd).init;
     if (init?.models?.length) modelCache = init.models;
     return modelCache;
 }
@@ -208,8 +303,9 @@ function toMcpList(status: McpServerStatus[] | null): AppMcpServer[] {
     }));
 }
 
-async function loadCommands(): Promise<AppSlashCommand[]> {
+async function loadCommands(tab: ChatTab): Promise<AppSlashCommand[]> {
     // 살아 있는 세션이 있으면 그쪽이 최신이다(작업 중 발견된 스킬까지 반영)
+    const live = tab.live;
     if (live && !live.inputEnded) {
         try {
             return toCommandList(await withTimeout(live.q.supportedCommands(), 5000));
@@ -217,11 +313,12 @@ async function loadCommands(): Promise<AppSlashCommand[]> {
             // 아래 폴더 정보로 대체
         }
     }
-    const init = await probeFolder(currentCwd).init;
+    const init = await probeFolder(tab.cwd).init;
     return toCommandList(init?.commands ?? []);
 }
 
-async function loadMcpStatus(refresh = false): Promise<AppMcpServer[]> {
+async function loadMcpStatus(tab: ChatTab, refresh = false): Promise<AppMcpServer[]> {
+    const live = tab.live;
     if (live && !live.inputEnded && !refresh) {
         try {
             return toMcpList(await withTimeout(live.q.mcpServerStatus(), 5000));
@@ -229,38 +326,38 @@ async function loadMcpStatus(refresh = false): Promise<AppMcpServer[]> {
             // 아래 폴더 정보로 대체
         }
     }
-    return toMcpList(await probeFolder(currentCwd, refresh).mcp);
+    return toMcpList(await probeFolder(tab.cwd, refresh).mcp);
 }
 
-// 작업 폴더가 바뀌면 그 폴더의 명령/MCP 목록을 렌더러에 밀어 준다
-function pushFolderInfo(sender: Electron.WebContents) {
-    const cwd = currentCwd;
-    void loadCommands().then((list) => {
-        if (cwd === currentCwd) sender.send("chat:commands", list);
+// 탭의 작업 폴더가 정해지거나 바뀌면 그 폴더의 명령/MCP 목록을 렌더러에 밀어 준다
+function pushFolderInfo(tab: ChatTab) {
+    const cwd = tab.cwd;
+    void loadCommands(tab).then((list) => {
+        if (cwd === tab.cwd) send(tab, "chat:commands", list);
     });
-    void loadMcpStatus().then((list) => {
-        if (cwd === currentCwd) sender.send("chat:mcp", list);
+    void loadMcpStatus(tab).then((list) => {
+        if (cwd === tab.cwd) send(tab, "chat:mcp", list);
     });
 }
 
 // 별칭(opus/sonnet…)이 아니라 실제 모델 ID로 비교한다
-function currentModelInfo(): ModelInfo | undefined {
-    return modelCache?.find((m) => (m.resolvedModel ?? m.value) === currentModel || m.value === currentModel);
+function currentModelInfo(tab: ChatTab): ModelInfo | undefined {
+    return modelCache?.find((m) => (m.resolvedModel ?? m.value) === tab.model || m.value === tab.model);
 }
 
 // 목록을 아직 못 받았으면 지원한다고 가정하고 CLI 판단에 맡긴다
-function modelSupportsEffort(): boolean {
-    const info = currentModelInfo();
+function modelSupportsEffort(tab: ChatTab): boolean {
+    const info = currentModelInfo(tab);
     return !info || info.supportsEffort === true;
 }
 
-function modelSupportsAdaptiveThinking(): boolean {
-    const info = currentModelInfo();
+function modelSupportsAdaptiveThinking(tab: ChatTab): boolean {
+    const info = currentModelInfo(tab);
     return !info || info.supportsAdaptiveThinking === true;
 }
 
-function modelSupportsFastMode(): boolean {
-    const info = currentModelInfo();
+function modelSupportsFastMode(tab: ChatTab): boolean {
+    const info = currentModelInfo(tab);
     return !info || info.supportsFastMode === true;
 }
 
@@ -284,8 +381,7 @@ const MENTION_IGNORE_DIRS = new Set([
 
 // @ 멘션 자동완성용: 작업 디렉토리를 순회하며 query에 매칭되는 상대경로를 반환.
 // 큰 저장소에서도 멈추지 않도록 방문 수/결과 수에 상한을 둔다.
-function searchFilesInCwd(query: string, limit = 50): string[] {
-    const root = currentCwd;
+function searchFilesInCwd(root: string, query: string, limit = 50): string[] {
     const q = query.toLowerCase();
     const results: string[] = [];
     let visited = 0;
@@ -382,7 +478,8 @@ function formatQuestionAnswers(questions: AskQuestion[], answers: string[][]): s
 }
 
 type PendingPermission = (result: PermissionResult) => void;
-const pendingPermissions = new Map<string, PendingPermission>();
+// 답을 기다리는 권한 요청·질문 (요청 id → 어느 탭의 것인지 + 답을 돌려줄 함수). id는 모든 탭에서 겹치지 않는다.
+const pendingPermissions = new Map<string, {tab: ChatTab; settle: PendingPermission}>();
 // "이 대화에서 항상 허용"을 고를 때 CLI에 되돌려 줄 규칙 제안
 const pendingSuggestions = new Map<string, PermissionUpdate[]>();
 
@@ -397,27 +494,25 @@ interface SessionGrants {
 }
 
 const grantsBySession = new Map<string, SessionGrants>();
-// 세션 ID가 아직 없는 새 대화에서 허용한 것. ID가 정해지면 grantsBySession으로 옮긴다.
-let unsavedGrants: SessionGrants = emptyGrants();
 
 function emptyGrants(): SessionGrants {
     return {tools: [], directories: [], acceptEdits: false};
 }
 
-function currentGrants(): SessionGrants {
-    if (!sessionId) return unsavedGrants;
-    let g = grantsBySession.get(sessionId);
+function currentGrants(tab: ChatTab): SessionGrants {
+    if (!tab.sessionId) return tab.unsavedGrants;
+    let g = grantsBySession.get(tab.sessionId);
     if (!g) {
         g = emptyGrants();
-        grantsBySession.set(sessionId, g);
+        grantsBySession.set(tab.sessionId, g);
     }
     return g;
 }
 
 // 새 대화의 첫 응답에서 세션 ID가 정해질 때 호출한다
-function adoptUnsavedGrants(sid: string) {
-    const g = unsavedGrants;
-    unsavedGrants = emptyGrants();
+function adoptUnsavedGrants(tab: ChatTab, sid: string) {
+    const g = tab.unsavedGrants;
+    tab.unsavedGrants = emptyGrants();
     if (g.tools.length > 0 || g.directories.length > 0 || g.acceptEdits) grantsBySession.set(sid, g);
 }
 
@@ -452,8 +547,8 @@ function describeUpdates(updates: PermissionUpdate[]): string[] {
     return out;
 }
 
-function rememberSessionUpdates(updates: PermissionUpdate[]) {
-    const g = currentGrants();
+function rememberSessionUpdates(tab: ChatTab, updates: PermissionUpdate[]) {
+    const g = currentGrants(tab);
     for (const u of updates) {
         if (u.type === "addRules") {
             for (const r of u.rules) {
@@ -475,7 +570,7 @@ let permissionSeq = 0;
 // canUseTool 콜백 → 렌더러에 물어보고 답이 올 때까지 기다린다.
 // SDK는 스트리밍 입력 모드에서만 이 제어 요청을 보낼 수 있다(아래 InputQueue 참고).
 function askPermission(
-    sender: Electron.WebContents,
+    tab: ChatTab,
     toolName: string,
     input: Record<string, unknown>,
     opts: {
@@ -496,19 +591,19 @@ function askPermission(
     // 전체 허용 모드에서는 질문 말고는 묻지 않는다. 이 모드에서 CLI는 일반 도구를 콜백 없이
     // 자동 허용하지만, 혹시 콜백으로 오는 도구가 있거나 응답 도중 방패를 "전체 허용"으로
     // 바꾼 경우에도 창을 띄우지 않고 바로 허용한다.
-    if (!questions && skipPermissions) return Promise.resolve({behavior: "allow"});
+    if (!questions && tab.skipPermissions) return Promise.resolve({behavior: "allow"});
 
     return new Promise((settle) => {
         const id = `perm-${++permissionSeq}`;
-        pendingPermissions.set(id, settle);
+        pendingPermissions.set(id, {tab, settle});
 
         if (questions) {
             pendingQuestions.set(id, questions);
-            sender.send("chat:question_request", {id, questions});
+            send(tab, "chat:question_request", {id, questions});
             opts.signal.addEventListener("abort", () => {
                 if (pendingPermissions.delete(id)) {
                     pendingQuestions.delete(id);
-                    sender.send("chat:permission_resolved", {id});
+                    send(tab, "chat:permission_resolved", {id});
                     settle({behavior: "deny", message: "The user did not answer the questions."});
                 }
             });
@@ -517,7 +612,7 @@ function askPermission(
 
         const updates = toSessionUpdates(opts.suggestions);
         if (updates.length > 0) pendingSuggestions.set(id, updates);
-        sender.send("chat:permission_request", {
+        send(tab, "chat:permission_request", {
             id,
             toolName,
             alwaysAllow: describeUpdates(updates),
@@ -532,20 +627,20 @@ function askPermission(
         opts.signal.addEventListener("abort", () => {
             if (pendingPermissions.delete(id)) {
                 pendingSuggestions.delete(id);
-                sender.send("chat:permission_resolved", {id});
+                send(tab, "chat:permission_resolved", {id});
                 settle({behavior: "deny", message: "요청이 취소되었습니다"});
             }
         });
     });
 }
 
-function buildExtraArgs(): Record<string, string | null> {
+function buildExtraArgs(tab: ChatTab): Record<string, string | null> {
     const extra: Record<string, string | null> = {};
     // --effort ultracode는 CLI가 거부한다. 세션 설정 키로 넘겨야 한다.
     // fastMode도 같은 설정 레이어 키라 한 JSON에 같이 싣는다(--settings는 하나뿐).
     const overlay: Record<string, boolean> = {};
-    if (ultracode) overlay.ultracode = true;
-    if (fastMode && modelSupportsFastMode()) overlay.fastMode = true;
+    if (tab.ultracode) overlay.ultracode = true;
+    if (tab.fastMode && modelSupportsFastMode(tab)) overlay.fastMode = true;
     if (Object.keys(overlay).length > 0) extra.settings = JSON.stringify(overlay);
     return extra;
 }
@@ -599,7 +694,7 @@ interface LiveSession {
     q: Query;
     input: InputQueue;
     inputEnded: boolean;
-    sender: Electron.WebContents;
+    tab: ChatTab;
     key: string;
     turnActive: boolean;
     turnResolve: (() => void) | null;
@@ -617,8 +712,6 @@ interface LiveSession {
     stopped: boolean;
     ended: Promise<void>;
 }
-
-let live: LiveSession | null = null;
 
 interface BgMember {
     type: string;
@@ -674,11 +767,6 @@ interface ChangedFileInfo {
     hunks: FileHunk[];
 }
 
-const changedFiles = new Map<string, ChangedFileInfo>();
-let fileTurn = 0;
-// 결과가 오기 전의 수정 시도 (tool_use id → 내용). 성공 결과가 오면 changedFiles에 반영한다.
-const pendingEdits = new Map<string, {path: string; hunks: Omit<FileHunk, "at">[]}>();
-
 function clipText(text: unknown): string {
     const s = typeof text === "string" ? text : "";
     return s.length > MAX_HUNK_CHARS ? s.slice(0, MAX_HUNK_CHARS) + "\n… (너무 길어서 생략)" : s;
@@ -686,18 +774,18 @@ function clipText(text: unknown): string {
 
 // CLI는 작업 폴더의 실제 경로로 일한다(/tmp → /private/tmp 같은 심볼릭 링크가 풀린 경로).
 // 패널의 트리는 앱이 아는 작업 폴더 경로로 그리므로, 그 안의 파일이면 같은 표기로 맞춘다.
-function toCwdPath(abs: string): string {
-    const realCwd = realOrResolved(currentCwd);
-    if (realCwd !== currentCwd && isInside(realCwd, abs)) return path.join(currentCwd, path.relative(realCwd, abs));
+function toCwdPath(cwd: string, abs: string): string {
+    const realCwd = realOrResolved(cwd);
+    if (realCwd !== cwd && isInside(realCwd, abs)) return path.join(cwd, path.relative(realCwd, abs));
     return abs;
 }
 
-function editOf(name: string, input: unknown): {path: string; hunks: Omit<FileHunk, "at">[]} | null {
+function editOf(tab: ChatTab, name: string, input: unknown): {path: string; hunks: Omit<FileHunk, "at">[]} | null {
     if (!EDIT_TOOLS.has(name) || !input || typeof input !== "object") return null;
     const o = input as Record<string, unknown>;
     const p = typeof o.file_path === "string" ? o.file_path : typeof o.notebook_path === "string" ? o.notebook_path : "";
     if (!p) return null;
-    const abs = toCwdPath(path.resolve(currentCwd, p));
+    const abs = toCwdPath(tab.cwd, path.resolve(tab.cwd, p));
     if (name === "Edit") return {path: abs, hunks: [{tool: name, oldText: clipText(o.old_string), newText: clipText(o.new_string)}]};
     if (name === "Write") return {path: abs, hunks: [{tool: name, oldText: "", newText: clipText(o.content)}]};
     if (name === "MultiEdit") {
@@ -710,51 +798,48 @@ function editOf(name: string, input: unknown): {path: string; hunks: Omit<FileHu
 // 메시지에서 파일 수정을 찾는다: 도구 호출을 기억해 두었다가 결과가 성공이면 반영. 바뀌었으면 true.
 // 세션 기록(SessionMessage)도 같은 모양(type/message/parent_tool_use_id)이라 그대로 넣어도 된다.
 // at: 수정 시각. 실시간이면 지금, 세션 기록에서 다시 계산할 때는 그 항목의 시각(entryTime).
-function trackFileEdits(msg: {type: string; message?: unknown}, at = Date.now()): boolean {
+function trackFileEdits(tab: ChatTab, msg: {type: string; message?: unknown}, at = Date.now()): boolean {
     const content = (msg.message as {content?: unknown} | undefined)?.content;
     if (!Array.isArray(content)) return false;
     let changed = false;
     for (const b of content as {type?: string; id?: string; name?: string; input?: unknown; tool_use_id?: string; is_error?: boolean}[]) {
         if (msg.type === "assistant" && b.type === "tool_use" && b.id && b.name) {
-            const e = editOf(b.name, b.input);
-            if (e) pendingEdits.set(b.id, e);
+            const e = editOf(tab, b.name, b.input);
+            if (e) tab.pendingEdits.set(b.id, e);
         }
         if (msg.type === "user" && b.type === "tool_result" && b.tool_use_id) {
-            const p = pendingEdits.get(b.tool_use_id);
+            const p = tab.pendingEdits.get(b.tool_use_id);
             if (!p) continue;
-            pendingEdits.delete(b.tool_use_id);
+            tab.pendingEdits.delete(b.tool_use_id);
             if (b.is_error) continue;
-            const f = changedFiles.get(p.path) ?? {path: p.path, edits: 0, lastTurn: fileTurn, lastAt: at, hunks: []};
+            const f = tab.changedFiles.get(p.path) ?? {path: p.path, edits: 0, lastTurn: tab.fileTurn, lastAt: at, hunks: []};
             f.edits += 1;
-            f.lastTurn = fileTurn;
+            f.lastTurn = tab.fileTurn;
             f.lastAt = at;
             f.hunks = [...f.hunks, ...p.hunks.map((h) => ({...h, at}))].slice(-MAX_HUNKS_PER_FILE);
-            changedFiles.set(p.path, f);
+            tab.changedFiles.set(p.path, f);
             changed = true;
         }
     }
     return changed;
 }
 
-function changedFileList() {
+function changedFileList(tab: ChatTab) {
     return {
-        turn: fileTurn,
-        files: [...changedFiles.values()].map((f) => ({path: f.path, edits: f.edits, lastTurn: f.lastTurn, lastAt: f.lastAt})),
+        turn: tab.fileTurn,
+        files: [...tab.changedFiles.values()].map((f) => ({path: f.path, edits: f.edits, lastTurn: f.lastTurn, lastAt: f.lastAt})),
     };
 }
 
-function sendChangedFiles(sender: Electron.WebContents) {
-    sender.send("files:changed", changedFileList());
+function sendChangedFiles(tab: ChatTab) {
+    send(tab, "files:changed", changedFileList(tab));
 }
 
-// 비울 때마다 올린다 — 세션 기록을 읽는 동안 다른 대화로 옮겼으면 그 결과를 버리기 위해
-let changedFilesGen = 0;
-
-function resetChangedFiles() {
-    changedFiles.clear();
-    pendingEdits.clear();
-    fileTurn = 0;
-    changedFilesGen++;
+function resetChangedFiles(tab: ChatTab) {
+    tab.changedFiles.clear();
+    tab.pendingEdits.clear();
+    tab.fileTurn = 0;
+    tab.changedFilesGen++;
 }
 
 // 세션 기록 항목의 시각. SDK 타입에는 없지만 실제 항목에는 timestamp(ISO 문자열)가 들어 있다(확인함).
@@ -766,20 +851,20 @@ function entryTime(e: unknown): number {
 
 // 저장된 대화를 열면 세션 기록에서 고친 파일을 다시 계산한다 (서브에이전트 항목 포함).
 // 반영했으면 true. 읽는 사이 새 대화·다른 대화·폴더 변경이 있었으면 아무것도 바꾸지 않고 false.
-async function loadChangedFilesFromSession(sid: string): Promise<boolean> {
-    resetChangedFiles();
-    const gen = changedFilesGen;
+async function loadChangedFilesFromSession(tab: ChatTab, sid: string): Promise<boolean> {
+    resetChangedFiles(tab);
+    const gen = tab.changedFilesGen;
     try {
         const {getSessionMessages} = await loadSdk();
         const entries = await getSessionMessages(sid);
-        if (gen !== changedFilesGen) return false;
+        if (gen !== tab.changedFilesGen) return false;
         for (const e of entries) {
             if (e.type === "user" && !e.parent_tool_use_id) {
                 const c = (e.message as {content?: unknown} | undefined)?.content;
                 const isPrompt = typeof c === "string" || (Array.isArray(c) && !c.some((b) => (b as {type?: string})?.type === "tool_result"));
-                if (isPrompt) fileTurn += 1;
+                if (isPrompt) tab.fileTurn += 1;
             }
-            trackFileEdits(e, entryTime(e));
+            trackFileEdits(tab, e, entryTime(e));
         }
         return true;
     } catch (e) {
@@ -802,17 +887,17 @@ function isInside(base: string, target: string): boolean {
 }
 
 // 패널이 보여줄 수 있는 경로: 작업 폴더 안, 또는 Claude가 이 대화에서 고친 파일
-function canViewPath(p: unknown): p is string {
+function canViewPath(tab: ChatTab, p: unknown): p is string {
     if (typeof p !== "string" || !path.isAbsolute(p)) return false;
-    if (changedFiles.has(p)) return true;
-    return isInside(realOrResolved(currentCwd), realOrResolved(p));
+    if (tab.changedFiles.has(p)) return true;
+    return isInside(realOrResolved(tab.cwd), realOrResolved(p));
 }
 
 const HIDDEN_ENTRIES = new Set([".git", ".DS_Store"]);
 const MAX_DIR_ENTRIES = 2000;
 
-function listDir(dir: unknown) {
-    if (!canViewPath(dir)) return null;
+function listDir(tab: ChatTab, dir: unknown) {
+    if (!canViewPath(tab, dir)) return null;
     try {
         const list = fs
             .readdirSync(dir, {withFileTypes: true})
@@ -840,8 +925,8 @@ function listDir(dir: unknown) {
 
 const MAX_VIEW_BYTES = 1_000_000;
 
-function readFileForView(p: unknown) {
-    if (!canViewPath(p)) return {error: "볼 수 없는 경로입니다"};
+function readFileForView(tab: ChatTab, p: unknown) {
+    if (!canViewPath(tab, p)) return {error: "볼 수 없는 경로입니다"};
     try {
         const st = fs.statSync(p);
         if (!st.isFile()) return {error: "파일이 아닙니다"};
@@ -863,7 +948,7 @@ function readFileForView(p: unknown) {
 }
 
 // 이 대화에서 최근에 끝난 백그라운드 작업 (최신순). CLI 프로세스가 끝나도 남도록 세션 밖에 둔다.
-// 대화를 바꾸면 비운다(chat:new / resume / 폴더 변경).
+// 대화를 바꾸면 비운다(tabs:open / 폴더 변경 / 대화 삭제).
 interface FinishedTask {
     id: string;
     type: string;
@@ -884,14 +969,11 @@ interface FinishedTask {
 }
 
 const MAX_FINISHED = 10;
-let finishedTasks: FinishedTask[] = [];
-// 끝난 셸 작업의 출력 파일 (작업 id → 경로) — 끝난 뒤에도 출력을 보여주려고
-const finishedOutputFiles = new Map<string, string>();
 
-function clearFinishedTasks(sender?: Electron.WebContents) {
-    finishedTasks = [];
-    finishedOutputFiles.clear();
-    sender?.send("chat:background", {running: [], finished: []});
+function clearFinishedTasks(tab: ChatTab) {
+    tab.finishedTasks = [];
+    tab.finishedOutputFiles.clear();
+    send(tab, "chat:background", {running: [], finished: []});
 }
 
 // 셸 작업을 백그라운드로 돌리면 tool_result에 출력 파일 경로가 온다(실측)
@@ -1001,7 +1083,7 @@ function sendBackground(s: LiveSession) {
                 launchedByAgent: !!m.parentTaskId,
             };
         });
-    s.sender.send("chat:background", {running: list, finished: finishedTasks});
+    send(s.tab, "chat:background", {running: list, finished: s.tab.finishedTasks});
 }
 
 // 백그라운드 작업이 끝났다(task_notification) — 결과를 "최근 끝난 작업"으로 남긴다
@@ -1019,7 +1101,7 @@ function recordFinishedTask(s: LiveSession, msg: SDKMessage) {
     const d = s.taskInfo.get(n.task_id);
     const input = d?.toolUseId ? (s.toolInputs.get(d.toolUseId) as {command?: unknown} | undefined) : undefined;
     const outputFile = s.outputFiles.get(n.task_id);
-    if (outputFile) finishedOutputFiles.set(n.task_id, outputFile);
+    if (outputFile) s.tab.finishedOutputFiles.set(n.task_id, outputFile);
     // 종료 코드: 요약 문구("… failed with exit code 1")에서 먼저 읽는다. 이 시점엔 출력 파일 끝의
     // "[exited with code N]" 줄이 아직 안 쓰였을 수 있다(실측).
     const code =
@@ -1044,7 +1126,7 @@ function recordFinishedTask(s: LiveSession, msg: SDKMessage) {
         recentTools: d?.recentTools,
         launchedByAgent: !!m.parentTaskId,
     };
-    finishedTasks = [record, ...finishedTasks.filter((f) => f.id !== record.id)].slice(0, MAX_FINISHED);
+    s.tab.finishedTasks = [record, ...s.tab.finishedTasks.filter((f) => f.id !== record.id)].slice(0, MAX_FINISHED);
 }
 
 // 셸 작업 출력 파일의 끝부분. 잘린 첫 줄은 버린다(UTF-8 글자가 중간에서 끊길 수 있어서).
@@ -1067,38 +1149,31 @@ function readOutputTail(file: string, maxBytes = 6000): {text: string; truncated
     }
 }
 
-// 중지 버튼이 눌린 횟수. sendTurn이 CLI를 띄우는 도중(await 사이)에 중지되면
-// 이 값이 바뀐 걸 보고 턴을 시작하지 않는다.
-let stopEpoch = 0;
-
 // 백그라운드 작업이 모두 끝났는데 후속 턴이 시작되지 않으면 이 시간 뒤 프로세스를 정리한다
 const IDLE_END_MS = 60_000;
 
-// 첫 메시지를 재생성·편집하면 앞에 이어갈 지점이 없어 새 세션으로 시작한다.
-// 새 세션이 실제로 생기면 옛 세션을 지우고(handleSdkMessage), 생기지 못하고 끝나면 되돌린다.
-let replaceFirst: {oldSid: string} | null = null;
-
-function restoreReplaceFirst() {
-    if (!replaceFirst) return;
-    const old = replaceFirst.oldSid;
-    replaceFirst = null;
+// 첫 메시지 재생성·편집이 새 세션을 만들지 못하고 끝났을 때 원래 세션으로 되돌린다
+function restoreReplaceFirst(tab: ChatTab) {
+    if (!tab.replaceFirst) return;
+    const old = tab.replaceFirst.oldSid;
+    tab.replaceFirst = null;
     // 옮겨 둔 허용 규칙도 원래 세션으로 되돌린다
-    if (unsavedGrants.tools.length > 0 || unsavedGrants.directories.length > 0 || unsavedGrants.acceptEdits) {
-        grantsBySession.set(old, unsavedGrants);
-    }
-    unsavedGrants = emptyGrants();
-    sessionId = old;
+    const g = tab.unsavedGrants;
+    if (g.tools.length > 0 || g.directories.length > 0 || g.acceptEdits) grantsBySession.set(old, g);
+    tab.unsavedGrants = emptyGrants();
+    tab.sessionId = old;
 }
 
 // 재생성·편집: 버릴 사용자 메시지(replaceUuid) 직전 항목의 uuid를 돌려준다. 세션을 그 지점까지만
 // 이어가면(resumeSessionAt) 그 메시지와 이후 응답이 모델 기록에서 빠진다 — 화면에서 지우는 범위와 같다.
 // 예전에는 같은 세션에 다시 보내기만 해서 모델에게 옛 질문·답이 그대로 남았다(재현됨).
-async function prepareReplace(replaceUuid: string): Promise<string | undefined> {
-    if (!sessionId) return undefined;
+async function prepareReplace(tab: ChatTab, replaceUuid: string): Promise<string | undefined> {
+    const sid = tab.sessionId;
+    if (!sid) return undefined;
     let entries: SessionMessage[];
     try {
         const {getSessionMessages} = await loadSdk();
-        entries = await getSessionMessages(sessionId);
+        entries = await getSessionMessages(sid);
     } catch (e) {
         console.error("[replace] 세션 기록 조회 실패", e);
         return undefined;
@@ -1110,16 +1185,16 @@ async function prepareReplace(replaceUuid: string): Promise<string | undefined> 
         if (!entries[i].parent_tool_use_id) return entries[i].uuid;
     }
     // 첫 메시지 — 새 세션으로. 이 대화에서 허용한 규칙은 새 세션으로 옮긴다.
-    replaceFirst = {oldSid: sessionId};
-    unsavedGrants = grantsBySession.get(sessionId) ?? emptyGrants();
-    grantsBySession.delete(sessionId);
-    sessionId = null;
+    tab.replaceFirst = {oldSid: sid};
+    tab.unsavedGrants = grantsBySession.get(sid) ?? emptyGrants();
+    grantsBySession.delete(sid);
+    tab.sessionId = null;
     return undefined;
 }
 
 // query 생성 시점에 고정되는 옵션들. 바뀌면 프로세스를 새로 띄워야 한다.
-function optionsKey(): string {
-    return JSON.stringify([currentModel, effectiveEffort(), ultracode, fastMode, skipPermissions, currentCwd, systemPrompts]);
+function optionsKey(tab: ChatTab): string {
+    return JSON.stringify([tab.model, effectiveEffort(tab), tab.ultracode, tab.fastMode, tab.skipPermissions, tab.cwd, systemPrompts]);
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
@@ -1137,29 +1212,31 @@ function endInput(s: LiveSession) {
 }
 
 // 백그라운드 작업도 같이 종료된다
-function closeLive() {
-    const s = live;
+function closeLive(tab: ChatTab) {
+    const s = tab.live;
     if (!s) return;
     s.stopped = true;
     endInput(s);
     s.q.close();
 }
 
-function settlePendingPermissions(sender: Electron.WebContents, message: string) {
-    for (const settle of pendingPermissions.values()) {
-        settle({behavior: "deny", message});
+// 이 탭의 대기 중인 권한 요청·질문만 거부로 정리한다 — 다른 탭은 계속 답을 기다린다
+function settlePendingPermissions(tab: ChatTab, message: string) {
+    for (const [id, p] of pendingPermissions) {
+        if (p.tab !== tab) continue;
+        pendingPermissions.delete(id);
+        pendingQuestions.delete(id);
+        pendingSuggestions.delete(id);
+        p.settle({behavior: "deny", message});
     }
-    pendingPermissions.clear();
-    pendingQuestions.clear();
-    pendingSuggestions.clear();
-    sender.send("chat:permission_resolved", {id: null});
+    send(tab, "chat:permission_resolved", {id: null});
 }
 
 function beginTurn(s: LiveSession, resolve: (() => void) | null, uuid: string | null) {
-    streamedMessageIds.clear();
-    fileTurn += 1;
+    s.tab.streamedMessageIds.clear();
+    s.tab.fileTurn += 1;
     // 패널의 "방금" 표시를 새 응답 기준으로 — 지난 응답에서 바뀐 파일은 "수정 N"으로 내려간다
-    if (changedFiles.size > 0) sendChangedFiles(s.sender);
+    if (s.tab.changedFiles.size > 0) sendChangedFiles(s.tab);
     if (s.idleTimer) clearTimeout(s.idleTimer);
     s.idleTimer = null;
     s.turnActive = true;
@@ -1173,10 +1250,10 @@ function finishTurn(s: LiveSession) {
     if (!s.turnActive) return;
     s.turnActive = false;
     // 첫 메시지 재생성·편집이 새 세션을 만들지 못하고 끝났으면 원래 세션으로 되돌린다
-    restoreReplaceFirst();
+    restoreReplaceFirst(s.tab);
     // 답을 못 받은 권한 요청이 남아 있으면 렌더러 모달이 영영 안 닫힌다
-    settlePendingPermissions(s.sender, "턴이 종료되었습니다");
-    s.sender.send("chat:done");
+    settlePendingPermissions(s.tab, "턴이 종료되었습니다");
+    send(s.tab, "chat:done");
     s.turnResolve?.();
     s.turnResolve = null;
     s.turnUuid = null;
@@ -1191,7 +1268,7 @@ async function reportContextUsage(s: LiveSession) {
         const usage = await withTimeout(s.q.getContextUsage({detail: "summary"}), 5000);
         // 기다리는 사이 중지됐으면 보내지 않는다
         if (s.stopped) return;
-        s.sender.send("chat:context", {
+        send(s.tab, "chat:context", {
             totalTokens: usage.totalTokens,
             maxTokens: usage.rawMaxTokens,
             percentage: usage.percentage,
@@ -1201,10 +1278,10 @@ async function reportContextUsage(s: LiveSession) {
     }
 }
 
-async function startLive(sender: Electron.WebContents, claudePath: string, resumeAt?: string): Promise<LiveSession> {
+async function startLive(tab: ChatTab, claudePath: string, resumeAt?: string): Promise<LiveSession> {
     const {query} = await loadSdk();
     const input = createInputQueue();
-    const grants = currentGrants();
+    const grants = currentGrants(tab);
     let resolveEnded: () => void = () => undefined;
     const ended = new Promise<void>((r) => {
         resolveEnded = r;
@@ -1215,20 +1292,20 @@ async function startLive(sender: Electron.WebContents, claudePath: string, resum
     const q = query({
         prompt: input.stream,
         options: {
-            model: currentModel,
-            effort: modelSupportsEffort() ? (effectiveEffort() as Options["effort"]) : undefined,
+            model: tab.model,
+            effort: modelSupportsEffort(tab) ? (effectiveEffort(tab) as Options["effort"]) : undefined,
             // 5세대 모델은 사고 내용을 기본으로 숨긴다(display: omitted → 빈 문자열).
             // 요약본을 받아야 ActivityPanel에 사고 과정이 보인다.
             // (Haiku 4.5 같은 구모델은 adaptive를 지원하지 않아 CLI 기본값에 맡긴다)
-            thinking: modelSupportsAdaptiveThinking() ? {type: "adaptive", display: "summarized"} : undefined,
-            cwd: currentCwd,
+            thinking: modelSupportsAdaptiveThinking(tab) ? {type: "adaptive", display: "summarized"} : undefined,
+            cwd: tab.cwd,
             // 앱이 이미 찾아둔 바로 그 바이너리를 쓴다. 지정하지 않으면 SDK가
             // 자기 번들 바이너리(224MB)를 쓰므로 인증/버전이 갈릴 수 있다.
             pathToClaudeCodeExecutable: claudePath,
-            resume: sessionId ?? undefined,
+            resume: tab.sessionId ?? undefined,
             // 재생성·편집일 때만: 이 지점까지만 이어간다(그 뒤는 모델 기록에서 빠진다)
-            resumeSessionAt: sessionId && resumeAt ? resumeAt : undefined,
-            permissionMode: skipPermissions ? "bypassPermissions" : grants.acceptEdits ? "acceptEdits" : "default",
+            resumeSessionAt: tab.sessionId && resumeAt ? resumeAt : undefined,
+            permissionMode: tab.skipPermissions ? "bypassPermissions" : grants.acceptEdits ? "acceptEdits" : "default",
             allowedTools: grants.tools.length > 0 ? [...grants.tools] : undefined,
             additionalDirectories: grants.directories.length > 0 ? [...grants.directories] : undefined,
             // 글자 단위 스트리밍(stream_event). 완성된 assistant 메시지도 따로 온다 — handleSdkMessage 참고
@@ -1241,7 +1318,7 @@ async function startLive(sender: Electron.WebContents, claudePath: string, resum
             // 전체 허용 모드에서도 항상 넘긴다. 콜백이 없으면 CLI가 AskUserQuestion 도구를 아예 빼서
             // Claude가 질문 창을 띄울 수 없다(실측). 전체 허용일 때 일반 도구는 askPermission이 바로 허용한다.
             canUseTool: (toolName, toolInput, opts) =>
-                askPermission(s.sender, toolName, toolInput as Record<string, unknown>, opts),
+                askPermission(tab, toolName, toolInput as Record<string, unknown>, opts),
             // snapshot: false가 핵심이다. 기본값(기록)이면 CLI가 대화의 첫 요청 때 시스템 프롬프트를
             // 세션 기록에 고정하고 이후 resume에서는 그걸 그대로 쓴다. 앱은 턴마다 프로세스를 새로
             // 띄워 resume하므로, 대화 도중 추가한 프롬프트는 무시되고 삭제한 프롬프트는 계속 남았다(실측).
@@ -1252,7 +1329,7 @@ async function startLive(sender: Electron.WebContents, claudePath: string, resum
                 append: systemPrompts.length > 0 ? systemPrompts.join("\n\n") : undefined,
                 snapshot: false,
             },
-            extraArgs: buildExtraArgs(),
+            extraArgs: buildExtraArgs(tab),
             stderr: (data: string) => {
                 s.stderrTail = (s.stderrTail + data).slice(-4000);
                 console.error("[claude stderr]", data);
@@ -1263,8 +1340,8 @@ async function startLive(sender: Electron.WebContents, claudePath: string, resum
         q,
         input,
         inputEnded: false,
-        sender,
-        key: optionsKey(),
+        tab,
+        key: optionsKey(tab),
         turnActive: false,
         turnResolve: null,
         turnUuid: null,
@@ -1279,7 +1356,7 @@ async function startLive(sender: Electron.WebContents, claudePath: string, resum
         stopped: false,
         ended,
     };
-    live = s;
+    tab.live = s;
     void pump(s, claudePath).finally(resolveEnded);
     return s;
 }
@@ -1302,7 +1379,7 @@ function resultBelongsToTurn(s: LiveSession, msg: SDKMessage): boolean {
 async function pump(s: LiveSession, claudePath: string) {
     const notify = (notice: ChatNotice) => {
         if (notice.level === "error") s.errorSent = true;
-        s.sender.send("chat:error", notice);
+        send(s.tab, "chat:error", notice);
     };
     try {
         for await (const msg of s.q) {
@@ -1312,7 +1389,7 @@ async function pump(s: LiveSession, claudePath: string) {
             // 백그라운드 작업 상세용 재료(셸 명령, 출력 파일, 에이전트 도구) — 서브에이전트 메시지를 버리기 전에 모은다
             if (recordTaskArtifacts(s, msg) && s.bgMembers.size > 0) sendBackground(s);
             // 작업 파일 패널: Claude(서브에이전트 포함)가 고친 파일
-            if (trackFileEdits(msg)) sendChangedFiles(s.sender);
+            if (trackFileEdits(s.tab, msg)) sendChangedFiles(s.tab);
 
             // 백그라운드 작업이 끝났다 — 결과를 남긴다 (목록에서 빠지는 건 뒤따르는 background_tasks_changed)
             if (msg.type === "system" && msg.subtype === "task_notification") {
@@ -1340,7 +1417,7 @@ async function pump(s: LiveSession, claudePath: string) {
             // 백그라운드 작업 완료 알림으로 CLI가 스스로 시작한 턴
             if (!s.turnActive && msg.type === "assistant") {
                 beginTurn(s, null, null);
-                s.sender.send("chat:turn_start");
+                send(s.tab, "chat:turn_start");
             }
 
             if (msg.type === "system" && msg.subtype === "background_tasks_changed") {
@@ -1384,7 +1461,7 @@ async function pump(s: LiveSession, claudePath: string) {
             // 이걸 턴 종료로 보면 진짜 답이 오기 전에 턴이 끝나 버린다.
             if (msg.type === "result" && !resultBelongsToTurn(s, msg)) continue;
 
-            handleSdkMessage(s.sender, msg, notify, () => s.stderrTail);
+            handleSdkMessage(s.tab, msg, notify, () => s.stderrTail);
 
             if (msg.type === "result") {
                 // 컨텍스트 사용량은 query가 살아 있을 때만 물을 수 있어서 턴을 닫기 직전에 조회한다
@@ -1406,35 +1483,30 @@ async function pump(s: LiveSession, claudePath: string) {
     } finally {
         endInput(s);
         finishTurn(s);
-        settlePendingPermissions(s.sender, "세션이 종료되었습니다");
-        s.sender.send("chat:background", {running: [], finished: finishedTasks});
-        if (live === s) live = null;
+        settlePendingPermissions(s.tab, "세션이 종료되었습니다");
+        send(s.tab, "chat:background", {running: [], finished: s.tab.finishedTasks});
+        if (s.tab.live === s) s.tab.live = null;
     }
 }
 
-async function sendTurn(
-    sender: Electron.WebContents,
-    message: string,
-    images: ImageData[],
-    replaceUuid?: string
-): Promise<void> {
+async function sendTurn(tab: ChatTab, message: string, images: ImageData[], replaceUuid?: string): Promise<void> {
     const claudePath = resolveClaudePath();
     if (!claudePath) {
-        sender.send("claude:not_found");
-        sender.send("chat:done");
+        if (!tab.sender.isDestroyed()) tab.sender.send("claude:not_found");
+        send(tab, "chat:done");
         return;
     }
 
     // 살아 있는 프로세스를 이어 쓸 수 없으면(입력이 닫혔거나 설정이 바뀜) 끝나길 기다렸다가 새로 띄운다.
     // 설정 변경으로 닫는 경우 백그라운드 작업도 같이 종료된다.
-    const epoch = stopEpoch;
-    const prev = live;
+    const epoch = tab.stopEpoch;
+    const prev = tab.live;
     // 재생성·편집은 이어갈 지점이 바뀌므로 살아 있는 프로세스를 이어 쓸 수 없다
-    if (prev && (replaceUuid || prev.inputEnded || prev.key !== optionsKey())) {
-        if (!prev.inputEnded) closeLive();
+    if (prev && (replaceUuid || prev.inputEnded || prev.key !== optionsKey(tab))) {
+        if (!prev.inputEnded) closeLive(tab);
         await prev.ended;
     }
-    const resumeAt = replaceUuid ? await prepareReplace(replaceUuid) : undefined;
+    const resumeAt = replaceUuid ? await prepareReplace(tab, replaceUuid) : undefined;
 
     const content: object[] = [{type: "text", text: message}];
     for (const img of images) {
@@ -1445,38 +1517,37 @@ async function sendTurn(
     }
 
     // 렌더러는 중지 즉시 턴을 닫았다. 여기서 시작하면 아무도 안 듣는 턴이 돈다.
-    if (epoch !== stopEpoch) {
-        restoreReplaceFirst();
+    if (epoch !== tab.stopEpoch) {
+        restoreReplaceFirst(tab);
         return;
     }
 
     let s: LiveSession;
     try {
-        s = live ?? (await startLive(sender, claudePath, resumeAt));
-        if (epoch !== stopEpoch) {
-            closeLive();
+        s = tab.live ?? (await startLive(tab, claudePath, resumeAt));
+        if (epoch !== tab.stopEpoch) {
+            closeLive(tab);
             return;
         }
     } catch (e) {
-        restoreReplaceFirst();
-        if (epoch !== stopEpoch) return;
-        sender.send("chat:error", {level: "error", message: `Claude 실행에 실패했습니다: ${(e as Error).message}`});
-        sender.send("chat:done");
+        restoreReplaceFirst(tab);
+        if (epoch !== tab.stopEpoch) return;
+        send(tab, "chat:error", {level: "error", message: `Claude 실행에 실패했습니다: ${(e as Error).message}`});
+        send(tab, "chat:done");
         return;
     }
-    s.sender = sender;
 
     return new Promise<void>((resolve) => {
         const uuid = randomUUID();
         beginTurn(s, resolve, uuid);
         // 파일 되돌리기의 기준점 — 렌더러가 이 사용자 메시지에 붙여 둔다
-        sender.send("chat:turn_uuid", {uuid});
+        send(tab, "chat:turn_uuid", {uuid});
         s.input.push({
             uuid,
             type: "user",
             message: {role: "user", content},
             parent_tool_use_id: null,
-            session_id: sessionId ?? "",
+            session_id: tab.sessionId ?? "",
         } as unknown as SDKUserMessage);
     });
 }
@@ -1484,7 +1555,7 @@ async function sendTurn(
 async function reportMcpStatus(s: LiveSession) {
     try {
         const status = await withTimeout(s.q.mcpServerStatus(), 5000);
-        if (!s.stopped) s.sender.send("chat:mcp", toMcpList(status));
+        if (!s.stopped) send(s.tab, "chat:mcp", toMcpList(status));
     } catch (e) {
         console.error("[mcp] 상태 조회 실패", e);
     }
@@ -1506,6 +1577,9 @@ interface LoadedMessage {
     content: string;
     uuid?: string;
     images?: string[];
+    // "N tokens" 배지 (sessionToMessages) — 내 메시지: 그 턴의 입력 토큰, 답변: 그 턴의 출력 토큰
+    inputTokens?: number;
+    outputTokens?: number;
     segments?: LoadedSegment[];
 }
 
@@ -1533,6 +1607,12 @@ function sessionToMessages(entries: SessionMessage[]): LoadedMessage[] {
     const out: LoadedMessage[] = [];
     let assistant: LoadedMessage | null = null;
     const tools = new Map<string, LoadedTool>();
+    // 메시지의 "N tokens" 배지 — 라이브 화면은 턴이 끝날 때 result.usage(입력→내 메시지, 출력→답변)를 붙인다.
+    // 기록에는 응답마다 usage가 남아 있고, 턴 안 응답들의 합이 result.usage와 같다(도구를 쓴 턴으로 확인함).
+    // 기록은 한 응답을 내용 블록마다 여러 줄로 나눠 쓰고 줄마다 같은 usage가 붙어 있어 응답 id당 한 번만 센다.
+    let turnUser: LoadedMessage | null = null;
+    let turnTokens = {input: 0, output: 0};
+    const countedIds = new Set<string>();
 
     const closeAssistant = () => {
         if (assistant) {
@@ -1540,9 +1620,12 @@ function sessionToMessages(entries: SessionMessage[]): LoadedMessage[] {
                 .filter((seg): seg is {kind: "text"; text: string} => seg.kind === "text")
                 .map((seg) => seg.text)
                 .join("\n\n");
+            if (turnTokens.output > 0) assistant.outputTokens = turnTokens.output;
             out.push(assistant);
         }
+        if (turnUser && turnTokens.input > 0) turnUser.inputTokens = turnTokens.input;
         assistant = null;
+        turnTokens = {input: 0, output: 0};
     };
 
     for (const entry of entries) {
@@ -1554,6 +1637,12 @@ function sessionToMessages(entries: SessionMessage[]): LoadedMessage[] {
 
         if (entry.type === "assistant") {
             if (!assistant) assistant = {role: "assistant", content: "", segments: []};
+            const apiMessage = entry.message as {id?: string; usage?: {input_tokens?: number; output_tokens?: number}} | undefined;
+            if (apiMessage?.id && apiMessage.usage && !countedIds.has(apiMessage.id)) {
+                countedIds.add(apiMessage.id);
+                turnTokens.input += apiMessage.usage.input_tokens ?? 0;
+                turnTokens.output += apiMessage.usage.output_tokens ?? 0;
+            }
             const segs = assistant.segments as LoadedSegment[];
             for (const b of blocks) {
                 if (b.type === "text" && b.text) {
@@ -1598,26 +1687,24 @@ function sessionToMessages(entries: SessionMessage[]): LoadedMessage[] {
         if (!content && images.length === 0) continue;
 
         closeAssistant();
-        out.push({role: "user", content, uuid: entry.uuid, images: images.length > 0 ? images : undefined});
+        turnUser = {role: "user", content, uuid: entry.uuid, images: images.length > 0 ? images : undefined};
+        out.push(turnUser);
     }
     closeAssistant();
     return out;
 }
 
-function handleSdkMessage(
-    sender: Electron.WebContents,
-    msg: SDKMessage,
-    notify: (n: ChatNotice) => void,
-    stderrTail: () => string
-) {
+function handleSdkMessage(tab: ChatTab, msg: SDKMessage, notify: (n: ChatNotice) => void, stderrTail: () => string) {
     const sid = (msg as {session_id?: string}).session_id;
-    if (sid && !sessionId) {
-        sessionId = sid;
-        adoptUnsavedGrants(sid);
+    if (sid && !tab.sessionId) {
+        tab.sessionId = sid;
+        adoptUnsavedGrants(tab, sid);
+        // 렌더러가 탭에 세션을 적어 둔다 — 탭 복원, "이미 열린 대화면 그 탭으로"
+        send(tab, "chat:session", {sessionId: sid});
         // 첫 메시지 재생성·편집으로 새 세션이 생겼다 — 버린 옛 세션을 지운다(같은 대화가 두 개 남지 않게)
-        if (replaceFirst && replaceFirst.oldSid !== sid) {
-            const old = replaceFirst.oldSid;
-            replaceFirst = null;
+        if (tab.replaceFirst && tab.replaceFirst.oldSid !== sid) {
+            const old = tab.replaceFirst.oldSid;
+            tab.replaceFirst = null;
             grantsBySession.delete(old);
             void loadSdk()
                 .then(({deleteSession}) => deleteSession(old))
@@ -1636,11 +1723,11 @@ function handleSdkMessage(
             event: {type: string; message?: {id?: string}; delta?: {type: string; text?: string; thinking?: string}};
         }).event;
         if (ev.type === "message_start" && ev.message?.id) {
-            streamedMessageIds.add(ev.message.id);
+            tab.streamedMessageIds.add(ev.message.id);
         } else if (ev.type === "content_block_delta" && ev.delta) {
-            if (ev.delta.type === "text_delta" && ev.delta.text) sender.send("chat:chunk", ev.delta.text);
+            if (ev.delta.type === "text_delta" && ev.delta.text) send(tab, "chat:chunk", ev.delta.text);
             else if (ev.delta.type === "thinking_delta" && ev.delta.thinking) {
-                sender.send("chat:thinking", ev.delta.thinking);
+                send(tab, "chat:thinking", ev.delta.thinking);
             }
         }
         return;
@@ -1648,7 +1735,7 @@ function handleSdkMessage(
 
     if (msg.type === "assistant") {
         // 스트리밍으로 이미 보낸 메시지인가. API 오류 메시지처럼 스트림 없이 오는 것도 있다.
-        const streamed = !!msg.message?.id && streamedMessageIds.has(msg.message.id);
+        const streamed = !!msg.message?.id && tab.streamedMessageIds.has(msg.message.id);
         const blocks = (msg.message?.content ?? []) as {
             type: string;
             text?: string;
@@ -1659,11 +1746,11 @@ function handleSdkMessage(
         }[];
         for (const block of blocks) {
             if (block.type === "text" && block.text) {
-                if (!streamed && !parentToolUseId) sender.send("chat:chunk", block.text);
+                if (!streamed && !parentToolUseId) send(tab, "chat:chunk", block.text);
             } else if (block.type === "thinking" && block.thinking) {
-                if (!streamed && !parentToolUseId) sender.send("chat:thinking", block.thinking);
+                if (!streamed && !parentToolUseId) send(tab, "chat:thinking", block.thinking);
             } else if (block.type === "tool_use" && block.id && block.name) {
-                sender.send("chat:tool_use", {
+                send(tab, "chat:tool_use", {
                     id: block.id,
                     name: block.name,
                     input: block.input ?? {},
@@ -1674,7 +1761,7 @@ function handleSdkMessage(
         const usage = msg.message?.usage;
         // 서브에이전트의 토큰 수로 진행 표시가 덮이지 않게 본 대화 것만 보낸다
         if (usage && !parentToolUseId) {
-            sender.send("chat:usage", {
+            send(tab, "chat:usage", {
                 inputTokens: usage.input_tokens ?? 0,
                 outputTokens: usage.output_tokens ?? 0,
             });
@@ -1696,7 +1783,7 @@ function handleSdkMessage(
                     typeof block.content === "string"
                         ? block.content
                         : JSON.stringify(block.content ?? "");
-                sender.send("chat:tool_result", {
+                send(tab, "chat:tool_result", {
                     id: block.tool_use_id,
                     isError: !!block.is_error,
                     content: raw.slice(0, 500),
@@ -1711,12 +1798,12 @@ function handleSdkMessage(
         const usage = msg.usage as {input_tokens?: number; output_tokens?: number} | undefined;
         const inputTokens = usage?.input_tokens ?? 0;
         const outputTokens = usage?.output_tokens ?? 0;
-        sender.send("chat:usage", {inputTokens, outputTokens});
+        send(tab, "chat:usage", {inputTokens, outputTokens});
         // 세션 누적 예상 비용(재개한 세션은 이전 턴 포함). 청구서가 아니라 추정치.
         if (typeof msg.total_cost_usd === "number") {
-            sender.send("chat:cost", {totalCostUsd: msg.total_cost_usd});
+            send(tab, "chat:cost", {totalCostUsd: msg.total_cost_usd});
         }
-        if (sessionId) void recordTokenUsage(sessionId, inputTokens, outputTokens);
+        if (tab.sessionId) void recordTokenUsage(tab, tab.sessionId, inputTokens, outputTokens);
         if (msg.is_error) {
             // 에러 결과(SDKResultError)에는 result가 없고, 성공 subtype인데 is_error인 경우에만 있다
             const result = (msg as {result?: unknown}).result;
@@ -1732,13 +1819,14 @@ function handleSdkMessage(
 
     if (msg.type === "system" && msg.subtype === "commands_changed") {
         const cmds = (msg as unknown as {commands: SdkSlashCommand[]}).commands ?? [];
-        sender.send("chat:commands", toCommandList(cmds));
+        send(tab, "chat:commands", toCommandList(cmds));
         return;
     }
 
     if (msg.type === "rate_limit_event") {
         mergeRateLimits((msg as unknown as {rate_limit_info: RateLimitInfo}).rate_limit_info);
-        sender.send("chat:rate_limits", rateLimitList());
+        // 요금제 사용량은 계정 전체 것이라 탭 id 없이 보낸다
+        if (!tab.sender.isDestroyed()) tab.sender.send("chat:rate_limits", rateLimitList());
         return;
     }
 
@@ -1792,9 +1880,6 @@ function handleSdkMessage(
     }
 }
 
-// 스트리밍으로 이미 렌더러에 보낸 assistant 메시지 id. 턴이 바뀌면 의미가 없으므로 턴마다 비운다.
-const streamedMessageIds = new Set<string>();
-
 // ── 요금제 사용량(claude.ai 구독) ──
 // rate_limit_event는 바뀐 한도만 알려줄 수 있어 한도 종류별로 합쳐 둔다.
 interface RateLimitWindow {
@@ -1833,26 +1918,33 @@ function refusalDetail(category?: string | null, explanation?: string | null): s
 }
 
 // replaceUuid: 재생성·편집일 때 대신할 사용자 메시지의 uuid
-ipcMain.handle("chat:send", (event, message: string, images: ImageData[] = [], replaceUuid?: string) => {
-    lastUserMessage = message;
-    return sendTurn(event.sender, message, images, replaceUuid);
+ipcMain.handle("chat:send", async (event, tabId: string, message: string, images: ImageData[] = [], replaceUuid?: string) => {
+    const tab = tabFor(event, tabId);
+    tab.lastUserMessage = message;
+    tab.sending++;
+    try {
+        await sendTurn(tab, message, images, replaceUuid);
+    } finally {
+        tab.sending--;
+    }
 });
 
-// 방패는 기본이 "전체 허용"이고, "확인 모드"는 지금 대화에서만 쓰는 임시 모드다.
-// 새 대화·폴더 변경 때 main이 전체 허용으로 되돌리므로, 렌더러는 그 뒤 이 값을 다시 읽어
-// 방패 표시를 맞춰야 한다. 예전에는 화면만 "확인 모드"로 남아 묻지 않고 실행되는 일이 있었다(재현됨).
-ipcMain.handle("chat:get_permissions", () => skipPermissions);
-ipcMain.handle("chat:set_permissions", (_event, allow: boolean) => {
-    skipPermissions = allow;
+// 방패는 기본이 "전체 허용"이고, "확인 모드"는 그 탭의 대화에서만 쓰는 임시 모드다.
+// main이 대화를 비울 때(resetConversation) 전체 허용으로 되돌리고, 렌더러도 같은 때 탭 상태를 되돌린다
+// (tabs:open은 결과로 돌려주고, 폴더 변경·대화 삭제는 clearedTab). 예전에는 화면만 "확인 모드"로 남아
+// 묻지 않고 실행되는 일이 있었다(재현됨).
+ipcMain.handle("chat:set_permissions", (event, tabId: string, allow: boolean) => {
+    tabFor(event, tabId).skipPermissions = allow;
 });
 
-// 현재 턴과 백그라운드 작업을 모두 멈춘다. 렌더러는 이 호출과 동시에 턴을 스스로 닫으므로
+// 그 탭의 현재 턴과 백그라운드 작업을 모두 멈춘다. 렌더러는 이 호출과 동시에 턴을 스스로 닫으므로
 // 여기서는 chat:done을 보내지 않는다 — 늦게 도착한 done이 다음 턴을 끝내 버릴 수 있다.
-ipcMain.handle("chat:stop", () => {
-    stopEpoch++;
+ipcMain.handle("chat:stop", (event, tabId: string) => {
+    const tab = tabFor(event, tabId);
+    tab.stopEpoch++;
     // 첫 메시지 재생성이 새 세션을 만들기 전에 멈췄으면 원래 대화로 되돌린다
-    restoreReplaceFirst();
-    const s = live;
+    restoreReplaceFirst(tab);
+    const s = tab.live;
     if (!s) return;
     // 이 순간부터 이 세션의 메시지는 렌더러로 가지 않는다(pump가 버린다)
     s.stopped = true;
@@ -1860,7 +1952,7 @@ ipcMain.handle("chat:stop", () => {
     s.turnUuid = null;
     s.turnResolve?.();
     s.turnResolve = null;
-    settlePendingPermissions(s.sender, "사용자가 중지했습니다");
+    settlePendingPermissions(tab, "사용자가 중지했습니다");
     endInput(s);
     // 프로세스 정리는 기다리지 않는다. interrupt로 트랜스크립트를 정리할 기회를 잠깐 주고 강제 종료.
     void (async () => {
@@ -1874,72 +1966,72 @@ ipcMain.handle("chat:stop", () => {
 });
 
 // 상단 "백그라운드 N" 패널: 셸 작업의 최근 출력. 렌더러는 작업 id만 넘기고, 경로는 CLI가 알려준 것만 쓴다.
-ipcMain.handle("background:output", (_event, taskId: string) => {
-    const file = live?.outputFiles.get(taskId) ?? finishedOutputFiles.get(taskId);
+ipcMain.handle("background:output", (event, tabId: string, taskId: string) => {
+    const tab = tabFor(event, tabId);
+    const file = tab.live?.outputFiles.get(taskId) ?? tab.finishedOutputFiles.get(taskId);
     return file ? readOutputTail(file) : null;
 });
 
-// ── 작업 파일 패널 ──
-ipcMain.handle("files:get_changed", () => changedFileList());
-ipcMain.handle("files:changes", (_event, p: string) => changedFiles.get(p)?.hunks ?? []);
-ipcMain.handle("files:list_dir", (_event, dir: string) => listDir(dir));
-ipcMain.handle("files:read", (_event, p: string) => readFileForView(p));
-ipcMain.handle("files:reveal", (_event, p: string) => {
-    if (canViewPath(p) && fs.existsSync(p)) shell.showItemInFolder(p);
+// ── 작업 파일 패널 (보고 있는 탭의 작업 폴더·고친 파일) ──
+ipcMain.handle("files:changes", (event, tabId: string, p: string) => tabFor(event, tabId).changedFiles.get(p)?.hunks ?? []);
+ipcMain.handle("files:list_dir", (event, tabId: string, dir: string) => listDir(tabFor(event, tabId), dir));
+ipcMain.handle("files:read", (event, tabId: string, p: string) => readFileForView(tabFor(event, tabId), p));
+ipcMain.handle("files:reveal", (event, tabId: string, p: string) => {
+    if (canViewPath(tabFor(event, tabId), p) && fs.existsSync(p)) shell.showItemInFolder(p);
 });
 
 // ── 작업 파일 패널의 "Git 변경" 보기 ──
 // 마지막 결과를 들고 있다가, 차이를 요청받으면 그 목록에 있는 파일인지 확인한다 — 렌더러가 보낸 경로로
 // 아무 파일이나 git에 넘기지 않게. 같은 폴더의 요청이 겹치면 진행 중인 것을 같이 쓴다.
-let lastGit: {cwd: string; root: string; initial: boolean; byPath: Map<string, GitChange>} | null = null;
-let gitInFlight: {cwd: string; promise: Promise<GitStatusResult>} | null = null;
-
-function refreshGitStatus(): Promise<GitStatusResult> {
-    const cwd = currentCwd;
-    if (gitInFlight && gitInFlight.cwd === cwd) return gitInFlight.promise;
-    const promise: Promise<GitStatusResult> = getGitStatus(cwd, toCwdPath)
+function refreshGitStatus(tab: ChatTab): Promise<GitStatusResult> {
+    const cwd = tab.cwd;
+    if (tab.gitInFlight && tab.gitInFlight.cwd === cwd) return tab.gitInFlight.promise;
+    const promise: Promise<GitStatusResult> = getGitStatus(cwd, (abs) => toCwdPath(cwd, abs))
         .catch((e): GitStatusResult => ({ok: false, reason: "error", message: (e as Error).message}))
         .then((res) => {
-            if (cwd === currentCwd) {
-                lastGit = res.ok
+            if (cwd === tab.cwd) {
+                tab.lastGit = res.ok
                     ? {cwd, root: res.root, initial: res.branch.initial, byPath: new Map(res.files.map((f) => [f.path, f]))}
                     : null;
             }
             return res;
         })
         .finally(() => {
-            if (gitInFlight?.promise === promise) gitInFlight = null;
+            if (tab.gitInFlight?.promise === promise) tab.gitInFlight = null;
         });
-    gitInFlight = {cwd, promise};
+    tab.gitInFlight = {cwd, promise};
     return promise;
 }
 
-ipcMain.handle("git:status", () => refreshGitStatus());
-ipcMain.handle("git:diff", async (_event, p: unknown) => {
+ipcMain.handle("git:status", (event, tabId: string) => refreshGitStatus(tabFor(event, tabId)));
+ipcMain.handle("git:diff", async (event, tabId: string, p: unknown) => {
     if (typeof p !== "string") return {error: "잘못된 경로입니다"};
-    const lookup = () => (lastGit && lastGit.cwd === currentCwd ? lastGit.byPath.get(p) : undefined);
+    const tab = tabFor(event, tabId);
+    const lookup = () => (tab.lastGit && tab.lastGit.cwd === tab.cwd ? tab.lastGit.byPath.get(p) : undefined);
     let entry = lookup();
     // 목록이 그사이 바뀌었을 수 있다 — 한 번 새로 읽어 본다
     if (!entry) {
-        await refreshGitStatus();
+        await refreshGitStatus(tab);
         entry = lookup();
     }
-    if (!entry || !lastGit) return {error: "Git 변경 목록에 없는 파일입니다"};
-    return getGitDiff(lastGit.root, entry, lastGit.initial);
+    const git = tab.lastGit;
+    if (!entry || !git) return {error: "Git 변경 목록에 없는 파일입니다"};
+    return getGitDiff(git.root, entry, git.initial);
 });
 
 // "최근 끝난 작업" 기록 지우기
-ipcMain.handle("background:clear_finished", (event) => {
-    finishedTasks = [];
-    finishedOutputFiles.clear();
-    const s = live;
+ipcMain.handle("background:clear_finished", (event, tabId: string) => {
+    const tab = tabFor(event, tabId);
+    tab.finishedTasks = [];
+    tab.finishedOutputFiles.clear();
+    const s = tab.live;
     if (s) sendBackground(s);
-    else event.sender.send("chat:background", {running: [], finished: []});
+    else send(tab, "chat:background", {running: [], finished: []});
 });
 
 // 백그라운드 작업 하나만 멈춘다
-ipcMain.handle("background:stop", async (_event, taskId: string) => {
-    const s = live;
+ipcMain.handle("background:stop", async (event, tabId: string, taskId: string) => {
+    const s = tabFor(event, tabId).live;
     if (!s) return;
     try {
         await withTimeout(s.q.stopTask(taskId), 5000);
@@ -1949,82 +2041,92 @@ ipcMain.handle("background:stop", async (_event, taskId: string) => {
 });
 
 ipcMain.handle("chat:question_response", (_event, id: string, answers: string[][]) => {
-    const settle = pendingPermissions.get(id);
-    if (!settle) return;
+    const pending = pendingPermissions.get(id);
+    if (!pending) return;
     pendingPermissions.delete(id);
     const questions = pendingQuestions.get(id) ?? [];
     pendingQuestions.delete(id);
     // 답을 되돌릴 자리가 프로토콜상 deny의 message뿐이다. 실측 결과 이 문자열이
     // 그대로 tool_result가 되고 모델이 정상적으로 이어받는다.
-    settle({behavior: "deny", message: formatQuestionAnswers(questions, answers)});
+    pending.settle({behavior: "deny", message: formatQuestionAnswers(questions, answers)});
 });
 
 ipcMain.handle("chat:permission_response", (_event, id: string, allow: boolean, always = false) => {
-    const settle = pendingPermissions.get(id);
-    if (!settle) return;
+    const pending = pendingPermissions.get(id);
+    if (!pending) return;
     pendingPermissions.delete(id);
     const updates = pendingSuggestions.get(id) ?? [];
     pendingSuggestions.delete(id);
     if (!allow) {
-        settle({behavior: "deny", message: "사용자가 거부했습니다"});
+        pending.settle({behavior: "deny", message: "사용자가 거부했습니다"});
         return;
     }
     if (always && updates.length > 0) {
         // 지금 프로세스에는 updatedPermissions로, 다음 프로세스에는 allowedTools로 전달된다
-        rememberSessionUpdates(updates);
-        settle({behavior: "allow", updatedPermissions: updates});
+        rememberSessionUpdates(pending.tab, updates);
+        pending.settle({behavior: "allow", updatedPermissions: updates});
         return;
     }
-    settle({behavior: "allow"});
+    pending.settle({behavior: "allow"});
 });
 
-ipcMain.handle("chat:new", (event) => {
-    closeLive();
-    replaceFirst = null;
-    clearFinishedTasks(event.sender);
-    resetChangedFiles();
-    sendChangedFiles(event.sender);
-    unsavedGrants = emptyGrants();
-    sessionId = null;
-    skipPermissions = true; // 새 대화는 전체 허용으로 시작 — 렌더러가 chat:get_permissions로 다시 읽는다
-    lastUserMessage = "";
-});
+// 탭의 대화를 비우고 새 대화로 — 열어 둔 CLI 프로세스(백그라운드 작업 포함)는 닫는다
+function resetConversation(tab: ChatTab) {
+    closeLive(tab);
+    tab.replaceFirst = null;
+    clearFinishedTasks(tab);
+    resetChangedFiles(tab);
+    sendChangedFiles(tab);
+    tab.unsavedGrants = emptyGrants();
+    tab.sessionId = null;
+    tab.skipPermissions = true; // 새 대화는 전체 허용으로 시작 — 렌더러도 같은 때 탭 상태를 되돌린다
+    tab.lastUserMessage = "";
+}
 
-ipcMain.handle("chat:get_cwd", () => currentCwd);
-ipcMain.handle("chat:get_model", () => currentModel);
-ipcMain.handle("chat:set_model", (_event, model: string) => {
-    currentModel = model;
+// 채팅 설정은 탭마다 따로 있고, 바꾼 값은 다음 새 탭의 기본값이 된다(설정 파일에도 저장)
+ipcMain.handle("chat:set_model", (event, tabId: string, model: string) => {
+    tabFor(event, tabId).model = model;
+    defaults.model = model;
     settings.save({model});
 });
-ipcMain.handle("chat:get_effort", () => currentEffort);
-ipcMain.handle("chat:set_effort", (_event, effort: string) => {
-    currentEffort = effort;
+ipcMain.handle("chat:set_effort", (event, tabId: string, effort: string) => {
+    tabFor(event, tabId).effort = effort;
+    defaults.effort = effort;
     settings.save({effort});
 });
 
-ipcMain.handle("chat:get_ultracode", () => ultracode);
-ipcMain.handle("chat:set_ultracode", (_event, on: boolean) => {
-    ultracode = on;
+ipcMain.handle("chat:set_ultracode", (event, tabId: string, on: boolean) => {
+    tabFor(event, tabId).ultracode = on;
+    defaults.ultracode = on;
     settings.save({ultracode: on});
 });
 
-ipcMain.handle("chat:get_fast_mode", () => fastMode);
-ipcMain.handle("chat:set_fast_mode", (_event, on: boolean) => {
-    fastMode = on;
+// 화면 테마. themeSource를 바꾸면 렌더러의 prefers-color-scheme이 바로 따라 바뀌고(styles/theme.css),
+// 선택 상자 목록·폴더 선택 창 같은 기본 화면도 같이 바뀐다.
+ipcMain.handle("theme:get", () => nativeTheme.themeSource);
+ipcMain.handle("theme:set", (_event, source: unknown) => {
+    if (!isThemeSource(source)) return nativeTheme.themeSource;
+    nativeTheme.themeSource = source;
+    settings.save({theme: source});
+    return source;
+});
+ipcMain.handle("chat:set_fast_mode", (event, tabId: string, on: boolean) => {
+    tabFor(event, tabId).fastMode = on;
+    defaults.fastMode = on;
     settings.save({fastMode: on});
 });
 
 ipcMain.handle("models:list", () => loadModels());
 
-ipcMain.handle("chat:get_session_id", () => sessionId);
-
 ipcMain.handle("chat:get_rate_limits", () => rateLimitList());
 
 // 이 사용자 메시지를 보내기 직전 상태로 Claude가 고친 파일을 되돌린다. 대화 내용은 그대로다.
 // 백업은 세션 기록에 남아 있어 프로세스가 끝난 뒤에도 되돌릴 수 있다(실측).
-ipcMain.handle("chat:rewind_files", async (_event, uuid: string, dryRun: boolean): Promise<RewindFilesResult> => {
+ipcMain.handle("chat:rewind_files", async (event, tabId: string, uuid: string, dryRun: boolean): Promise<RewindFilesResult> => {
+    const tab = tabFor(event, tabId);
+    const live = tab.live;
     if (live?.turnActive) return {canRewind: false, error: "응답이 끝난 뒤에 되돌릴 수 있습니다"};
-    if (!sessionId) return {canRewind: false, error: "세션 정보가 없습니다"};
+    if (!tab.sessionId) return {canRewind: false, error: "세션 정보가 없습니다"};
     const s = live && !live.inputEnded ? live : null;
     if (s) return s.q.rewindFiles(uuid, {dryRun});
 
@@ -2033,8 +2135,8 @@ ipcMain.handle("chat:rewind_files", async (_event, uuid: string, dryRun: boolean
     // 살아 있는 프로세스가 없으면 세션을 재개만 하고(턴은 시작하지 않는다) 되돌린 뒤 닫는다
     const idle = await openIdleQuery({
         pathToClaudeCodeExecutable: claudePath,
-        cwd: currentCwd,
-        resume: sessionId,
+        cwd: tab.cwd,
+        resume: tab.sessionId,
         enableFileCheckpointing: true,
     });
     try {
@@ -2046,27 +2148,238 @@ ipcMain.handle("chat:rewind_files", async (_event, uuid: string, dryRun: boolean
     }
 });
 
-// 저장된 세션 이어가기. 세션의 작업 폴더로 옮긴다.
-// 폴더가 지워졌으면 옮길 수 없는데, CLI는 어느 폴더에서든 세션을 찾아 이어 주므로 에러 없이
+// ── 탭 열기·닫기·저장 ──
+// 렌더러가 새 탭을 만들 때, 탭에 저장된 대화를 열 때(사이드바·앱 재시작 후 복원) 부른다.
+// 설정을 넘기지 않으면 지금 탭의 것(이미 있던 탭) 또는 기본값(새 탭)을 쓴다.
+// 세션 폴더가 지워졌으면 옮길 수 없는데, CLI는 어느 폴더에서든 세션을 찾아 이어 주므로 에러 없이
 // 지금 폴더에서 대화가 계속된다(실측). 렌더러가 경고할 수 있게 그 사실을 함께 돌려준다.
-ipcMain.handle("chat:resume_session", (event, sid: string, cwd?: string) => {
-    closeLive();
-    replaceFirst = null;
-    clearFinishedTasks(event.sender);
+interface TabInit {
+    cwd?: unknown;
+    sessionId?: unknown;
+    model?: unknown;
+    effort?: unknown;
+    ultracode?: unknown;
+    fastMode?: unknown;
+}
+
+ipcMain.handle("tabs:open", async (event, tabId: string, init: TabInit = {}) => {
+    const tab = tabFor(event, tabId);
+    resetConversation(tab);
+    if (typeof init.model === "string" && init.model) tab.model = init.model;
+    if (typeof init.effort === "string" && init.effort) tab.effort = init.effort;
+    if (typeof init.ultracode === "boolean") tab.ultracode = init.ultracode;
+    if (typeof init.fastMode === "boolean") tab.fastMode = init.fastMode;
     // 허용 규칙은 세션 ID별로 남아 있어서 이 대화로 돌아오면 다시 적용된다
-    sessionId = sid;
-    const cwdMissing = !!cwd && !fs.existsSync(cwd);
-    if (cwd && !cwdMissing && cwd !== currentCwd) {
-        currentCwd = cwd;
-        pushFolderInfo(event.sender);
+    tab.sessionId = typeof init.sessionId === "string" && init.sessionId ? init.sessionId : null;
+    const wanted = typeof init.cwd === "string" && init.cwd ? init.cwd : tab.cwd;
+    const cwdMissing = !fs.existsSync(wanted);
+    if (!cwdMissing) tab.cwd = wanted;
+    pushFolderInfo(tab);
+    // 다시 켜서 복원한 탭의 대화 기록이 그사이 사라졌을 수 있다(터미널에서 삭제, CLI의 오래된 기록 정리).
+    // getSessionMessages는 없는 세션에도 빈 배열을 돌려주고, 그대로 resume하면 보낼 때마다
+    // "No conversation found with session ID"로 실패한다(확인함) — 새 대화로 시작한다.
+    let sessionMissing = false;
+    const wantedSid = tab.sessionId;
+    if (wantedSid) {
+        let exists = true; // 확인하지 못하면 있는 것으로 둔다 — 멀쩡한 대화를 비우지 않게
+        try {
+            const {getSessionInfo} = await loadSdk();
+            exists = (await getSessionInfo(wantedSid)) !== undefined; // dir 없이 = 모든 프로젝트에서 찾는다
+        } catch {
+            // 무시
+        }
+        if (!exists && tab.sessionId === wantedSid) {
+            tab.sessionId = null;
+            sessionMissing = true;
+        }
     }
     // 작업 파일 패널: 이 대화에서 고친 파일을 세션 기록에서 다시 계산
-    resetChangedFiles();
-    sendChangedFiles(event.sender);
-    void loadChangedFilesFromSession(sid).then((ok) => {
-        if (ok) sendChangedFiles(event.sender);
+    const sid = tab.sessionId;
+    if (sid) {
+        void loadChangedFilesFromSession(tab, sid).then((ok) => {
+            if (ok) sendChangedFiles(tab);
+        });
+    }
+    return {
+        cwd: tab.cwd,
+        cwdMissing,
+        sessionMissing,
+        model: tab.model,
+        effort: tab.effort,
+        ultracode: tab.ultracode,
+        fastMode: tab.fastMode,
+        skipPermissions: tab.skipPermissions,
+    };
+});
+
+// 탭을 닫으면 그 탭의 CLI 프로세스(백그라운드 작업 포함)도 끝낸다
+ipcMain.handle("tabs:close", (_event, tabId: string) => {
+    const tab = tabs.get(tabId);
+    if (tab) disposeTab(tab, "탭을 닫았습니다");
+});
+
+// 탭을 없앤다: 띄우는 중인 턴 취소, 첫 메시지 재생성 되돌리기, CLI 프로세스(백그라운드 작업 포함) 종료, 대기 중인 허용 요청 정리
+function disposeTab(tab: ChatTab, reason: string) {
+    tab.stopEpoch++;
+    restoreReplaceFirst(tab);
+    closeLive(tab);
+    settlePendingPermissions(tab, reason);
+    tabs.delete(tab.id);
+}
+
+// 이 화면(webContents)의 탭을 모두 없앤다 — 창을 닫았거나 화면이 새로 시작했다.
+// 그대로 두면 아무도 보지 않는 CLI가 계속 돌고, 허용 요청은 답할 곳이 없어 멈춰 있다가
+// 탭을 다시 열 때(tabs:open의 대화 초기화) 끊긴다.
+function disposeTabsOf(sender: Electron.WebContents, reason: string) {
+    for (const tab of [...tabs.values()]) {
+        if (tab.sender === sender) disposeTab(tab, reason);
+    }
+}
+
+// ── 창 닫기·새로고침·앱 종료: 실행 중인 작업이 있으면 먼저 묻는다 ──
+// 판단은 main이 한다(렌더러가 멈췄어도 동작하게). 응답 중 = 보내는 중(CLI 띄우는 중 포함)이거나 턴이 도는 중
+// (CLI가 스스로 시작한 후속 턴 포함). 백그라운드 = 화면의 "백그라운드 N"과 같은 기준(ambient 제외).
+function busySummary(sender?: Electron.WebContents): {responding: number; background: number} {
+    let responding = 0;
+    let background = 0;
+    for (const tab of tabs.values()) {
+        if (sender && tab.sender !== sender) continue;
+        const s = tab.live && !tab.live.stopped ? tab.live : null;
+        if ((tab.sending > 0 && !tab.live?.stopped) || s?.turnActive) responding++;
+        if (s) background += [...s.bgMembers.values()].filter((m) => !m.ambient).length;
+    }
+    return {responding, background};
+}
+
+type StopAction = "close" | "reload" | "quit";
+
+const STOP_ACTION_TEXT: Record<StopAction, {button: string; verb: string}> = {
+    close: {button: "창 닫기", verb: "창을 닫으면"},
+    reload: {button: "새로고침", verb: "새로고침하면"},
+    quit: {button: "종료", verb: "앱을 종료하면"},
+};
+
+// 실행 중인 게 없으면 묻지 않고 true. 있으면 확인창 — 계속하면 true.
+function confirmStopWork(win: BrowserWindow | null, action: StopAction): boolean {
+    const {responding, background} = busySummary(action === "quit" ? undefined : win?.webContents);
+    if (responding === 0 && background === 0) return true;
+    const parts: string[] = [];
+    if (responding > 0) parts.push(`응답 중인 탭 ${responding}개`);
+    if (background > 0) parts.push(`백그라운드 작업 ${background}개`);
+    const text = STOP_ACTION_TEXT[action];
+    const options: Electron.MessageBoxSyncOptions = {
+        type: "warning",
+        buttons: [text.button, "취소"],
+        defaultId: 0,
+        cancelId: 1,
+        message: "실행 중인 작업이 있습니다",
+        detail: `${parts.join(", ")}가 있습니다.\n${text.verb} 모두 멈춥니다.`,
+    };
+    const choice = win && !win.isDestroyed() ? dialog.showMessageBoxSync(win, options) : dialog.showMessageBoxSync(options);
+    return choice === 0;
+}
+
+// 종료(⌘Q, Dock의 종료)는 before-quit에서 한 번만 묻는다 — 이어서 창이 닫힐 때 또 묻지 않게
+let quitting = false;
+
+app.on("before-quit", (e) => {
+    if (quitting) return;
+    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null;
+    if (!confirmStopWork(win, "quit")) {
+        e.preventDefault();
+        return;
+    }
+    quitting = true;
+});
+
+// 신호(kill, 개발 중 터미널의 Ctrl+C)로 끝낼 때는 묻지 않는다 — 대화상자는 아무도 못 보고, 그동안 끝나지 않는다.
+// (macOS 로그아웃·시스템 종료는 신호가 아니라 before-quit으로 오므로 그때는 묻는다.)
+// Electron(Chromium)은 시작할 때(ready 전) 자기 신호 처리기를 단다: 첫 신호는 정상 종료(before-quit → 확인창),
+// 그다음 신호는 기본 동작 = 즉시 죽음이라 자식 CLI와 백그라운드 작업이 고아로 남는다(둘 다 확인함).
+// Node의 process.on은 그 신호의 첫 리스너일 때만 OS에 처리기를 등록하므로, ready 뒤에 불러야 Chromium 것을 덮는다.
+function installSignalQuit() {
+    let received = 0;
+    for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+        process.on(signal, () => {
+            received++;
+            if (received > 1) {
+                // 정상 종료가 멈췄다 — CLI 프로세스(백그라운드 작업 포함)를 정리하고 바로 끝낸다
+                for (const tab of [...tabs.values()]) disposeTab(tab, "앱을 종료합니다");
+                app.exit(1);
+                return;
+            }
+            quitting = true;
+            app.quit();
+        });
+    }
+}
+
+// 창을 닫을 때 묻고, 닫히면 그 창의 탭을 정리한다. macOS는 창을 닫아도 앱이 남는다 — 정리하지 않으면
+// 응답이 화면 없이 계속 돌았다.
+function guardWindow(win: BrowserWindow) {
+    const contents = win.webContents; // closed 뒤에는 win.webContents에 접근할 수 없다
+    win.on("close", (e) => {
+        if (quitting) return;
+        if (!confirmStopWork(win, "close")) e.preventDefault();
     });
-    return {cwd: currentCwd, cwdMissing};
+    win.on("closed", () => disposeTabsOf(contents, "창을 닫았습니다"));
+}
+
+// 열려 있던 탭 목록 — 앱을 다시 켜면 그대로 연다. 순서·제목·고른 탭은 렌더러가 알아서 렌더러가 저장한다.
+interface SavedTab {
+    id: string;
+    sessionId: string | null;
+    cwd: string;
+    title: string;
+    model: string;
+    effort: string;
+    ultracode: boolean;
+    fastMode: boolean;
+}
+
+interface SavedTabs {
+    tabs: SavedTab[];
+    activeId: string | null;
+}
+
+function tabsFile(): string {
+    return path.join(app.getPath("userData"), "tabs.json");
+}
+
+function cleanSavedTabs(raw: unknown): SavedTabs {
+    const r = (raw ?? {}) as {tabs?: unknown; activeId?: unknown};
+    const list = Array.isArray(r.tabs) ? r.tabs : [];
+    const out: SavedTab[] = [];
+    for (const item of list.slice(0, 50)) {
+        const t = (item ?? {}) as Record<string, unknown>;
+        if (typeof t.id !== "string" || !t.id) continue;
+        out.push({
+            id: t.id,
+            sessionId: typeof t.sessionId === "string" && t.sessionId ? t.sessionId : null,
+            cwd: typeof t.cwd === "string" ? t.cwd : "",
+            title: typeof t.title === "string" ? t.title.slice(0, 200) : "",
+            model: typeof t.model === "string" ? t.model : defaults.model,
+            effort: typeof t.effort === "string" ? t.effort : defaults.effort,
+            ultracode: t.ultracode === true,
+            fastMode: t.fastMode === true,
+        });
+    }
+    const activeId = typeof r.activeId === "string" && out.some((t) => t.id === r.activeId) ? r.activeId : out[0]?.id ?? null;
+    return {tabs: out, activeId};
+}
+
+ipcMain.handle("tabs:load", (event) => {
+    // 화면이 새로 시작했다(새로고침, 개발자 도구의 ⌘R 등). 이 화면에 남아 있는 탭은 이전 화면의 것이라
+    // 아무도 보지 않는다 — CLI 프로세스를 정리하고, 탭은 저장된 목록에서 새로 연다.
+    disposeTabsOf(event.sender, "화면을 새로 고쳤습니다");
+    return cleanSavedTabs(readJsonFile<unknown>(tabsFile(), {tabs: [], activeId: null}));
+});
+ipcMain.handle("tabs:save", (_event, state: unknown) => {
+    try {
+        writeJsonFile(tabsFile(), cleanSavedTabs(state));
+    } catch (e) {
+        console.error("[tabs] 저장 실패", e);
+    }
 });
 
 // ── 세션 기록 (CLI가 저장한 것 — 터미널에서 한 대화 포함) ──
@@ -2096,9 +2409,9 @@ ipcMain.handle("sessions:messages", async (_event, sid: string, cwd?: string) =>
 
 ipcMain.handle("sessions:delete", async (_event, sid: string, cwd?: string) => {
     grantsBySession.delete(sid);
-    if (sid === sessionId) {
-        closeLive();
-        sessionId = null;
+    // 이 대화를 열어 둔 탭은 새 대화로 비운다 (화면은 렌더러가 비운다)
+    for (const tab of tabs.values()) {
+        if (tab.sessionId === sid) resetConversation(tab);
     }
     const {deleteSession} = await loadSdk();
     await deleteSession(sid, {dir: cwd || undefined});
@@ -2116,35 +2429,29 @@ ipcMain.handle("prompts:remove", (_event, index: number) => {
     return systemPrompts;
 });
 
-ipcMain.handle("commands:list", () => loadCommands());
+ipcMain.handle("commands:list", (event, tabId: string) => loadCommands(tabFor(event, tabId)));
 
-ipcMain.handle("mcp:status", (_event, refresh?: boolean) => loadMcpStatus(refresh === true));
+ipcMain.handle("mcp:status", (event, tabId: string, refresh?: boolean) => loadMcpStatus(tabFor(event, tabId), refresh === true));
 
-ipcMain.handle("files:search", (_event, query: string) => searchFilesInCwd(query ?? ""));
+ipcMain.handle("files:search", (event, tabId: string, query: string) => searchFilesInCwd(tabFor(event, tabId).cwd, query ?? ""));
 
-ipcMain.handle("dialog:select_directory", async (event) => {
-    const win = BrowserWindow.getFocusedWindow();
+// 탭의 작업 폴더 바꾸기 — 그 탭은 새 대화로 시작한다(전체 허용)
+ipcMain.handle("dialog:select_directory", async (event, tabId: string) => {
+    const tab = tabFor(event, tabId);
+    const win = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow();
     if (!win) return null;
 
     const result = await dialog.showOpenDialog(win, {
         properties: ["openDirectory"],
-        defaultPath: currentCwd,
+        defaultPath: tab.cwd,
     });
 
     if (result.canceled || result.filePaths.length === 0) return null;
 
-    closeLive();
-    replaceFirst = null;
-    clearFinishedTasks(event.sender);
-    resetChangedFiles();
-    unsavedGrants = emptyGrants();
-    currentCwd = result.filePaths[0];
-    sendChangedFiles(event.sender);
-    pushFolderInfo(event.sender);
-    sessionId = null;
-    skipPermissions = true; // 폴더를 바꾸면 새 대화 — 전체 허용으로 시작
-    lastUserMessage = "";
-    return currentCwd;
+    resetConversation(tab);
+    tab.cwd = result.filePaths[0];
+    pushFolderInfo(tab);
+    return tab.cwd;
 });
 
 ipcMain.handle("claude:get_status", () => {
@@ -2194,9 +2501,11 @@ ipcMain.handle("clipboard:write", (_event, text: unknown) => {
 // 알림 객체를 들고 있지 않으면 가비지 컬렉션되어 눌러도 반응이 없다(Electron의 알려진 동작).
 const shownNotifications = new Set<Notification>();
 
-ipcMain.handle("notify:show", (event, n: {title?: unknown; body?: unknown}) => {
+ipcMain.handle("notify:show", (event, n: {title?: unknown; body?: unknown; tabId?: unknown}) => {
     if (!Notification.isSupported()) return false;
     const win = BrowserWindow.fromWebContents(event.sender);
+    // 알림을 누르면 그 알림을 낸 탭으로 간다 (렌더러가 탭을 고른다)
+    const tabId = typeof n?.tabId === "string" ? n.tabId : null;
     const note = new Notification({
         title: String(n?.title ?? "Better Claude").slice(0, 100),
         body: String(n?.body ?? "").slice(0, 240),
@@ -2211,6 +2520,7 @@ ipcMain.handle("notify:show", (event, n: {title?: unknown; body?: unknown}) => {
             if (win.isMinimized()) win.restore();
             win.show();
             win.focus();
+            if (tabId) win.webContents.send("notify:clicked", tabId);
         }
         app.focus({steal: true});
     });
@@ -2225,7 +2535,9 @@ app.on("browser-window-focus", () => {
 });
 
 app.whenReady().then(() => {
+    installSignalQuit(); // ready 뒤여야 한다 — 위 설명
     loadChatSettings();
+    installAppMenu({confirmReload: (win) => confirmStopWork(win, "reload")});
     const claudePath = resolveClaudePath();
     if (claudePath) {
         console.log(`[bootstrap] Claude CLI 감지: ${claudePath}`);
@@ -2236,11 +2548,15 @@ app.whenReady().then(() => {
         );
     }
 
-    createMainWindow();
+    guardWindow(createMainWindow());
+    // 테마를 바꾸면(앱 설정이든 macOS 화면 모드든) 창 바탕도 맞춘다 — 창 크기를 바꿀 때 가장자리에 예전 색이 비치지 않게
+    nativeTheme.on("updated", () => {
+        for (const w of BrowserWindow.getAllWindows()) w.setBackgroundColor(windowBackground());
+    });
 
     app.on("activate", () => {
         if (BrowserWindow.getAllWindows().length === 0) {
-            createMainWindow();
+            guardWindow(createMainWindow());
         }
     });
 });

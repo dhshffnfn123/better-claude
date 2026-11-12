@@ -24,6 +24,9 @@ interface LoadedMessage {
     content: string;
     uuid?: string; // 사용자 메시지: 파일 되돌리기 기준점
     images?: string[];
+    // "N tokens" 배지 — 기록의 응답별 usage로 계산 (내 메시지: 그 턴의 입력, 답변: 그 턴의 출력)
+    inputTokens?: number;
+    outputTokens?: number;
     segments?: (
         | {kind: "text"; text: string}
         | {
@@ -186,6 +189,9 @@ interface FileView {
     size?: number;
 }
 
+// 화면 테마: system이면 macOS 화면 모드를 따른다
+type ThemeSource = "system" | "light" | "dark";
+
 // "Git 변경" 보기 (main/services/git-changes.ts와 같은 모양)
 type GitChangeKind = "modified" | "added" | "deleted" | "renamed" | "copied" | "typechange" | "untracked" | "conflict";
 
@@ -241,81 +247,136 @@ interface SlashCommand {
     source: "builtin" | "custom";
 }
 
+// ── 탭 ──
+// 탭에 대화를 열 때 넘기는 것 (빠진 건 main이 기본값·지금 값으로 채운다)
+interface TabInit {
+    cwd?: string;
+    sessionId?: string | null;
+    model?: string;
+    effort?: string;
+    ultracode?: boolean;
+    fastMode?: boolean;
+}
+
+interface TabOpenResult {
+    cwd: string;
+    cwdMissing: boolean; // 세션의 작업 폴더가 없어 지금 폴더에서 이어간다
+    sessionMissing: boolean; // 대화 기록이 사라져 새 대화로 시작한다 (세션 ID는 비웠다)
+    model: string;
+    effort: string;
+    ultracode: boolean;
+    fastMode: boolean;
+    skipPermissions: boolean;
+}
+
+// 앱을 다시 켜면 다시 여는 탭
+interface SavedTab {
+    id: string;
+    sessionId: string | null;
+    cwd: string;
+    title: string;
+    model: string;
+    effort: string;
+    ultracode: boolean;
+    fastMode: boolean;
+}
+
+interface SavedTabs {
+    tabs: SavedTab[];
+    activeId: string | null;
+}
+
+interface ChatNoticeData {
+    level: "error" | "warning";
+    message: string;
+    detail?: string;
+}
+
+// main이 탭마다 보내는 이벤트와 그 내용 (preload의 TAB_EVENTS와 같은 이름)
+interface TabEventMap {
+    chunk: string;
+    thinking: string;
+    done: undefined;
+    error: ChatNoticeData;
+    usage: {inputTokens: number; outputTokens: number};
+    toolUse: {id: string; name: string; input: unknown; parentToolUseId?: string};
+    toolResult: {id: string; isError: boolean; content: string; parentToolUseId?: string};
+    turnUuid: {uuid: string}; // 방금 보낸 사용자 메시지의 uuid (파일 되돌리기 기준점)
+    turnStart: undefined; // 백그라운드 작업이 끝나 CLI가 스스로 시작한 턴
+    permissionRequest: PermissionRequestData;
+    questionRequest: {id: string; questions: AskQuestion[]}; // AskUserQuestion — 권한이 아니라 선택지 질문
+    permissionResolved: {id: string | null}; // 더 이상 답할 수 없게 된 요청 (null이면 그 탭 전부)
+    background: BackgroundState;
+    cost: {totalCostUsd: number};
+    context: ContextUsage;
+    commands: SlashCommand[];
+    mcp: McpServer[];
+    changedFiles: ChangedFilesState;
+    session: {sessionId: string}; // 새 대화에 세션 ID가 정해졌다
+}
+
+type TabEventName = keyof TabEventMap;
+
+// 앱 메뉴의 탭 단축키
+type TabMenuAction = "new" | "close" | "next" | "prev" | `select:${number}`;
+
 interface Window {
     electronAPI: {
+        openTab: (tabId: string, init?: TabInit) => Promise<TabOpenResult>;
+        closeTab: (tabId: string) => Promise<void>;
+        loadTabs: () => Promise<SavedTabs>;
+        saveTabs: (state: SavedTabs) => Promise<void>;
+        onTabEvent: <K extends TabEventName>(event: K, callback: (tabId: string, payload: TabEventMap[K]) => void) => () => void;
+        onMenuTab: (callback: (action: TabMenuAction) => void) => () => void;
+
         sendMessage: (
+            tabId: string,
             message: string,
             images?: { data: string; mediaType: string }[],
             replaceUuid?: string
         ) => Promise<void>;
-        newConversation: () => Promise<void>;
+        stopGeneration: (tabId: string) => Promise<void>;
+        rewindFiles: (tabId: string, uuid: string, dryRun: boolean) => Promise<RewindFilesResult>;
+        setPermissions: (tabId: string, allow: boolean) => Promise<void>;
         respondPermission: (id: string, allow: boolean, always?: boolean) => Promise<void>;
-        rewindFiles: (uuid: string, dryRun: boolean) => Promise<RewindFilesResult>;
-        getRateLimits: () => Promise<RateLimitWindow[]>;
-        onTurnUuid: (callback: (data: { uuid: string }) => void) => () => void;
-        onRateLimits: (callback: (limits: RateLimitWindow[]) => void) => () => void;
         answerQuestions: (id: string, answers: string[][]) => Promise<void>;
-        getPermissions: () => Promise<boolean>;
-        setPermissions: (allow: boolean) => Promise<void>;
-        stopGeneration: () => Promise<void>;
-        onChunk: (callback: (text: string) => void) => () => void;
-        onDone: (callback: () => void) => () => void;
-        onUsage: (callback: (data: { inputTokens: number; outputTokens: number }) => void) => () => void;
-        onThinking: (callback: (text: string) => void) => () => void;
-        onToolUse: (
-            callback: (data: { id: string; name: string; input: unknown; parentToolUseId?: string }) => void
-        ) => () => void;
-        onToolResult: (
-            callback: (data: { id: string; isError: boolean; content: string; parentToolUseId?: string }) => void
-        ) => () => void;
-        onChatError: (
-            callback: (data: { level: "error" | "warning"; message: string; detail?: string }) => void
-        ) => () => void;
-        onPermissionRequest: (callback: (data: PermissionRequestData) => void) => () => void;
-        onQuestionRequest: (callback: (data: { id: string; questions: AskQuestion[] }) => void) => () => void;
-        onPermissionResolved: (callback: (data: { id: string | null }) => void) => () => void;
-        getPathForFile: (file: File) => string;
-        onTurnStart: (callback: () => void) => () => void;
-        onBackgroundTasks: (callback: (state: BackgroundState) => void) => () => void;
-        clearFinishedBackground: () => Promise<void>;
-        copyText: (text: string) => Promise<boolean>;
-        showNotification: (n: {title: string; body: string}) => Promise<boolean>;
-        getChangedFiles: () => Promise<ChangedFilesState>;
-        onChangedFiles: (callback: (state: ChangedFilesState) => void) => () => void;
-        getFileChanges: (path: string) => Promise<FileHunk[]>;
-        listDir: (dir: string) => Promise<DirListing | null>;
-        readFileForView: (path: string) => Promise<FileView>;
-        revealFile: (path: string) => Promise<void>;
-        gitStatus: () => Promise<GitStatusResult>;
-        gitDiff: (path: string) => Promise<GitDiffResult>;
-        getBackgroundOutput: (taskId: string) => Promise<BackgroundOutput | null>;
-        stopBackgroundTask: (taskId: string) => Promise<void>;
-        onCost: (callback: (data: { totalCostUsd: number }) => void) => () => void;
-        onContextUsage: (callback: (data: ContextUsage) => void) => () => void;
-        getCwd: () => Promise<string>;
-        searchFiles: (query: string) => Promise<string[]>;
-        selectDirectory: () => Promise<string | null>;
-        getModel: () => Promise<string>;
-        setModel: (model: string) => Promise<void>;
-        getEffort: () => Promise<string>;
-        setEffort: (effort: string) => Promise<void>;
-        getUltracode: () => Promise<boolean>;
-        setUltracode: (on: boolean) => Promise<void>;
-        getFastMode: () => Promise<boolean>;
-        setFastMode: (on: boolean) => Promise<void>;
+
+        setModel: (tabId: string, model: string) => Promise<void>;
+        setEffort: (tabId: string, effort: string) => Promise<void>;
+        setUltracode: (tabId: string, on: boolean) => Promise<void>;
+        setFastMode: (tabId: string, on: boolean) => Promise<void>;
         listModels: () => Promise<ClaudeModelInfo[] | null>;
+
+        selectDirectory: (tabId: string) => Promise<string | null>;
+        searchFiles: (tabId: string, query: string) => Promise<string[]>;
+        getFileChanges: (tabId: string, path: string) => Promise<FileHunk[]>;
+        listDir: (tabId: string, dir: string) => Promise<DirListing | null>;
+        readFileForView: (tabId: string, path: string) => Promise<FileView>;
+        revealFile: (tabId: string, path: string) => Promise<void>;
+        gitStatus: (tabId: string) => Promise<GitStatusResult>;
+        gitDiff: (tabId: string, path: string) => Promise<GitDiffResult>;
+        listCommands: (tabId: string) => Promise<SlashCommand[]>;
+        getMcpStatus: (tabId: string, refresh?: boolean) => Promise<McpServer[]>;
+
+        getBackgroundOutput: (tabId: string, taskId: string) => Promise<BackgroundOutput | null>;
+        stopBackgroundTask: (tabId: string, taskId: string) => Promise<void>;
+        clearFinishedBackground: (tabId: string) => Promise<void>;
+
+        getPathForFile: (file: File) => string;
+        getRateLimits: () => Promise<RateLimitWindow[]>;
+        onRateLimits: (callback: (limits: RateLimitWindow[]) => void) => () => void;
+        copyText: (text: string) => Promise<boolean>;
+        showNotification: (n: {title: string; body: string; tabId?: string}) => Promise<boolean>;
+        // 탭이 낸 macOS 알림을 눌렀다 → 그 탭으로
+        onNotificationClick: (callback: (tabId: string) => void) => () => void;
+        getTheme: () => Promise<ThemeSource>;
+        setTheme: (source: ThemeSource) => Promise<ThemeSource>;
         getPrompts: () => Promise<string[]>;
         addPrompt: (prompt: string) => Promise<string[]>;
         removePrompt: (index: number) => Promise<string[]>;
-        listCommands: () => Promise<SlashCommand[]>;
-        getSessionId: () => Promise<string | null>;
-        resumeSession: (sessionId: string, cwd?: string) => Promise<{cwd: string; cwdMissing: boolean}>;
         listSessions: () => Promise<SessionSummary[]>;
         loadSessionMessages: (sessionId: string, cwd?: string) => Promise<LoadedMessage[]>;
         deleteSession: (sessionId: string, cwd?: string) => Promise<void>;
-        getMcpStatus: (refresh?: boolean) => Promise<McpServer[]>;
-        onCommands: (callback: (commands: SlashCommand[]) => void) => () => void;
-        onMcpStatus: (callback: (servers: McpServer[]) => void) => () => void;
         getClaudeStatus: () => Promise<{ found: boolean; path: string | null }>;
         locateClaude: () => Promise<
             | { ok: true; path: string }
