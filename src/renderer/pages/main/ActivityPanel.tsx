@@ -18,6 +18,7 @@ interface Props {
     isThinking: boolean;
     compacting: Compacting;
     tools: ToolActivity[];
+    onOpenAgent?: (tool: ToolActivity) => void; // 에이전트 줄을 누르면 "에이전트가 한 일" 패널
     thinkingText: string;
     elapsedMs: number;
     runningTokens: RunningTokens;
@@ -180,9 +181,22 @@ export function ToolDiff({name, input}: {name: string; input: unknown}) {
     );
 }
 
-export function ToolRow({tool, defaultExpanded = false}: {tool: ToolActivity; defaultExpanded?: boolean}) {
+// 에이전트에게 일을 맡기는 도구 (예전 이름 Task)
+export function isAgentTool(name: string): boolean {
+    return name === "Agent" || name === "Task";
+}
+
+// 에이전트 줄: "Explore · .ts 파일 정리" — 종류와 맡긴 일의 짧은 설명
+function agentLabel(input: unknown): string {
+    const i = (input ?? {}) as {subagent_type?: unknown; description?: unknown};
+    return [i.subagent_type, i.description].filter((v): v is string => typeof v === "string" && v.length > 0).join(" · ");
+}
+
+// onOpen: 누르면 열 것이 있는 줄 (에이전트 → 그 에이전트가 한 일)
+export function ToolRow({tool, defaultExpanded = false, onOpen}: {tool: ToolActivity; defaultExpanded?: boolean; onOpen?: () => void}) {
     const [expanded, setExpanded] = useState(defaultExpanded);
     const expandable = DIFF_TOOLS.has(tool.name) && extractEditPairs(tool.name, tool.input).length > 0;
+    const isAgent = isAgentTool(tool.name);
     // Claude의 질문: JSON 대신 질문 내용을, 답했으면(결과가 deny로 와도) 완료로 보여 준다
     const isQuestion = tool.name === QUESTION_TOOL;
     const status = isQuestion && isAnswered(tool.resultPreview) ? "done" : tool.status;
@@ -190,7 +204,9 @@ export function ToolRow({tool, defaultExpanded = false}: {tool: ToolActivity; de
         ? questionsOf(tool.input)
               .map((q) => q.question)
               .join(" · ")
-        : rawToolInput(tool.input);
+        : isAgent
+          ? agentLabel(tool.input)
+          : rawToolInput(tool.input);
     const icon =
         status === "running"
             ? faCircleNotch
@@ -200,8 +216,12 @@ export function ToolRow({tool, defaultExpanded = false}: {tool: ToolActivity; de
     return (
         <div className={cx("toolRowGroup")}>
             <div
-                className={cx("toolRow", status, {toolRowExpandable: expandable, toolRowSub: !!tool.parentToolUseId})}
-                onClick={expandable ? () => setExpanded((v) => !v) : undefined}
+                className={cx("toolRow", status, {
+                    toolRowExpandable: expandable,
+                    toolRowSub: !!tool.parentToolUseId,
+                    toolRowOpenable: !expandable && !!onOpen,
+                })}
+                onClick={expandable ? () => setExpanded((v) => !v) : onOpen}
             >
                 {expandable ? (
                     <FontAwesomeIcon
@@ -216,17 +236,22 @@ export function ToolRow({tool, defaultExpanded = false}: {tool: ToolActivity; de
                     spin={status === "running"}
                     className={cx("toolIcon")}
                 />
-                <span className={cx("toolName")}>{isQuestion ? "질문" : tool.name}</span>
+                <span className={cx("toolName")}>{isQuestion ? "질문" : isAgent ? "에이전트" : tool.name}</span>
                 <span className={cx("toolInput")} title={rawInput || undefined}>
                     {middleTruncate(rawInput)}
                 </span>
+                {!expandable && onOpen && (
+                    <span className={cx("toolOpenHint")}>
+                        한 일 보기 <FontAwesomeIcon icon={faChevronRight} />
+                    </span>
+                )}
             </div>
             {expandable && expanded && <ToolDiff name={tool.name} input={tool.input} />}
         </div>
     );
 }
 
-function ActivityPanelBase({isThinking, compacting, tools, thinkingText, elapsedMs, runningTokens}: Props) {
+function ActivityPanelBase({isThinking, compacting, tools, thinkingText, elapsedMs, runningTokens, onOpenAgent}: Props) {
     const [thinkingOpen, setThinkingOpen] = useState(false);
     const hasTokens = runningTokens.input + runningTokens.output > 0;
 
@@ -271,7 +296,7 @@ function ActivityPanelBase({isThinking, compacting, tools, thinkingText, elapsed
             {tools.length > 0 && (
                 <div className={cx("toolList")}>
                     {tools.slice(-6).map((t) => (
-                        <ToolRow key={t.id} tool={t} />
+                        <ToolRow key={t.id} tool={t} onOpen={onOpenAgent && isAgentTool(t.name) ? () => onOpenAgent(t) : undefined} />
                     ))}
                 </div>
             )}

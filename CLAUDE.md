@@ -129,6 +129,22 @@ Things that are load-bearing:
   CLI process exiting, cleared on new chat / resume / cwd change / "지우기"). Exit code is parsed from
   the summary ("… failed with exit code N") first — the output file's "[exited with code N]" line may
   not be written yet at notification time. `chat:background` sends `{running, finished}`.
+- **"에이전트가 한 일" panel** (`AgentPanel.tsx`, main `agents:get`): what an agent (Agent tool; older name
+  `Task` — `isAgentTool`) was told, every tool it used with results, and its full report (the main reply
+  only keeps a 500-char preview). Opens from an agent row in a reply or the activity panel ("한 일 보기"),
+  or from a `local_agent` item in the background panel (task id = agent id), in the files panel's slot
+  (same width). The shell's `agentView` keeps a stack — an agent's own agent rows open that agent, ← goes
+  back — and closes it when the tab's conversation changes. Main maps the call's tool_use id → agent id:
+  live from `task_started` (`task_id` *is* the agent id, with `tool_use_id` — verified), otherwise
+  `listSubagents(sid)` + each transcript's first entry (`getSubagentMessages(sid, id, {limit: 1})`), whose
+  `parent_tool_use_id` is the spawning call (cached per session, `agentIdsBySession`; nested agents too —
+  verified). The transcript (`<session>/subagents/agent-<id>.jsonl`) goes through
+  `sessionToMessages(entries, {subagent: true})` and renders with `MessageItem` (`senderLabel` = agent type,
+  `markReport` labels the last text "최종 보고"); the first user entry is the collapsed "받은 지시". Stats:
+  tool_use count, first→last entry time, tokens = the last response's input + cache + output (the CLI's
+  "N tokens"). Status: `tab.taskStatuses` (every `task_notification` — `finishedTasks` keeps only background
+  ones, so foreground agents showed "끝남" before) → "실행 중" while the live process still has it
+  (`bgMembers`, or `taskInfo` during the turn; re-read every 2 s) → otherwise "끝남" (reopened conversations).
 - **Subagent messages (`parent_tool_use_id` set) never drive the main conversation.** The SDK
   emits subagent tool_use/tool_result (and stream events) by default. `pump` drops them while no
   turn is active — otherwise a background agent's tool call looked like a CLI-started follow-up turn

@@ -98,6 +98,9 @@ interface ChatTab {
     gitInFlight: {cwd: string; promise: Promise<GitStatusResult>} | null;
     // 답변 속 그림으로 확인해 준 파일 (images:resolve) — 원본 보기(images:read)는 이것과 작업 파일 패널 범위만 읽는다
     imagePaths: Set<string>;
+    // 끝난 작업의 상태 (task_notification) — 백그라운드가 아닌 것도. "에이전트가 한 일" 패널의 완료/실패 표시용
+    // (finishedTasks는 백그라운드로 돈 작업만 남긴다). 대화를 바꾸면 비운다.
+    taskStatuses: Map<string, FinishedTask["status"]>;
 }
 
 const tabs = new Map<string, ChatTab>();
@@ -127,6 +130,7 @@ function createTab(id: string, sender: Electron.WebContents): ChatTab {
         lastGit: null,
         gitInFlight: null,
         imagePaths: new Set(),
+        taskStatuses: new Map(),
     };
 }
 
@@ -1606,6 +1610,10 @@ async function pump(s: LiveSession, claudePath: string) {
 
             // 백그라운드 작업이 끝났다 — 결과를 남긴다 (목록에서 빠지는 건 뒤따르는 background_tasks_changed)
             if (msg.type === "system" && msg.subtype === "task_notification") {
+                const tn = msg as unknown as {task_id?: unknown; status?: unknown};
+                if (typeof tn.task_id === "string" && (tn.status === "completed" || tn.status === "failed" || tn.status === "stopped")) {
+                    s.tab.taskStatuses.set(tn.task_id, tn.status);
+                }
                 recordFinishedTask(s, msg);
                 sendBackground(s);
                 continue;
@@ -1864,7 +1872,8 @@ function describeCommandEntry(text: string): string | null {
     return args ? `${name} ${args}` : name;
 }
 
-function sessionToMessages(entries: SessionMessage[]): LoadedMessage[] {
+// subagent: 에이전트 자신의 기록(getSubagentMessages)을 그릴 때 — 그 기록은 항목마다 parent_tool_use_id가 붙어 있다
+function sessionToMessages(entries: SessionMessage[], opts: {subagent?: boolean} = {}): LoadedMessage[] {
     const out: LoadedMessage[] = [];
     let assistant: LoadedMessage | null = null;
     const tools = new Map<string, LoadedTool>();
@@ -1896,8 +1905,8 @@ function sessionToMessages(entries: SessionMessage[]): LoadedMessage[] {
     };
 
     for (const entry of entries) {
-        // 서브에이전트 내부 대화는 본문에 넣지 않는다(라이브 화면과 동일)
-        if (entry.parent_tool_use_id) continue;
+        // 서브에이전트 내부 대화는 본문에 넣지 않는다(라이브 화면과 동일) — 에이전트 패널은 따로 읽는다
+        if (entry.parent_tool_use_id && !opts.subagent) continue;
         const raw = entry.message as {content?: string | ContentBlock[]} | undefined;
         const blocks: ContentBlock[] =
             typeof raw?.content === "string" ? [{type: "text", text: raw.content}] : raw?.content ?? [];
@@ -2597,6 +2606,7 @@ function resetConversation(tab: ChatTab) {
     closeLive(tab);
     tab.replaceFirst = null;
     clearFinishedTasks(tab);
+    tab.taskStatuses.clear();
     resetChangedFiles(tab);
     sendChangedFiles(tab);
     tab.unsavedGrants = emptyGrants();
@@ -2938,6 +2948,104 @@ ipcMain.handle("sessions:messages", async (_event, sid: string, cwd?: string) =>
     const end = until ? list.findIndex((m) => m.uuid === until || m.replyUuid === until) : -1;
     for (let i = 0; i <= end; i++) list[i].copied = true;
     return list;
+});
+
+// ── 에이전트가 한 일 ── 대화 속 에이전트 호출(Agent 도구의 tool_use id) → 에이전트 id → 그 에이전트의 기록
+// (<세션>/subagents/agent-<id>.jsonl). 실행 중인 것은 task_started가 (task_id = 에이전트 id, tool_use_id)를 알려
+// 준다(확인함). 그 밖(끝난 지 오래됐거나 다시 연 대화)은 listSubagents로 목록을 받아 각 기록의 첫 항목
+// parent_tool_use_id(= 그 에이전트를 부른 호출)로 잇는다. 에이전트가 부른 에이전트도 같은 방식으로 이어진다.
+const agentIdsBySession = new Map<string, Map<string, string>>(); // 세션 → (tool_use id → 에이전트 id)
+
+async function agentIdFor(tab: ChatTab, toolUseId: string): Promise<string | null> {
+    const sid = tab.sessionId;
+    if (!sid) return null;
+    let map = agentIdsBySession.get(sid);
+    if (!map) {
+        map = new Map();
+        agentIdsBySession.set(sid, map);
+    }
+    const known = map.get(toolUseId);
+    if (known) return known;
+    for (const [taskId, d] of tab.live?.taskInfo ?? []) {
+        if (d.toolUseId === toolUseId) {
+            map.set(toolUseId, taskId);
+            return taskId;
+        }
+    }
+    const sdk = await loadSdk();
+    const ids = await sdk.listSubagents(sid).catch(() => [] as string[]);
+    const mapped = new Set(map.values());
+    for (const id of ids) {
+        if (mapped.has(id)) continue;
+        const first = (await sdk.getSubagentMessages(sid, id, {limit: 1}).catch(() => []))[0];
+        if (first?.parent_tool_use_id) map.set(first.parent_tool_use_id, id);
+    }
+    return map.get(toolUseId) ?? null;
+}
+
+type AgentStatus = "running" | "completed" | "failed" | "stopped" | "done";
+
+// 끝난 작업 기록(task_notification) → 그 상태, 지금 프로세스에서 돌고 있으면 실행 중, 그 밖(다시 연 대화 등)은 "끝남"
+function agentStatus(tab: ChatTab, agentId: string): AgentStatus {
+    const fin = tab.taskStatuses.get(agentId) ?? tab.finishedTasks.find((t) => t.id === agentId)?.status;
+    if (fin) return fin;
+    const s = tab.live;
+    if (s && !s.stopped && (s.bgMembers.has(agentId) || (s.turnActive && s.taskInfo.has(agentId)))) return "running";
+    return "done";
+}
+
+ipcMain.handle("agents:get", async (event, tabId: string, ref: {toolUseId?: unknown; agentId?: unknown}) => {
+    const tab = tabFor(event, tabId);
+    const sid = tab.sessionId;
+    if (!sid) return {ok: false, error: "아직 저장된 대화가 아닙니다"};
+    try {
+        const agentId =
+            typeof ref?.agentId === "string" && ref.agentId
+                ? ref.agentId
+                : typeof ref?.toolUseId === "string" && ref.toolUseId
+                  ? await agentIdFor(tab, ref.toolUseId)
+                  : null;
+        if (!agentId) {
+            return {ok: false, error: "이 에이전트의 기록을 찾지 못했습니다 (기록이 정리됐거나, 갈라낸 대화라 따라오지 않았을 수 있습니다)"};
+        }
+        const status = agentStatus(tab, agentId);
+        const {getSubagentMessages} = await loadSdk();
+        const entries = await getSubagentMessages(sid, agentId);
+        if (entries.length === 0) {
+            return status === "running"
+                ? {ok: false, pending: true, error: "에이전트가 막 시작했습니다…"}
+                : {ok: false, error: "이 에이전트의 기록이 없습니다"};
+        }
+        // 수치: 도구 횟수, 걸린 시간(첫·끝 항목 시각), 토큰 = 마지막 응답이 쓴 컨텍스트 + 출력(CLI의 "N tokens"와 같은 셈)
+        let toolUses = 0;
+        let lastUsage: ApiUsage | null = null;
+        for (const e of entries) {
+            const m = e.message as {content?: unknown; usage?: ApiUsage} | undefined;
+            if (e.type !== "assistant") continue;
+            if (Array.isArray(m?.content)) toolUses += (m.content as {type?: string}[]).filter((b) => b.type === "tool_use").length;
+            if (m?.usage) lastUsage = m.usage;
+        }
+        const first = entryTime(entries[0]);
+        const last = entryTime(entries[entries.length - 1]);
+        const tokens = lastUsage
+            ? (lastUsage.input_tokens ?? 0) +
+              (lastUsage.cache_creation_input_tokens ?? 0) +
+              (lastUsage.cache_read_input_tokens ?? 0) +
+              (lastUsage.output_tokens ?? 0)
+            : undefined;
+        return {
+            ok: true,
+            agentId,
+            status,
+            messages: sessionToMessages(entries, {subagent: true}),
+            toolUses,
+            tokens,
+            durationMs: first && last && last >= first ? last - first : undefined,
+        };
+    } catch (e) {
+        console.error("[agents] 에이전트 기록 읽기 실패", e);
+        return {ok: false, error: (e as Error).message};
+    }
 });
 
 // ── 대화 갈라지기 ── 이 답변까지를 새 세션으로 복사한다(원래 대화는 그대로). 렌더러가 새 탭으로 연다.

@@ -26,6 +26,7 @@ import {notifyNeedsInput, notifyTurnDone} from "../../hooks/useNotificationSound
 import {onAnyTab} from "../../tab-events";
 import {NotificationSettings} from "./NotificationSettings";
 import {ThemeSettings} from "./ThemeSettings";
+import {AgentPanel} from "./AgentPanel";
 import {BackgroundTasksPanel} from "./BackgroundTasksPanel";
 import {FilesPanel} from "./FilesPanel";
 import {FILES_PANEL_MIN_WIDTH, readPref, writePref} from "./files-panel-prefs";
@@ -253,6 +254,8 @@ const ChatPage = () => {
     const [models, setModels] = useState<ModelOption[]>(FALLBACK_MODELS);
     // 백그라운드 작업 상세 패널: 열려 있으면 패널 위쪽 위치(px), 닫혀 있으면 null
     const [bgPanelTop, setBgPanelTop] = useState<number | null>(null);
+    // "에이전트가 한 일" 패널 — 어느 탭의 어느 대화에서 열었는지와 들어간 순서(에이전트가 부른 에이전트)
+    const [agentView, setAgentView] = useState<{tabId: string; sessionId: string | null; stack: AgentRef[]} | null>(null);
     const [rateLimits, setRateLimits] = useState<RateLimitWindow[]>([]);
     const [claudeMissing, setClaudeMissing] = useState(false);
     const [locateError, setLocateError] = useState<string | null>(null);
@@ -614,6 +617,25 @@ const ChatPage = () => {
             setActiveId(meta.id);
         }
     }, []);
+
+    // 에이전트 줄·백그라운드 에이전트를 누르면 오른쪽 패널 (작업 파일 패널 자리)
+    const openAgent = useCallback((tabId: string, ref: AgentRef) => {
+        const sessionId = tabsRef.current.find((t) => t.id === tabId)?.sessionId ?? null;
+        setAgentView({tabId, sessionId, stack: [ref]});
+    }, []);
+    const openNestedAgent = useCallback((ref: AgentRef) => {
+        setAgentView((cur) => (cur ? {...cur, stack: [...cur.stack, ref]} : cur));
+    }, []);
+    const agentBack = useCallback(() => {
+        setAgentView((cur) => (cur && cur.stack.length > 1 ? {...cur, stack: cur.stack.slice(0, -1)} : cur));
+    }, []);
+    const closeAgent = useCallback(() => setAgentView(null), []);
+    // 그 탭이 다른 대화가 되면(다른 대화 열기·폴더 변경·삭제·탭 닫기) 패널을 닫는다
+    useEffect(() => {
+        if (!agentView) return;
+        const t = tabs.find((x) => x.id === agentView.tabId);
+        if (!t || (agentView.sessionId && t.sessionId !== agentView.sessionId)) setAgentView(null);
+    }, [tabs, agentView]);
 
     // "여기까지 새 탭으로": 갈라낸 대화를 그 탭 바로 옆 새 탭으로 열고 그리로 간다. 설정(모델 등)은 갈라낸 탭을 따른다.
     const openFork = useCallback(
@@ -1285,6 +1307,10 @@ const ChatPage = () => {
                                 apiRef.current.get(active.id)?.stop();
                             }}
                             onClearFinished={() => void window.electronAPI.clearFinishedBackground(active.id)}
+                            onOpenAgent={(ref) => {
+                                setBgPanelTop(null);
+                                openAgent(active.id, ref);
+                            }}
                             onClose={closeBackgroundPanel}
                         />
                     )}
@@ -1349,10 +1375,21 @@ const ChatPage = () => {
                             registerApi={registerApi}
                             promptHooks={promptHooks}
                             onFork={openFork}
+                            onOpenAgent={openAgent}
                         />
                     ))}
                 </div>
-                {filesOpen && active && (
+                {active && agentView?.tabId === active.id ? (
+                    <AgentPanel
+                        tabId={active.id}
+                        stack={agentView.stack}
+                        width={filesWidth}
+                        onResize={setFilesWidth}
+                        onClose={closeAgent}
+                        onOpenNested={openNestedAgent}
+                        onBack={agentBack}
+                    />
+                ) : filesOpen && active && (
                     <FilesPanel
                         key={active.id}
                         tabId={active.id}

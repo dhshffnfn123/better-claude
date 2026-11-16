@@ -729,6 +729,20 @@
   color: var(--c-text-muted);
 }
 
+.bgTaskOpen {
+  align-self: flex-start;
+  padding: 2px 0;
+  font-size: 11px;
+  color: var(--c-accent-text);
+  cursor: pointer;
+  background: none;
+  border: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
 .bgTaskPrompt {
   font-size: 11px;
   color: var(--c-text-muted);
@@ -1960,6 +1974,31 @@
 
 .toolRowExpandable {
   cursor: pointer;
+}
+
+// 에이전트 줄 — 누르면 "에이전트가 한 일" 패널
+.toolRowOpenable {
+  cursor: pointer;
+
+  &:hover {
+    background-color: var(--c-hover-alt);
+  }
+}
+
+.toolOpenHint {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 4px;
+  align-items: center;
+  margin-left: auto;
+  font-family: inherit;
+  font-size: 10px;
+  color: var(--c-text-faint);
+  white-space: nowrap;
+
+  .toolRowOpenable:hover & {
+    color: var(--c-text-2);
+  }
 }
 
 .toolExpandIcon {
@@ -3589,6 +3628,117 @@
 
 .changesView .viewerNotice {
   padding: 0 2px;
+}
+
+// "에이전트가 한 일" 패널 (AgentPanel) — 틀은 작업 파일 패널(.filesPanel/.filesHeader)을 같이 쓴다
+.agentTitleIcon {
+  margin-right: 2px;
+  color: var(--c-text-2);
+}
+
+.agentMeta {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: 4px;
+  padding: 8px 12px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--c-divider);
+}
+
+.agentDesc {
+  color: var(--c-text);
+}
+
+.agentStats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  font-size: 11px;
+  color: var(--c-text-muted);
+}
+
+.agentStatus {
+  font-weight: 600;
+  color: var(--c-text-2);
+}
+
+.agentStatusRunning {
+  color: var(--c-accent-text);
+}
+
+.agentStatusOk {
+  color: var(--c-ok);
+}
+
+.agentStatusFailed {
+  color: var(--c-error);
+}
+
+.agentStatusStopped {
+  color: var(--c-text-muted);
+}
+
+.agentBody {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.agentPrompt {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: 10px;
+}
+
+.agentPromptToggle {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  align-self: flex-start;
+  padding: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--c-text-2);
+  cursor: pointer;
+  background: none;
+  border: none;
+
+  &:disabled {
+    cursor: default;
+  }
+}
+
+.agentPromptText {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--c-text-soft);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+// 접힌 지시는 몇 줄만 — 아래로 흐려지며 끝난다
+.agentPromptClamped {
+  max-height: 6.2em;
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, #000 60%, transparent);
+}
+
+// 마지막 글 = 에이전트가 메인 Claude에게 돌려준 보고
+.agentReportLabel {
+  margin-bottom: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--c-accent-text);
+  white-space: normal;
 }
 
 // 작업 파일 패널의 그림 (FilesPanel의 ImageView)

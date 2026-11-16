@@ -12,7 +12,7 @@ import {
     faXmark,
 } from "@fortawesome/free-solid-svg-icons";
 import styles from "./chat.page.module.scss";
-import type {ChatCallbacks, ChatNotice, ImagePayload} from "../../hooks/useClaudeChat";
+import type {ChatCallbacks, ChatNotice, ImagePayload, ToolActivity} from "../../hooks/useClaudeChat";
 import {useClaudeChat} from "../../hooks/useClaudeChat";
 import {MessageItem} from "./MessageItem";
 import {ChatInput, type PromptHooks} from "./ChatInput";
@@ -70,10 +70,24 @@ interface Props {
     promptHooks: PromptHooks;
     // "여기까지 새 탭으로"로 갈라낸 대화를 이 탭 옆 새 탭으로 연다 (탭 목록은 셸이 가진다)
     onFork: (fromTabId: string, sessionId: string, title: string, cwd: string) => void;
+    // 에이전트 줄을 누르면 오른쪽 "에이전트가 한 일" 패널 (패널은 셸이 그린다)
+    onOpenAgent: (tabId: string, ref: AgentRef) => void;
 }
 
 // 탭 하나의 대화 화면: 메시지·알림·진행 패널·입력창, 그리고 이 탭의 모달(권한·질문·되돌리기·이미지)
-function ChatTabViewBase({tabId, active, cwd, backgroundRunning, load, resetToken, callbacks, registerApi, promptHooks, onFork}: Props) {
+function ChatTabViewBase({
+    tabId,
+    active,
+    cwd,
+    backgroundRunning,
+    load,
+    resetToken,
+    callbacks,
+    registerApi,
+    promptHooks,
+    onFork,
+    onOpenAgent,
+}: Props) {
     const {
         messages,
         isLoading,
@@ -301,6 +315,18 @@ function ChatTabViewBase({tabId, active, cwd, backgroundRunning, load, resetToke
         },
         [tabId]
     );
+    // 에이전트 줄 → 그 에이전트가 한 일 (호출 입력의 종류·설명은 패널 머리에 쓴다)
+    const openAgentFromTool = useCallback(
+        (tool: ToolActivity) => {
+            const input = (tool.input ?? {}) as {subagent_type?: unknown; description?: unknown};
+            onOpenAgent(tabId, {
+                toolUseId: tool.id,
+                agentType: typeof input.subagent_type === "string" ? input.subagent_type : undefined,
+                description: typeof input.description === "string" ? input.description : undefined,
+            });
+        },
+        [onOpenAgent, tabId]
+    );
     // 고치는 중인 메시지 — 그 아래 메시지를 흐리게 그려 무엇이 버려지는지 보여 준다
     const [editingId, setEditingId] = useState<number | null>(null);
     const handleEditingChange = useCallback((msgId: number, editing: boolean) => {
@@ -416,6 +442,7 @@ function ChatTabViewBase({tabId, active, cwd, backgroundRunning, load, resetToke
                                 forking={!!msg.replyUuid && forkingUuid === msg.replyUuid}
                                 onEditingChange={handleEditingChange}
                                 dimmed={editingIdx >= 0 && i > editingIdx}
+                                onOpenAgent={openAgentFromTool}
                             />
                         ))}
                         {notice && (
@@ -477,6 +504,7 @@ function ChatTabViewBase({tabId, active, cwd, backgroundRunning, load, resetToke
                 <ActivityPanel
                     isThinking={isThinking}
                     compacting={compacting}
+                    onOpenAgent={openAgentFromTool}
                     tools={tools}
                     thinkingText={thinkingText}
                     elapsedMs={elapsedMs}

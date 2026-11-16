@@ -55,6 +55,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     rewindFiles: (tabId: string, uuid: string, dryRun: boolean) => ipcRenderer.invoke("chat:rewind_files", tabId, uuid, dryRun),
     // 이 답변까지를 새 대화로 복사한다 (원래 대화는 그대로) — 렌더러가 새 탭으로 연다
     forkConversation: (tabId: string, replyUuid: string) => ipcRenderer.invoke("chat:fork", tabId, replyUuid),
+    // 에이전트가 한 일 — 대화 속 Agent 호출(toolUseId) 또는 에이전트 id로 그 에이전트의 기록을 읽는다
+    getAgentView: (tabId: string, ref: object) => ipcRenderer.invoke("agents:get", tabId, ref),
     setPermissions: (tabId: string, allow: boolean) => ipcRenderer.invoke("chat:set_permissions", tabId, allow),
     // 권한·질문 답은 요청 id로 찾아간다 (id는 탭끼리 겹치지 않는다)
     // always: CLI가 제안한 규칙을 이 대화 동안 항상 허용

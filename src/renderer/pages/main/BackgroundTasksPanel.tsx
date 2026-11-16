@@ -100,6 +100,7 @@ interface Props {
     onStopAll: () => void;
     onClearFinished: () => void;
     onClose: () => void;
+    onOpenAgent?: (ref: AgentRef) => void; // 에이전트 작업 → "에이전트가 한 일" 패널 (작업 id = 에이전트 id)
 }
 
 // 상단 "백그라운드 N"을 누르면 뜨는 상세 패널: 실행 중인 작업 + 이 대화에서 최근 끝난 작업
@@ -113,6 +114,7 @@ export function BackgroundTasksPanel({
     onStopAll,
     onClearFinished,
     onClose,
+    onOpenAgent,
 }: Props) {
     const [now, setNow] = useState(() => Date.now());
     const [outputs, setOutputs] = useState<Record<string, BackgroundOutput | null>>({});
@@ -223,6 +225,14 @@ export function BackgroundTasksPanel({
                                     </div>
                                 )}
                                 <ToolSteps steps={t.recentTools} />
+                                {t.type === "local_agent" && onOpenAgent && (
+                                    <button
+                                        className={cx("bgTaskOpen")}
+                                        onClick={() => onOpenAgent({agentId: t.id, agentType: t.subagentType, description: t.description})}
+                                    >
+                                        한 일 전체 보기 ›
+                                    </button>
+                                )}
                                 {t.prompt && (
                                     <details className={cx("bgTaskPrompt")}>
                                         <summary>받은 지시 보기</summary>
@@ -281,6 +291,14 @@ export function BackgroundTasksPanel({
                                     </div>
                                 )}
                                 <ToolSteps steps={f.recentTools} />
+                                {f.type === "local_agent" && onOpenAgent && (
+                                    <button
+                                        className={cx("bgTaskOpen")}
+                                        onClick={() => onOpenAgent({agentId: f.id, agentType: f.subagentType, description: f.description})}
+                                    >
+                                        한 일 전체 보기 ›
+                                    </button>
+                                )}
                                 {f.hasOutput && <OutputTail output={outputs[f.id]} />}
                             </details>
                         );

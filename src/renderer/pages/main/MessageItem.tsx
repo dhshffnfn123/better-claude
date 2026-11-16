@@ -25,7 +25,7 @@ import {editorHint, looksLikeFilePath, openFileRef, resolveFileRef} from "../../
 import {imageRefKey, imageRefsInText, isImagePath, resolveImageRefs} from "../../image-refs";
 import {ImageViewerContext, TabIdContext} from "../../tab-context";
 import {QUESTION_TOOL} from "../../question-answers";
-import {middleTruncate, ToolRow} from "./ActivityPanel";
+import {isAgentTool, middleTruncate, ToolRow} from "./ActivityPanel";
 import {QuestionCard} from "./QuestionCard";
 import {isImeComposing} from "./ChatInput";
 
@@ -416,6 +416,10 @@ interface Props {
     forking?: boolean;
     onEditingChange?: (msgId: number, editing: boolean) => void; // 고치는 동안 아래 메시지를 흐리게
     dimmed?: boolean;
+    onOpenAgent?: (tool: ToolActivity) => void; // 에이전트 줄을 누르면 "에이전트가 한 일" 패널
+    // 에이전트 패널에서: 보낸 이 이름(Claude 대신 에이전트 종류), 마지막 글을 "최종 보고"로 표시
+    senderLabel?: string;
+    markReport?: boolean;
 }
 
 type EditMode = "edit" | "rewrite" | null;
@@ -437,6 +441,9 @@ function MessageItemBase({
     forking = false,
     onEditingChange,
     dimmed = false,
+    onOpenAgent,
+    senderLabel,
+    markReport = false,
 }: Props) {
     const tabId = useContext(TabIdContext);
     const [editing, setEditing] = useState<EditMode>(null);
@@ -481,6 +488,10 @@ function MessageItemBase({
     const hasVisibleText =
         msg.segments?.some((s) => (s.kind === "text" && s.text.trim().length > 0) || s.kind === "compact") ?? false;
     const hasCompact = msg.segments?.some((s) => s.kind === "compact") ?? false;
+    // 에이전트 패널: 마지막 글 = 에이전트가 메인 Claude에게 돌려준 보고
+    const lastTextIdx = markReport
+        ? (msg.segments ?? []).reduce((last, sg, i) => (sg.kind === "text" && sg.text.trim() ? i : last), -1)
+        : -1;
     // /compact의 답처럼 구분선뿐인 답변 — 다시 생성할 것이 없다
     const compactOnly = hasCompact && (msg.segments?.every((s) => s.kind === "compact") ?? false);
     const showRegenerate = !!onRegenerate && msg.role === "assistant" && !compactOnly;
@@ -500,7 +511,7 @@ function MessageItemBase({
                     {msg.role === "assistant" && (
                         <img src={claudeIcon} className={cx("senderIcon")} alt="" />
                     )}
-                    {msg.role === "user" ? "나" : "Claude"}
+                    {msg.role === "user" ? "나" : senderLabel ?? "Claude"}
                     {/* 0은 띄우지 않는다 — /compact·/cost처럼 모델이 답하지 않은 턴 */}
                     {msg.role === "user" && !!msg.inputTokens && (
                         <span className={cx("tokenBadge")}>{msg.inputTokens.toLocaleString()} tokens</span>
@@ -589,10 +600,15 @@ function MessageItemBase({
                                         seg.tool.name === QUESTION_TOOL ? (
                                             <QuestionCard tool={seg.tool} />
                                         ) : (
-                                            <ToolRow tool={seg.tool} defaultExpanded />
+                                            <ToolRow
+                                                tool={seg.tool}
+                                                defaultExpanded
+                                                onOpen={onOpenAgent && isAgentTool(seg.tool.name) ? () => onOpenAgent(seg.tool) : undefined}
+                                            />
                                         )
                                     ) : seg.text.trim() ? (
                                         <div className={cx("bubble", "markdown")}>
+                                            {markReport && i === lastTextIdx && <div className={cx("agentReportLabel")}>최종 보고</div>}
                                             <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
                                                 {seg.text}
                                             </ReactMarkdown>

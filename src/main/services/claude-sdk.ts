@@ -3,7 +3,9 @@ import type {
     forkSession,
     getSessionInfo,
     getSessionMessages,
+    getSubagentMessages,
     listSessions,
+    listSubagents,
     McpServerStatus,
     ModelInfo,
     Options,
@@ -35,6 +37,9 @@ interface SdkModule {
     }) => Query;
     // CLI 세션 기록(~/.claude/projects) — 터미널에서 한 대화도 포함된다
     listSessions: typeof listSessions;
+    // 에이전트(Agent 도구) 기록 — <세션>/subagents/agent-<id>.jsonl ("에이전트가 한 일" 패널)
+    listSubagents: typeof listSubagents;
+    getSubagentMessages: typeof getSubagentMessages;
     getSessionMessages: typeof getSessionMessages;
     // 없는 세션이면 undefined (getSessionMessages는 빈 배열이라 구분이 안 된다)
     getSessionInfo: typeof getSessionInfo;

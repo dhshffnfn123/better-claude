@@ -126,6 +126,27 @@ interface RateLimitWindow {
     receivedAt?: number; // 이 값을 받은 시각(epoch ms) — 앱을 다시 켜면 저장해 둔 마지막 값을 보여 준다
 }
 
+// "에이전트가 한 일" 패널을 여는 대상: 대화 속 Agent 호출(toolUseId) 또는 백그라운드 작업 id(= 에이전트 id).
+// agentType·description은 패널 머리에 쓸 것 (호출 입력에서 화면이 이미 안다)
+interface AgentRef {
+    toolUseId?: string;
+    agentId?: string;
+    agentType?: string;
+    description?: string;
+}
+
+type AgentViewResult =
+    | {
+          ok: true;
+          agentId: string;
+          status: "running" | "completed" | "failed" | "stopped" | "done";
+          messages: LoadedMessage[];
+          toolUses: number;
+          tokens?: number;
+          durationMs?: number;
+      }
+    | {ok: false; error: string; pending?: boolean};
+
 // 대화 갈라지기 결과 — 새 세션을 새 탭으로 연다
 type ForkResult = {ok: true; sessionId: string; title: string; cwd: string} | {ok: false; error: string};
 
@@ -390,6 +411,7 @@ interface Window {
         stopGeneration: (tabId: string) => Promise<void>;
         rewindFiles: (tabId: string, uuid: string, dryRun: boolean) => Promise<RewindFilesResult>;
         forkConversation: (tabId: string, replyUuid: string) => Promise<ForkResult>;
+        getAgentView: (tabId: string, ref: AgentRef) => Promise<AgentViewResult>;
         setPermissions: (tabId: string, allow: boolean) => Promise<void>;
         respondPermission: (id: string, allow: boolean, always?: boolean) => Promise<void>;
         answerQuestions: (id: string, answers: string[][]) => Promise<void>;
