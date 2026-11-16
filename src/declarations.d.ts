@@ -33,6 +33,17 @@ interface CompactEvent extends CompactInfo {
     error?: string;
 }
 
+// 답변 속 그림 경로 확인 요청 (images:resolve). since: 이 시각(ms) 뒤에 바뀐 파일만, infoOnly: 경로만 확인
+interface ImageRef {
+    ref: string;
+    since?: number;
+    infoOnly?: boolean;
+}
+
+type ResolvedImage =
+    | {ref: string; since?: number; infoOnly?: boolean; ok: true; path: string; name: string; size: number; thumb?: string; full?: boolean}
+    | {ref: string; since?: number; infoOnly?: boolean; ok: false};
+
 // 세션 기록에서 복원한 메시지
 interface LoadedMessage {
     role: "user" | "assistant";
@@ -42,11 +53,22 @@ interface LoadedMessage {
     // "N tokens" 배지 — 기록의 응답별 usage로 계산 (내 메시지: 그 턴의 입력, 답변: 그 턴의 출력)
     inputTokens?: number;
     outputTokens?: number;
+    replyUuid?: string; // 답변: 그 답변의 마지막 기록 항목 (여기까지 새 탭으로)
+    copied?: boolean; // 갈라낸 대화로 복사된 메시지 — 파일 되돌리기 기록이 없다
     segments?: (
         | {kind: "text"; text: string}
         | {
               kind: "tool";
-              tool: {id: string; name: string; input: unknown; status: "done" | "error"; resultPreview?: string};
+              tool: {
+                  id: string;
+                  name: string;
+                  input: unknown;
+                  status: "done" | "error";
+                  resultPreview?: string;
+                  images?: string[]; // 도구 결과에 든 그림 (data URL)
+                  imagesOmitted?: number; // 오래돼 싣지 않은 그림 수
+                  startedAt?: number;
+              };
           }
         | ({kind: "compact"} & CompactInfo)
     )[];
@@ -103,6 +125,9 @@ interface RateLimitWindow {
     status?: string; // allowed, allowed_warning, rejected
     receivedAt?: number; // 이 값을 받은 시각(epoch ms) — 앱을 다시 켜면 저장해 둔 마지막 값을 보여 준다
 }
+
+// 대화 갈라지기 결과 — 새 세션을 새 탭으로 연다
+type ForkResult = {ok: true; sessionId: string; title: string; cwd: string} | {ok: false; error: string};
 
 interface RewindFilesResult {
     canRewind: boolean;
@@ -207,6 +232,8 @@ interface FileView {
     text?: string;
     truncated?: boolean;
     binary?: boolean;
+    image?: boolean; // 그림 파일 — images:read로 받아 그린다 (svg는 text도 온다)
+    mime?: string;
     missing?: boolean;
     error?: string;
     size?: number;
@@ -323,7 +350,7 @@ interface TabEventMap {
     error: ChatNoticeData;
     usage: {inputTokens: number; outputTokens: number};
     toolUse: {id: string; name: string; input: unknown; parentToolUseId?: string};
-    toolResult: {id: string; isError: boolean; content: string; parentToolUseId?: string};
+    toolResult: {id: string; isError: boolean; content: string; images?: string[]; parentToolUseId?: string};
     turnUuid: {uuid: string}; // 방금 보낸 사용자 메시지의 uuid (파일 되돌리기 기준점)
     turnStart: undefined; // 백그라운드 작업이 끝나 CLI가 스스로 시작한 턴
     permissionRequest: PermissionRequestData;
@@ -337,6 +364,7 @@ interface TabEventMap {
     changedFiles: ChangedFilesState;
     session: {sessionId: string}; // 새 대화에 세션 ID가 정해졌다
     compact: CompactEvent; // 대화 압축 진행
+    replyUuid: {uuid: string}; // 지금 답변의 마지막 기록 항목 (답변·도구 결과마다 갱신)
 }
 
 type TabEventName = keyof TabEventMap;
@@ -361,6 +389,7 @@ interface Window {
         ) => Promise<void>;
         stopGeneration: (tabId: string) => Promise<void>;
         rewindFiles: (tabId: string, uuid: string, dryRun: boolean) => Promise<RewindFilesResult>;
+        forkConversation: (tabId: string, replyUuid: string) => Promise<ForkResult>;
         setPermissions: (tabId: string, allow: boolean) => Promise<void>;
         respondPermission: (id: string, allow: boolean, always?: boolean) => Promise<void>;
         answerQuestions: (id: string, answers: string[][]) => Promise<void>;
@@ -381,6 +410,8 @@ interface Window {
         openInEditor: (tabId: string, raw: string) => Promise<EditorTarget>;
         listDir: (tabId: string, dir: string) => Promise<DirListing | null>;
         readFileForView: (tabId: string, path: string) => Promise<FileView>;
+        resolveImages: (tabId: string, refs: ImageRef[]) => Promise<ResolvedImage[]>;
+        readImage: (tabId: string, path: string) => Promise<string | null>;
         revealFile: (tabId: string, path: string) => Promise<void>;
         gitStatus: (tabId: string) => Promise<GitStatusResult>;
         gitDiff: (tabId: string, path: string) => Promise<GitDiffResult>;

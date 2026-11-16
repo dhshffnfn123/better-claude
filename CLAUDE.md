@@ -143,6 +143,26 @@ Things that are load-bearing:
   session's first entry there is no fork point: a fresh session is started and the old one is
   deleted once the new session id appears (`replaceFirst`); if no new session appears (failure/stop)
   `restoreReplaceFirst()` puts the old session back. Files the discarded reply edited are not rewound.
+- **Any earlier point: "여기서 다시" (user messages) and "여기까지 새 탭으로" (replies).** "여기서 다시" is
+  the edit path generalised: an inline editor on that message (`MessageItem` edit mode `rewrite`; the
+  messages below are dimmed while it is open), then `rewriteFrom` drops it and everything below and sends
+  with `replaceUuid` = its uuid → `prepareReplace` → `resumeSessionAt` (verified on an earlier message: the
+  model forgot the later turns, and `getSessionMessages` then shows only the new branch — the old one stays
+  in the file, unreachable). Nothing changes until 보내기, so there is no half-rewound state to persist.
+  "파일도 … 되돌리기" (off by default; the editor dry-runs `rewindFiles` to count files, hidden when 0)
+  runs **before** the send: rewriting the first message starts a new session and deletes the old one,
+  checkpoints included. Images are resent from `imagePayloads` (kept on live user messages — preview URLs
+  can't be resent) or parsed from a loaded message's data URLs. Fork = `chat:fork` → `forkSession(sid,
+  {upToMessageId: replyUuid, title: "… (갈래)"})`; `replyUuid` = the reply's last transcript entry — live
+  from every main-chain assistant / tool_result message's `uuid` (`chat:reply_uuid`, applied at turn end;
+  stream uuids equal transcript uuids — verified), loaded from `sessionToMessages`. The fork opens in a new
+  tab right after its source (`openFork` in the shell, settings inherited) and takes the session's "항상
+  허용" grants along. **Forks have no file checkpoints** (`rewindFiles` → "No file checkpoint found for this
+  message." — verified). Each copied transcript line carries `forkedFrom`, but `getSessionMessages` drops it,
+  so the app records its own forks in `userData/fork-points.json` (`{forkSid: {until}}`) and marks the copied
+  messages `copied` (no 파일 되돌리기); for forks made elsewhere `explainRewind` turns the CLI error into a
+  Korean explanation. Both actions are hidden while responding and on messages before the last compaction
+  divider (their entries were summarized away).
 - **The input stream must stay open for the whole turn.** Closing it early means the CLI cannot ask
   for anything mid-turn, so permission requests are auto-denied.
 - **`pathToClaudeCodeExecutable: resolveClaudePath()`.** Without it the SDK runs its own bundled
@@ -574,6 +594,29 @@ Open/width/"바뀐 파일만" live in `localStorage` (`filesPanel.*`). Under 760
   `webstorm`/`idea` scripts do: `open -na <App>/Contents/MacOS/<exe> --args --line N <file>`. `:N`,
   `:N:C` and `#LN` become the line; only existing regular files open (viewed, never executed).
   `<html class="meta-down">` (`meta-key.ts`) turns the underline solid while ⌘ is held.
+- **Images in replies** (`useReplyImages` / `ImageStrip` / `MarkdownImage` in `MessageItem.tsx`,
+  `src/renderer/image-refs.ts`, main `src/main/services/images.ts`). Thumbnails under a **tool row**:
+  images inside the tool result (a Read of an image returns `[{type: "image", source: {type: "base64",
+  media_type, data}}]` — verified; MCP's `{type: "image", data, mimeType}` too; sent as
+  `chat:tool_result.images`, ≤4), image files written by Write/Edit, and for other tools (Bash…) image
+  paths in their input/output **whose mtime is after the tool started** (`startedAt` − 2 s; loaded
+  sessions use the transcript entry time) — so `ls *.png` shows nothing. Under a **text bubble**: image
+  paths the text mentions (inline code, links, bare paths — a Korean particle may follow the extension:
+  "chart.png에"; fenced code is skipped). `![](path)` renders in place; web images become links (the CSP
+  blocks them). Each image shows once per reply, tools first — it lands under the command that made it,
+  not under "chart.png를 만들겠습니다". Paths resolve in main (`images:resolve`, ≤24 per call; the renderer
+  caches hits 20 s and never misses, since the file often appears after the text) and resolve again when
+  the turn ends (`isLive`). An image = image extension **and** matching magic bytes (svg: `<svg` in the
+  first 4 KB); any location (Claude saves to /tmp, the Desktop…) — only image bytes are ever read.
+  Thumbnails ≤1.5 MB go as is, larger ones are shrunk to 640 px with `nativeImage` (fallback: the original
+  up to 8 MB); clicking loads the original (`images:read`: paths resolved for this tab or inside the files
+  panel's scope, ≤30 MB) into the existing lightbox. Tool-result previews now join text blocks instead of
+  `JSON.stringify`-ing the array (the image base64 used to be the preview). Loaded conversations keep
+  result images for the newest 40 tools / 40 M chars (`limitLoadedImages`); older ones show a count. Files
+  panel: image files render as images (size, dimensions; click toggles actual size only when shrunk), svg
+  has 그림/소스. SVG is only drawn through `<img>` (no scripts run there), never inline in the DOM. A
+  checkerboard sits behind images (`--c-img-check-a/b`, light in both themes so dark strokes on a
+  transparent background stay visible).
 - **Copy buttons go through main** (`clipboard:write` → Electron `clipboard`): `navigator.clipboard`
   rejects when the document isn't focused (e.g. DevTools focused) — verified.
 - **Code highlighting** is shared (`src/renderer/highlight.ts`). Chat fences render through the `pre`

@@ -23,6 +23,7 @@ const TAB_EVENTS = {
     changedFiles: "files:changed",
     session: "chat:session",
     compact: "chat:compact",
+    replyUuid: "chat:reply_uuid",
 } as const;
 
 contextBridge.exposeInMainWorld("electronAPI", {
@@ -52,6 +53,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
         ipcRenderer.invoke("chat:send", tabId, message, images ?? [], replaceUuid),
     stopGeneration: (tabId: string) => ipcRenderer.invoke("chat:stop", tabId),
     rewindFiles: (tabId: string, uuid: string, dryRun: boolean) => ipcRenderer.invoke("chat:rewind_files", tabId, uuid, dryRun),
+    // 이 답변까지를 새 대화로 복사한다 (원래 대화는 그대로) — 렌더러가 새 탭으로 연다
+    forkConversation: (tabId: string, replyUuid: string) => ipcRenderer.invoke("chat:fork", tabId, replyUuid),
     setPermissions: (tabId: string, allow: boolean) => ipcRenderer.invoke("chat:set_permissions", tabId, allow),
     // 권한·질문 답은 요청 id로 찾아간다 (id는 탭끼리 겹치지 않는다)
     // always: CLI가 제안한 규칙을 이 대화 동안 항상 허용
@@ -75,6 +78,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
     openInEditor: (tabId: string, raw: string) => ipcRenderer.invoke("editor:open", tabId, raw),
     listDir: (tabId: string, dir: string) => ipcRenderer.invoke("files:list_dir", tabId, dir),
     readFileForView: (tabId: string, path: string) => ipcRenderer.invoke("files:read", tabId, path),
+    // 답변 속 그림: 경로 확인 + 썸네일, 원본 (main: images:resolve / images:read)
+    resolveImages: (tabId: string, refs: object[]) => ipcRenderer.invoke("images:resolve", tabId, refs),
+    readImage: (tabId: string, path: string) => ipcRenderer.invoke("images:read", tabId, path),
     revealFile: (tabId: string, path: string) => ipcRenderer.invoke("files:reveal", tabId, path),
     // "Git 변경" 보기: 마지막 커밋 이후 바뀐 파일, 파일 하나의 차이
     gitStatus: (tabId: string) => ipcRenderer.invoke("git:status", tabId),

@@ -71,6 +71,10 @@
   --c-find-match-text: #2a2a22;
   --c-find-current-bg: #f0a43a;
   --c-find-current-text: #1b1d18;
+
+  /* 그림 뒤 체크무늬 — 투명한 부분이 보이게. 다크에서도 밝게 둔다(투명 배경의 검은 글씨·선이 묻히지 않게) */
+  --c-img-check-a: #fff;
+  --c-img-check-b: #ebe9e2;
   --c-accent-soft: #f3ead0;
   --c-accent-ink: #3a3d35;
   --c-on-accent: #fff;
@@ -327,6 +331,8 @@
     --c-find-match-text: #1b1d18;
     --c-find-current-bg: #ff8f4d;
     --c-find-current-text: #1b1d18;
+    --c-img-check-a: #d6d4cc;
+    --c-img-check-b: #c6c4bb;
     --c-accent-soft: #3d3720;
     --c-accent-ink: #1b1d18;
     --c-on-accent: #1b1d18;

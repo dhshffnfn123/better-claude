@@ -1,5 +1,6 @@
 import type {
     deleteSession,
+    forkSession,
     getSessionInfo,
     getSessionMessages,
     listSessions,
@@ -38,6 +39,8 @@ interface SdkModule {
     // 없는 세션이면 undefined (getSessionMessages는 빈 배열이라 구분이 안 된다)
     getSessionInfo: typeof getSessionInfo;
     deleteSession: typeof deleteSession;
+    // 이 지점까지를 새 세션으로 복사 ("여기까지 새 탭으로") — 파일 되돌리기 기록은 복사하지 않는다
+    forkSession: typeof forkSession;
 }
 
 let cached: SdkModule | null = null;

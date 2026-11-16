@@ -8,6 +8,7 @@ import {readJsonFile, writeJsonFile} from "./main/services/json-store";
 import {expandPathForChildProcesses} from "./main/services/path-expander";
 import {loadSdk} from "./main/services/claude-sdk";
 import {getGitDiff, getGitStatus} from "./main/services/git-changes";
+import {imageDataUrl, imageFile, imageThumbnail, sniffImage, toolResultImages} from "./main/services/images";
 import {openInIde, pickIde} from "./main/services/jetbrains";
 import type {GitChange, GitStatusResult} from "./main/services/git-changes";
 import type {
@@ -95,6 +96,8 @@ interface ChatTab {
     // "Git 변경" 보기의 마지막 결과와 진행 중인 요청
     lastGit: {cwd: string; root: string; initial: boolean; byPath: Map<string, GitChange>} | null;
     gitInFlight: {cwd: string; promise: Promise<GitStatusResult>} | null;
+    // 답변 속 그림으로 확인해 준 파일 (images:resolve) — 원본 보기(images:read)는 이것과 작업 파일 패널 범위만 읽는다
+    imagePaths: Set<string>;
 }
 
 const tabs = new Map<string, ChatTab>();
@@ -123,6 +126,7 @@ function createTab(id: string, sender: Electron.WebContents): ChatTab {
         finishedOutputFiles: new Map(),
         lastGit: null,
         gitInFlight: null,
+        imagePaths: new Set(),
     };
 }
 
@@ -903,6 +907,45 @@ function saveClearedAt(sid: string, at: number) {
     }
 }
 
+// 앱이 갈라낸 대화(forkSession)와 갈라낸 지점. 갈라낸 대화는 파일 되돌리기 기록을 가져오지 않아서
+// 복사된 메시지로는 파일을 되돌릴 수 없다(실측: "No file checkpoint found for this message."). 기록 파일에는
+// 항목마다 forkedFrom이 남지만 getSessionMessages가 넘겨주지 않아(확인함) 앱이 직접 기억한다 —
+// 복사된 메시지에서 "파일 되돌리기"를 숨기려고. userData/fork-points.json = {갈라낸 세션 id: {until, at}}
+// (until = 복사된 마지막 항목의 uuid), 최근 200개.
+const FORK_KEEP = 200;
+interface ForkPoint {
+    until: string;
+    at: number;
+}
+let forkPointsCache: Record<string, ForkPoint> | null = null;
+
+function forkPointsFile(): string {
+    return path.join(app.getPath("userData"), "fork-points.json");
+}
+
+function forkPoints(): Record<string, ForkPoint> {
+    if (!forkPointsCache) {
+        const raw = readJsonFile<unknown>(forkPointsFile(), {});
+        forkPointsCache = {};
+        if (raw && typeof raw === "object") {
+            for (const [sid, v] of Object.entries(raw as Record<string, unknown>)) {
+                const fp = v as Partial<ForkPoint> | null;
+                if (fp && typeof fp.until === "string" && typeof fp.at === "number") forkPointsCache[sid] = {until: fp.until, at: fp.at};
+            }
+        }
+    }
+    return forkPointsCache;
+}
+
+function saveForkPoints(map: Record<string, ForkPoint>) {
+    forkPointsCache = Object.fromEntries(Object.entries(map).sort((a, b) => b[1].at - a[1].at).slice(0, FORK_KEEP));
+    try {
+        writeJsonFile(forkPointsFile(), forkPointsCache);
+    } catch (e) {
+        console.error("[fork] 갈라낸 지점 저장 실패", e);
+    }
+}
+
 // 세션 기록 항목의 시각. SDK 타입에는 없지만 실제 항목에는 timestamp(ISO 문자열)가 들어 있다(확인함).
 // 이걸 안 쓰면 변경 내역의 시각이 전부 "대화를 연 시각"으로 찍혔다(재현됨). 없으면 0 = 모름.
 function entryTime(e: unknown): number {
@@ -1096,6 +1139,12 @@ function readFileForView(tab: ChatTab, p: unknown) {
         } finally {
             fs.closeSync(fd);
         }
+        // 그림 파일 — 화면이 images:read로 그림을 받아 그린다. svg는 글자이기도 해서 소스도 같이 준다.
+        const mime = sniffImage(buf.subarray(0, Math.min(len, 4096)), p);
+        if (mime === "image/svg+xml") {
+            return {image: true, mime, size: st.size, text: buf.toString("utf8"), truncated: st.size > MAX_VIEW_BYTES};
+        }
+        if (mime) return {image: true, mime, size: st.size};
         // 앞부분에 NUL 바이트가 있으면 이진 파일로 본다
         if (buf.subarray(0, Math.min(len, 8000)).includes(0)) return {binary: true, size: st.size};
         return {text: buf.toString("utf8"), truncated: st.size > MAX_VIEW_BYTES, size: st.size};
@@ -1136,6 +1185,14 @@ function clearFinishedTasks(tab: ChatTab) {
 
 // 셸 작업을 백그라운드로 돌리면 tool_result에 출력 파일 경로가 온다(실측)
 const BG_OUTPUT_RE = /background with ID: ([\w-]+)\. Output is being written to: (\S+?\.output)/;
+
+// 화면에 보일 도구 결과 글. 내용 블록 배열이면 글 블록만 — 예전에는 배열을 JSON째 보여서
+// 그림(Read로 연 그림 등)의 base64가 미리보기에 찍혔다.
+function toolResultDisplayText(content: unknown): string {
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) return toolResultText(content).trim();
+    return JSON.stringify(content ?? "");
+}
 
 function toolResultText(content: unknown): string {
     if (typeof content === "string") return content;
@@ -1724,6 +1781,9 @@ interface LoadedTool {
     input: unknown;
     status: "done" | "error";
     resultPreview?: string;
+    images?: string[]; // 도구 결과에 든 그림 (data URL)
+    imagesOmitted?: number; // 오래돼 싣지 않은 그림 수 (LOADED_IMAGE_BUDGET)
+    startedAt?: number; // 도구를 부른 시각 — 이 도구가 만든 그림을 가려낼 때(파일 수정 시각과 비교)
 }
 
 // compact: 대화 압축(/compact 또는 컨텍스트가 차서 자동) — 앞 대화가 이 요약으로 바뀌었다
@@ -1748,6 +1808,8 @@ interface LoadedMessage {
     inputTokens?: number;
     outputTokens?: number;
     segments?: LoadedSegment[];
+    replyUuid?: string; // 답변: 그 답변의 마지막 기록 항목 — "여기까지 새 탭으로"(forkSession)의 지점
+    copied?: boolean; // 갈라낸 대화로 복사된 메시지 — 파일 되돌리기 기록이 없다
 }
 
 interface ContentBlock {
@@ -1814,6 +1876,8 @@ function sessionToMessages(entries: SessionMessage[]): LoadedMessage[] {
     const countedIds = new Set<string>();
     // 방금 만든, 아직 요약만 든 답변 — 바로 뒤에 "/compact" 명령이 오면 명령을 그 앞에 놓는다
     let compactReply: LoadedMessage | null = null;
+    // 열린 답변에 속한 마지막 기록 항목(답변·도구 결과) — 그 답변까지 갈라낼 때 쓴다
+    let replyLast: string | undefined;
 
     const closeAssistant = () => {
         if (assistant) {
@@ -1822,8 +1886,10 @@ function sessionToMessages(entries: SessionMessage[]): LoadedMessage[] {
                 .map((seg) => seg.text)
                 .join("\n\n");
             if (turnTokens.output > 0) assistant.outputTokens = turnTokens.output;
+            if (replyLast) assistant.replyUuid = replyLast;
             out.push(assistant);
         }
+        replyLast = undefined;
         if (turnUser && turnTokens.input > 0) turnUser.inputTokens = turnTokens.input;
         assistant = null;
         turnTokens = {input: 0, output: 0};
@@ -1848,12 +1914,14 @@ function sessionToMessages(entries: SessionMessage[]): LoadedMessage[] {
                 segments: [{kind: "compact", trigger: "auto", summary: cleanCompactSummary(text) || text.trim(), restored: true}],
             };
             compactReply = assistant;
+            replyLast = entry.uuid;
             continue;
         }
 
         if (entry.type === "assistant") {
             compactReply = null;
             if (!assistant) assistant = {role: "assistant", content: "", segments: []};
+            replyLast = entry.uuid;
             const apiMessage = entry.message as {id?: string; usage?: {input_tokens?: number; output_tokens?: number}} | undefined;
             if (apiMessage?.id && apiMessage.usage && !countedIds.has(apiMessage.id)) {
                 countedIds.add(apiMessage.id);
@@ -1867,7 +1935,8 @@ function sessionToMessages(entries: SessionMessage[]): LoadedMessage[] {
                     if (last?.kind === "text") last.text += b.text;
                     else segs.push({kind: "text", text: b.text});
                 } else if (b.type === "tool_use" && b.id && b.name) {
-                    const tool: LoadedTool = {id: b.id, name: b.name, input: b.input ?? {}, status: "done"};
+                    const at = entryTime(entry);
+                    const tool: LoadedTool = {id: b.id, name: b.name, input: b.input ?? {}, status: "done", startedAt: at || undefined};
                     tools.set(b.id, tool);
                     segs.push({kind: "tool", tool});
                 }
@@ -1884,14 +1953,15 @@ function sessionToMessages(entries: SessionMessage[]): LoadedMessage[] {
                 hasToolResult = true;
                 const tool = tools.get(b.tool_use_id);
                 if (tool) {
-                    const text = typeof b.content === "string" ? b.content : JSON.stringify(b.content ?? "");
                     tool.status = b.is_error ? "error" : "done";
-                    tool.resultPreview = toolResultPreview(text);
+                    tool.resultPreview = toolResultPreview(toolResultDisplayText(b.content));
+                    tool.images = toolResultImages(b.content);
                 }
             }
         }
         if (hasToolResult) {
             compactReply = null;
+            if (assistant) replyLast = entry.uuid;
             continue;
         }
 
@@ -1922,7 +1992,29 @@ function sessionToMessages(entries: SessionMessage[]): LoadedMessage[] {
         out.push(turnUser);
     }
     closeAssistant();
+    limitLoadedImages([...tools.values()]);
     return out;
+}
+
+// 불러온 대화에 싣는 도구 결과 그림은 최근 것부터 이만큼만 — 스크린샷을 수십 장 찍은 대화를 열 때
+// 수십 MB를 한꺼번에 화면으로 보내지 않게. 넘는 것은 개수만 남긴다.
+const LOADED_IMAGE_BUDGET = {tools: 40, chars: 40_000_000};
+
+function limitLoadedImages(tools: LoadedTool[]) {
+    let count = 0;
+    let chars = 0;
+    for (let i = tools.length - 1; i >= 0; i--) {
+        const t = tools[i];
+        if (!t.images) continue;
+        const size = t.images.reduce((n, u) => n + u.length, 0);
+        if (count < LOADED_IMAGE_BUDGET.tools && chars + size <= LOADED_IMAGE_BUDGET.chars) {
+            count += 1;
+            chars += size;
+        } else {
+            t.imagesOmitted = t.images.length;
+            t.images = undefined;
+        }
+    }
 }
 
 function handleSdkMessage(tab: ChatTab, msg: SDKMessage, notify: (n: ChatNotice) => void, stderrTail: () => string) {
@@ -1989,6 +2081,8 @@ function handleSdkMessage(tab: ChatTab, msg: SDKMessage, notify: (n: ChatNotice)
                 });
             }
         }
+        // 이 답변의 마지막 기록 항목 — 스트림의 uuid가 기록 항목 uuid와 같다(확인함). "여기까지 새 탭으로"
+        if (!parentToolUseId && typeof msg.uuid === "string") send(tab, "chat:reply_uuid", {uuid: msg.uuid});
         const usage = msg.message?.usage;
         // 서브에이전트의 토큰 수로 진행 표시가 덮이지 않게 본 대화 것만 보낸다
         if (usage && !parentToolUseId) {
@@ -2014,16 +2108,18 @@ function handleSdkMessage(tab: ChatTab, msg: SDKMessage, notify: (n: ChatNotice)
             tool_use_id?: string;
         }[];
         if (!Array.isArray(blocks)) return;
+        const replyUuid = (msg as {uuid?: unknown}).uuid;
+        if (!parentToolUseId && typeof replyUuid === "string" && blocks.some((b) => b.type === "tool_result")) {
+            send(tab, "chat:reply_uuid", {uuid: replyUuid});
+        }
         for (const block of blocks) {
             if (block.type === "tool_result" && block.tool_use_id) {
-                const raw =
-                    typeof block.content === "string"
-                        ? block.content
-                        : JSON.stringify(block.content ?? "");
                 send(tab, "chat:tool_result", {
                     id: block.tool_use_id,
                     isError: !!block.is_error,
-                    content: toolResultPreview(raw),
+                    content: toolResultPreview(toolResultDisplayText(block.content)),
+                    // 서브에이전트 도구는 진행 패널에만 보이므로 그림을 싣지 않는다
+                    images: parentToolUseId ? undefined : toolResultImages(block.content),
                     parentToolUseId,
                 });
             }
@@ -2282,6 +2378,58 @@ ipcMain.handle("files:clear_changed", (event, tabId: string) => {
 });
 ipcMain.handle("files:list_dir", (event, tabId: string, dir: string) => listDir(tabFor(event, tabId), dir));
 ipcMain.handle("files:read", (event, tabId: string, p: string) => readFileForView(tabFor(event, tabId), p));
+
+// ── 답변 속 그림 ──
+// 화면이 답변 글·도구 입출력에서 찾은 그림 경로를 확인해 썸네일을 준다. since가 있으면 그 뒤에 바뀐 파일만
+// (Bash 명령에 나온 그림 중 그 명령이 만든 것만 — 이미 있던 그림을 ls로 훑은 것까지 띄우지 않게).
+// infoOnly는 경로만 확인한다(같은 그림을 한 답변에 두 번 띄우지 않으려고).
+interface ImageRefReq {
+    ref: string;
+    since?: number;
+    infoOnly?: boolean;
+}
+
+const MAX_IMAGE_REFS = 24;
+const MAX_TAB_IMAGE_PATHS = 500;
+
+function rememberImagePath(tab: ChatTab, p: string) {
+    tab.imagePaths.delete(p);
+    tab.imagePaths.add(p);
+    if (tab.imagePaths.size > MAX_TAB_IMAGE_PATHS) {
+        const oldest = tab.imagePaths.values().next().value;
+        if (oldest !== undefined) tab.imagePaths.delete(oldest);
+    }
+}
+
+ipcMain.handle("images:resolve", async (event, tabId: string, refs: unknown) => {
+    const tab = tabFor(event, tabId);
+    const list = Array.isArray(refs) ? (refs as ImageRefReq[]).slice(0, MAX_IMAGE_REFS) : [];
+    return Promise.all(
+        list.map(async (r) => {
+            const ref = String(r?.ref ?? "");
+            const since = typeof r?.since === "number" ? r.since : undefined;
+            const infoOnly = !!r?.infoOnly;
+            const fail = {ref, since, infoOnly, ok: false as const};
+            const loc = parseFileRef(tab, ref);
+            const img = loc ? await imageFile(loc.abs) : null;
+            if (!img || (since !== undefined && img.mtime < since)) return fail;
+            rememberImagePath(tab, img.path);
+            const base = {ref, since, infoOnly, ok: true as const, path: img.path, name: path.basename(img.path), size: img.size};
+            if (infoOnly) return base;
+            const thumb = await imageThumbnail(img).catch(() => null);
+            return thumb ? {...base, thumb: thumb.url, full: thumb.full} : base;
+        })
+    );
+});
+
+// 원본 그림 (확대 창, 작업 파일 패널) — 답변에서 확인해 준 그림이나 작업 파일 패널에서 볼 수 있는 파일만
+ipcMain.handle("images:read", async (event, tabId: string, p: unknown): Promise<string | null> => {
+    const tab = tabFor(event, tabId);
+    if (typeof p !== "string" || !path.isAbsolute(p)) return null;
+    if (!tab.imagePaths.has(p) && !canViewPath(tab, p)) return null;
+    const img = await imageFile(p);
+    return img ? imageDataUrl(img).catch(() => null) : null;
+});
 ipcMain.handle("files:reveal", (event, tabId: string, p: string) => {
     if (canViewPath(tabFor(event, tabId), p) && fs.existsSync(p)) shell.showItemInFolder(p);
 });
@@ -2496,13 +2644,19 @@ ipcMain.handle("chat:get_rate_limits", () => rateLimitList());
 
 // 이 사용자 메시지를 보내기 직전 상태로 Claude가 고친 파일을 되돌린다. 대화 내용은 그대로다.
 // 백업은 세션 기록에 남아 있어 프로세스가 끝난 뒤에도 되돌릴 수 있다(실측).
+// 갈라낸 대화로 복사된 메시지(터미널에서 갈라낸 것 포함)나 기록이 정리된 메시지는 되돌릴 기록이 없다
+function explainRewind(r: RewindFilesResult): RewindFilesResult {
+    if (r.canRewind || !r.error || !/no file checkpoint/i.test(r.error)) return r;
+    return {...r, error: "이 메시지의 파일 기록이 없습니다 (갈라낸 대화로 복사된 메시지이거나, 기록이 정리됐습니다)"};
+}
+
 ipcMain.handle("chat:rewind_files", async (event, tabId: string, uuid: string, dryRun: boolean): Promise<RewindFilesResult> => {
     const tab = tabFor(event, tabId);
     const live = tab.live;
     if (live?.turnActive) return {canRewind: false, error: "응답이 끝난 뒤에 되돌릴 수 있습니다"};
     if (!tab.sessionId) return {canRewind: false, error: "세션 정보가 없습니다"};
     const s = live && !live.inputEnded ? live : null;
-    if (s) return s.q.rewindFiles(uuid, {dryRun});
+    if (s) return explainRewind(await s.q.rewindFiles(uuid, {dryRun}));
 
     const claudePath = resolveClaudePath();
     if (!claudePath) return {canRewind: false, error: "Claude CLI를 찾을 수 없습니다"};
@@ -2514,7 +2668,7 @@ ipcMain.handle("chat:rewind_files", async (event, tabId: string, uuid: string, d
         enableFileCheckpointing: true,
     });
     try {
-        return await withTimeout(idle.q.rewindFiles(uuid, {dryRun}), 20000);
+        return explainRewind(await withTimeout(idle.q.rewindFiles(uuid, {dryRun}), 20000));
     } catch (e) {
         return {canRewind: false, error: (e as Error).message};
     } finally {
@@ -2778,11 +2932,50 @@ ipcMain.handle("sessions:list", async () => {
 
 ipcMain.handle("sessions:messages", async (_event, sid: string, cwd?: string) => {
     const {getSessionMessages} = await loadSdk();
-    return sessionToMessages(await getSessionMessages(sid, {dir: cwd || undefined}));
+    const list = sessionToMessages(await getSessionMessages(sid, {dir: cwd || undefined}));
+    // 앱이 갈라낸 대화면 복사된 메시지까지 표시 — 그 메시지들로는 파일을 되돌릴 수 없다
+    const until = forkPoints()[sid]?.until;
+    const end = until ? list.findIndex((m) => m.uuid === until || m.replyUuid === until) : -1;
+    for (let i = 0; i <= end; i++) list[i].copied = true;
+    return list;
+});
+
+// ── 대화 갈라지기 ── 이 답변까지를 새 세션으로 복사한다(원래 대화는 그대로). 렌더러가 새 탭으로 연다.
+// 새 세션은 파일 되돌리기 기록 없이 시작하고(SDK), "항상 허용"한 규칙은 같은 대화를 잇는 것이라 함께 옮긴다.
+ipcMain.handle("chat:fork", async (event, tabId: string, replyUuid: unknown) => {
+    const tab = tabFor(event, tabId);
+    const sid = tab.sessionId;
+    if (!sid) return {ok: false, error: "아직 저장된 대화가 아닙니다"};
+    if (typeof replyUuid !== "string" || !replyUuid) return {ok: false, error: "갈라낼 지점이 없습니다"};
+    try {
+        const sdk = await loadSdk();
+        const entries = await sdk.getSessionMessages(sid);
+        if (!entries.some((e) => e.uuid === replyUuid)) {
+            return {ok: false, error: "이 지점을 대화 기록에서 찾지 못했습니다 (대화를 요약한 이전이거나 기록이 바뀌었습니다)"};
+        }
+        const info = await sdk.getSessionInfo(sid).catch(() => undefined);
+        const base = (info?.customTitle || info?.summary || info?.firstPrompt || "대화").replace(/\s*\((?:갈래|fork)\)\s*$/i, "").trim();
+        const title = `${base.length > 60 ? base.slice(0, 59) + "…" : base} (갈래)`;
+        const {sessionId} = await sdk.forkSession(sid, {upToMessageId: replyUuid, title});
+        const copied = await sdk.getSessionMessages(sessionId);
+        const until = copied[copied.length - 1]?.uuid;
+        if (until) saveForkPoints({...forkPoints(), [sessionId]: {until, at: Date.now()}});
+        const g = grantsBySession.get(sid);
+        if (g) grantsBySession.set(sessionId, {tools: [...g.tools], directories: [...g.directories], acceptEdits: g.acceptEdits});
+        return {ok: true, sessionId, title, cwd: tab.cwd};
+    } catch (e) {
+        console.error("[fork] 대화 갈라내기 실패", e);
+        return {ok: false, error: (e as Error).message};
+    }
 });
 
 ipcMain.handle("sessions:delete", async (_event, sid: string, cwd?: string) => {
     grantsBySession.delete(sid);
+    if (forkPoints()[sid]) {
+        const rest = {...forkPoints()};
+        delete rest[sid];
+        saveForkPoints(rest);
+    }
     // 이 대화를 열어 둔 탭은 새 대화로 비운다 (화면은 렌더러가 비운다)
     for (const tab of tabs.values()) {
         if (tab.sessionId === sid) resetConversation(tab);

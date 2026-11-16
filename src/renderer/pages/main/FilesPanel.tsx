@@ -224,6 +224,56 @@ function formatTime(at: number): string {
 // ── 파일 보기: 내용 / 이 대화에서 Claude가 한 수정 / 마지막 커밋 이후 Git 변경 ──
 type ViewerTab = "content" | "claude" | "git";
 
+function formatBytes(n: number): string {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(n < 10 * 1024 ? 1 : 0)} KB`;
+    return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+// 그림 파일 — 패널 폭에 맞춰 보여 준다. 패널보다 큰 그림만 누르면 실제 크기(스크롤)와 오간다.
+function ImageView({tabId, filePath, size, version}: {tabId: string; filePath: string; size?: number; version: string}) {
+    const [src, setSrc] = useState<string | null | undefined>(undefined);
+    // shrunk: 패널에 맞추느라 줄여 그렸다 (작은 그림은 원래 크기 그대로라 오갈 것이 없다)
+    const [dims, setDims] = useState<{w: number; h: number; shrunk: boolean} | null>(null);
+    const [actual, setActual] = useState(false);
+    useEffect(() => {
+        let alive = true;
+        setSrc(undefined);
+        setDims(null);
+        setActual(false);
+        void window.electronAPI.readImage(tabId, filePath).then((u) => alive && setSrc(u));
+        return () => {
+            alive = false;
+        };
+    }, [tabId, filePath, version]);
+    if (src === undefined) return <div className={cx("viewerNotice")}>불러오는 중…</div>;
+    if (src === null) return <div className={cx("viewerNotice")}>그림을 불러올 수 없습니다 (너무 크거나 손상된 파일)</div>;
+    const zoomable = !!dims?.shrunk;
+    return (
+        <>
+            <div className={cx("imageViewMeta")}>
+                {[dims && `${dims.w} × ${dims.h}`, size != null && formatBytes(size)].filter(Boolean).join(" · ")}
+                {zoomable && (
+                    <span className={cx("imageViewHint")}>{actual ? "실제 크기 · 누르면 패널에 맞춥니다" : "줄여서 보는 중 · 누르면 실제 크기"}</span>
+                )}
+            </div>
+            <div className={cx("imageViewScroll")}>
+                <img
+                    className={cx("imageViewImg", {imageViewZoomable: zoomable, imageViewActual: actual})}
+                    src={src}
+                    alt=""
+                    draggable={false}
+                    onLoad={(e) => {
+                        const img = e.currentTarget;
+                        setDims({w: img.naturalWidth, h: img.naturalHeight, shrunk: img.naturalWidth > img.clientWidth + 1});
+                    }}
+                    onClick={zoomable ? () => setActual((v) => !v) : undefined}
+                />
+            </div>
+        </>
+    );
+}
+
 interface ViewerProps {
     tabId: string;
     filePath: string;
@@ -242,6 +292,8 @@ function FileViewer({tabId, filePath, cwd, info, gitEntry, gitVersion, preferTab
     const [view, setView] = useState<FileView | null>(null);
     const [hunks, setHunks] = useState<FileHunk[] | null>(null);
     const [copied, setCopied] = useState(false);
+    // svg는 그림과 소스를 오간다
+    const [svgSource, setSvgSource] = useState(false);
     // Claude가 이 파일을 다시 고치면(또는 새로고침하면) 다시 읽는다
     const version = info?.lastAt ?? 0;
     const changed = info !== undefined;
@@ -249,6 +301,7 @@ function FileViewer({tabId, filePath, cwd, info, gitEntry, gitVersion, preferTab
     useEffect(() => {
         setView(null);
         setHunks(null);
+        setSvgSource(false);
     }, [filePath]);
 
     useEffect(() => {
@@ -278,15 +331,16 @@ function FileViewer({tabId, filePath, cwd, info, gitEntry, gitVersion, preferTab
         else if (tab === "git" && !gitEntry) setTab("content");
     }, [tab, changed, gitEntry]);
 
+    const showImage = !!view?.image && !svgSource;
     const code = useMemo(() => {
-        if (view?.text == null) return null;
+        if (view?.text == null || showImage) return null;
         // 파일 끝의 줄바꿈은 <pre>가 빈 줄로 그리지 않는다 — 줄 번호도 맞춰 센다
         const lines = Math.max(1, view.text.split("\n").length - (view.text.endsWith("\n") ? 1 : 0));
         return {
             html: highlightFile(view.text, filePath),
             gutter: Array.from({length: lines}, (_, i) => i + 1).join("\n"),
         };
-    }, [view, filePath]);
+    }, [view, filePath, showImage]);
 
     // 이 파일을 열 JetBrains IDE (그 프로젝트를 마지막으로 연 IDE) — 없으면 버튼을 숨긴다
     const [ide, setIde] = useState<EditorTarget | null>(null);
@@ -372,7 +426,20 @@ function FileViewer({tabId, filePath, cwd, info, gitEntry, gitVersion, preferTab
                     {view?.missing && <div className={cx("viewerNotice")}>파일이 없습니다 (지워졌거나 옮겨졌을 수 있습니다)</div>}
                     {view?.error && <div className={cx("viewerNotice")}>{view.error}</div>}
                     {view?.binary && <div className={cx("viewerNotice")}>텍스트 파일이 아니라 내용을 보여줄 수 없습니다</div>}
-                    {view?.truncated && <div className={cx("viewerNotice")}>파일이 커서 앞부분 1MB만 보여줍니다</div>}
+                    {view?.image && view.text != null && (
+                        <div className={cx("imageViewSwitch")}>
+                            <button className={cx("imageViewSwitchBtn", {active: !svgSource})} onClick={() => setSvgSource(false)}>
+                                그림
+                            </button>
+                            <button className={cx("imageViewSwitchBtn", {active: svgSource})} onClick={() => setSvgSource(true)}>
+                                소스
+                            </button>
+                        </div>
+                    )}
+                    {showImage && (
+                        <ImageView tabId={tabId} filePath={filePath} size={view.size} version={`${version}:${reloadToken}`} />
+                    )}
+                    {view?.truncated && !showImage && <div className={cx("viewerNotice")}>파일이 커서 앞부분 1MB만 보여줍니다</div>}
                     {code && (
                         <div className={cx("codeScroll")}>
                             <pre className={cx("codeGutter")}>{code.gutter}</pre>

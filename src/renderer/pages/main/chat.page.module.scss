@@ -1244,6 +1244,39 @@
   max-width: 90%;
 }
 
+// 위 메시지를 고치는 중 — 보내면 버려질 메시지 ("여기서 다시", 마지막 메시지 편집)
+.messageWrapper.messageDimmed {
+  opacity: 0.38;
+  transition: opacity 0.2s;
+}
+
+// "여기서 다시" 편집 칸 아래 안내와 파일 되돌리기 선택
+.rewriteNote {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--c-text-2);
+}
+
+.rewriteFiles {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--c-text);
+  cursor: pointer;
+
+  input {
+    margin: 0;
+  }
+}
+
+.rewriteFilesChecking {
+  color: var(--c-text-muted);
+}
+
 // CLI 실패/경고를 답변 자리에 그대로 띄운다. 빈 말풍선으로 끝나지 않게 하는 용도.
 .notice {
   display: flex;
@@ -1354,6 +1387,98 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+// 답변 속 그림 (MessageItem의 ImageStrip) — 도구 줄 아래면 도구의 변경 내용(.toolDiff)처럼 들여 쓴다
+.imageStrip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.imageStripIndent {
+  margin: 2px 0 4px 22px;
+}
+
+.imageThumb {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+  max-width: 248px;
+  padding: 4px;
+  cursor: zoom-in;
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: 10px;
+  transition: border-color 0.15s;
+
+  &:hover {
+    border-color: var(--c-border-strong);
+  }
+}
+
+// 체크무늬는 그림의 투명한 부분에만 비친다 (img 상자 = 그림 크기)
+.imageThumbImg,
+.mdImage,
+.imageViewImg,
+.lightboxImage {
+  background-color: var(--c-img-check-a);
+  background-image: conic-gradient(var(--c-img-check-b) 25%, transparent 0 50%, var(--c-img-check-b) 0 75%, transparent 0);
+  background-size: 14px 14px;
+}
+
+.imageThumbImg {
+  display: block;
+  max-width: 238px;
+  max-height: 170px;
+  border-radius: 6px;
+}
+
+.imageThumbName {
+  max-width: 238px;
+  overflow: hidden;
+  font-size: 11px;
+  color: var(--c-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.imageMore {
+  align-self: center;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--c-text-2);
+  cursor: pointer;
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+
+  &:hover {
+    color: var(--c-text);
+  }
+}
+
+.imageOmitted {
+  align-self: center;
+  font-size: 11px;
+  color: var(--c-text-muted);
+}
+
+// 마크다운 그림 ![설명](chart.png)
+.mdImage {
+  display: block;
+  max-width: min(100%, 520px);
+  max-height: 360px;
+  margin: 6px 0;
+  cursor: zoom-in;
+  border-radius: 8px;
+}
+
+.mdImageMissing {
+  color: var(--c-text-muted);
+  text-decoration: underline dotted;
 }
 
 // 대화 압축 구분선(MessageItem의 CompactDivider)이 든 답변은 최대 폭까지 — 내용 폭에 맞춰 줄면 선이 짧게 끊긴다
@@ -3464,6 +3589,66 @@
 
 .changesView .viewerNotice {
   padding: 0 2px;
+}
+
+// 작업 파일 패널의 그림 (FilesPanel의 ImageView)
+.imageViewSwitch {
+  display: flex;
+  flex-shrink: 0;
+  gap: 4px;
+  padding: 8px 12px 0;
+}
+
+.imageViewSwitchBtn {
+  padding: 3px 10px;
+  font-size: 11px;
+  color: var(--c-text-muted);
+  cursor: pointer;
+  background: none;
+  border: 1px solid var(--c-border);
+  border-radius: 6px;
+
+  &.active {
+    color: var(--c-text);
+    background-color: var(--c-fill);
+  }
+}
+
+.imageViewMeta {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--c-text-muted);
+}
+
+.imageViewHint {
+  color: var(--c-text-faint);
+}
+
+.imageViewScroll {
+  flex: 1;
+  min-height: 0;
+  padding: 0 12px 12px;
+  overflow: auto;
+}
+
+.imageViewImg {
+  display: block;
+  max-width: 100%;
+  border: 1px solid var(--c-border);
+  border-radius: 6px;
+}
+
+.imageViewImg.imageViewZoomable {
+  cursor: zoom-in;
+}
+
+.imageViewImg.imageViewActual {
+  max-width: none;
+  cursor: zoom-out;
 }
 
 // 줄 번호와 코드가 한 스크롤 안에 있어 늘 같이 움직인다. 가로로 밀어도 줄 번호는 남는다.

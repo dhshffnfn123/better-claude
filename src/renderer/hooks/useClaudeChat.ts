@@ -28,6 +28,19 @@ export interface Message {
     outputTokens?: number;
     segments?: MessageSegment[]; // 어시스턴트: 텍스트/도구를 발생 순서대로 보관
     greeting?: boolean; // 새 대화의 첫 인사말 (복사 버튼 등을 붙이지 않는다)
+    replyUuid?: string; // 답변: 그 답변의 마지막 기록 항목 — "여기까지 새 탭으로"의 지점
+    copied?: boolean; // 갈라낸 대화로 복사된 메시지 — 파일 되돌리기 기록이 없다
+    // 사용자 메시지에 붙여 보낸 그림 원본 — "여기서 다시"로 다시 보낼 때 쓴다 (미리보기 URL로는 다시 못 보낸다)
+    imagePayloads?: {data: string; mediaType: string}[];
+}
+
+// 다시 보낼 그림: 보낼 때 남겨 둔 원본, 없으면(불러온 대화) data URL 미리보기를 풀어서
+function resendableImages(msg: Message): {data: string; mediaType: string}[] {
+    if (msg.imagePayloads) return msg.imagePayloads;
+    return (msg.images ?? []).flatMap((url) => {
+        const m = /^data:([^;,]+);base64,(.+)$/s.exec(url);
+        return m ? [{mediaType: m[1], data: m[2]}] : [];
+    });
 }
 
 export interface ToolActivity {
@@ -38,6 +51,9 @@ export interface ToolActivity {
     resultPreview?: string;
     // 서브에이전트(Agent 도구)가 쓴 도구면 그 Agent 호출의 id
     parentToolUseId?: string;
+    images?: string[]; // 도구 결과에 든 그림 (Read로 연 그림, 스크린샷 등 — data URL)
+    imagesOmitted?: number; // 불러온 대화에서 오래돼 싣지 않은 그림 수
+    startedAt?: number; // 도구를 부른 시각 — 이 도구가 만든 그림을 파일 수정 시각으로 가려낸다
 }
 
 export type CompactSegment = {kind: "compact"} & CompactInfo;
@@ -243,6 +259,12 @@ export function useClaudeChat(tabId: string, callbacks: ChatCallbacks = {}) {
             );
         });
 
+        // 이 답변의 마지막 기록 항목 — 턴이 끝날 때 답변에 붙인다 (그때까지 자주 바뀌어 매번 그리지 않는다)
+        let replyUuid: string | undefined;
+        const removeReplyUuid = onTab("replyUuid", tabId, ({uuid}) => {
+            replyUuid = uuid;
+        });
+
         // 오류로 끝난 턴은 알림 문구를 바꾼다
         let failed: ChatNotice | null = null;
         const removeError = onTab("error", tabId, (n) => {
@@ -260,7 +282,7 @@ export function useClaudeChat(tabId: string, callbacks: ChatCallbacks = {}) {
         });
 
         const removeToolUse = onTab("toolUse", tabId, ({id, name, input, parentToolUseId}) => {
-            const activity: ToolActivity = {id, name, input, status: "running", parentToolUseId};
+            const activity: ToolActivity = {id, name, input, status: "running", parentToolUseId, startedAt: Date.now()};
             toolsRef.current = [...toolsRef.current, activity];
             setTools(toolsRef.current);
             // 서브에이전트가 쓴 도구는 진행 패널에만 보이고 답변 본문에는 넣지 않는다
@@ -270,10 +292,11 @@ export function useClaudeChat(tabId: string, callbacks: ChatCallbacks = {}) {
             flush();
         });
 
-        const removeToolResult = onTab("toolResult", tabId, ({id, isError, content}) => {
+        const removeToolResult = onTab("toolResult", tabId, ({id, isError, content, images}) => {
             const patch = {
                 status: (isError ? "error" : "done") as ToolActivity["status"],
                 resultPreview: content,
+                images,
             };
             toolsRef.current = toolsRef.current.map((t) => (t.id === id ? {...t, ...patch} : t));
             setTools(toolsRef.current);
@@ -324,7 +347,12 @@ export function useClaudeChat(tabId: string, callbacks: ChatCallbacks = {}) {
             removeToolUse();
             removeToolResult();
             removeCompact();
+            removeReplyUuid();
             removeDone();
+            if (replyUuid) {
+                const uuid = replyUuid;
+                setMessages((prev) => prev.map((m) => (m.id === assistantId ? {...m, replyUuid: uuid} : m)));
+            }
             if (stopped) {
                 // 결과를 못 받은 도구가 계속 "실행 중"으로 남지 않게 정리한다
                 const patch = {status: "error" as const, resultPreview: "중지됨"};
@@ -382,7 +410,13 @@ export function useClaudeChat(tabId: string, callbacks: ChatCallbacks = {}) {
             const userId = nextId();
             setMessages((prev) => [
                 ...prev,
-                { id: userId, role: "user", content: trimmed, images: images.map((img) => img.previewUrl) },
+                {
+                    id: userId,
+                    role: "user",
+                    content: trimmed,
+                    images: images.map((img) => img.previewUrl),
+                    imagePayloads: images.length > 0 ? images.map(({data, mediaType}) => ({data, mediaType})) : undefined,
+                },
             ]);
             callbacksRef.current.onUserMessage?.(trimmed);
 
@@ -437,6 +471,31 @@ export function useClaudeChat(tabId: string, callbacks: ChatCallbacks = {}) {
             COMPACT_COMMAND_RE.test(text)
         );
     }, [isLoading, messages, startResponse, tabId]);
+
+    // "여기서 다시": 이 사용자 메시지부터 아래를 버리고, 고친 글로 그 자리에서 다시 보낸다.
+    // uuid를 넘기면 main(prepareReplace)이 그 메시지 직전 항목부터 이어가서, 버린 대화는 모델 기록에서도 빠진다.
+    const rewriteFrom = useCallback(
+        (msgId: number, newText: string) => {
+            if (isLoading) return;
+            const text = newText.trim();
+            const idx = messages.findIndex((m) => m.id === msgId);
+            const userMsg = messages[idx];
+            if (!text || idx < 0 || userMsg.role !== "user" || !userMsg.uuid) return;
+            const imageData = resendableImages(userMsg);
+            setMessages([...messages.slice(0, idx), {...userMsg, content: text, inputTokens: undefined, copied: false}]);
+            lastSentRef.current = {
+                message: text,
+                images: imageData.map((d, i) => ({...d, previewUrl: userMsg.images?.[i] ?? ""})),
+            };
+            callbacksRef.current.onUserMessage?.(text);
+            startResponse(
+                () => window.electronAPI.sendMessage(tabId, text, imageData, userMsg.uuid),
+                userMsg.id,
+                COMPACT_COMMAND_RE.test(text)
+            );
+        },
+        [isLoading, messages, startResponse, tabId]
+    );
 
     // 허용/거부를 CLI에 되돌려 보낸다. 예전처럼 요청을 통째로 다시 보내는 게 아니라,
     // 멈춰서 기다리던 그 도구 호출이 그대로 이어진다.
@@ -505,6 +564,7 @@ export function useClaudeChat(tabId: string, callbacks: ChatCallbacks = {}) {
         send,
         regenerate,
         editAndResend,
+        rewriteFrom,
         respondPermission,
         answerQuestions,
         stopGeneration,

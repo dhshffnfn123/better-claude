@@ -1,4 +1,4 @@
-import {memo, useCallback, useEffect, useLayoutEffect, useRef, useState} from "react";
+import {memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState} from "react";
 import classNames from "classnames/bind";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 import {
@@ -17,7 +17,7 @@ import {useClaudeChat} from "../../hooks/useClaudeChat";
 import {MessageItem} from "./MessageItem";
 import {ChatInput, type PromptHooks} from "./ChatInput";
 import {FindBar} from "./FindBar";
-import {TabIdContext} from "../../tab-context";
+import {ImageViewerContext, TabIdContext} from "../../tab-context";
 import {ActivityPanel, middleTruncate} from "./ActivityPanel";
 import {QuestionModal} from "./QuestionModal";
 
@@ -68,10 +68,12 @@ interface Props {
     registerApi: (tabId: string, api: TabViewApi | null) => void;
     // 시스템 프롬프트를 바꾸기 전 확인·바꾼 뒤 안내 (모든 탭에 적용되므로 셸이 맡는다)
     promptHooks: PromptHooks;
+    // "여기까지 새 탭으로"로 갈라낸 대화를 이 탭 옆 새 탭으로 연다 (탭 목록은 셸이 가진다)
+    onFork: (fromTabId: string, sessionId: string, title: string, cwd: string) => void;
 }
 
 // 탭 하나의 대화 화면: 메시지·알림·진행 패널·입력창, 그리고 이 탭의 모달(권한·질문·되돌리기·이미지)
-function ChatTabViewBase({tabId, active, cwd, backgroundRunning, load, resetToken, callbacks, registerApi, promptHooks}: Props) {
+function ChatTabViewBase({tabId, active, cwd, backgroundRunning, load, resetToken, callbacks, registerApi, promptHooks, onFork}: Props) {
     const {
         messages,
         isLoading,
@@ -89,6 +91,7 @@ function ChatTabViewBase({tabId, active, cwd, backgroundRunning, load, resetToke
         send,
         regenerate,
         editAndResend,
+        rewriteFrom,
         respondPermission,
         answerQuestions,
         stopGeneration,
@@ -264,6 +267,46 @@ function ChatTabViewBase({tabId, active, cwd, backgroundRunning, load, resetToke
         if (confirmStopBackground("편집해서 다시 보내면")) editAndResend(text);
     };
 
+    // ── 여기서 다시 / 여기까지 새 탭으로 ──
+    // 메시지마다 넘기는 함수라 한 번만 만든다(MessageItem은 memo) — 바뀌는 값은 ref로 읽는다.
+    const latest = useRef({rewriteFrom, confirmStopBackground, onFork, setNotice});
+    latest.current = {rewriteFrom, confirmStopBackground, onFork, setNotice};
+    const handleRewrite = useCallback(
+        async (msgId: number, uuid: string, text: string, withFiles: boolean) => {
+            const l = latest.current;
+            if (!l.confirmStopBackground("여기서 다시 시작하면")) return;
+            if (withFiles) {
+                // 파일은 대화보다 먼저 — 첫 메시지부터 다시 쓰면 새 대화가 생기고 옛 대화(파일 기록 포함)는 지워진다
+                const r = await window.electronAPI.rewindFiles(tabId, uuid, false);
+                if (!r.canRewind && !window.confirm(`파일을 되돌리지 못했습니다: ${r.error ?? "알 수 없는 오류"}\n대화만 여기서 다시 시작할까요?`)) {
+                    return;
+                }
+            }
+            isAtBottomRef.current = true;
+            latest.current.rewriteFrom(msgId, text);
+        },
+        [tabId]
+    );
+    const [forkingUuid, setForkingUuid] = useState<string | null>(null);
+    const handleFork = useCallback(
+        async (replyUuid: string) => {
+            setForkingUuid(replyUuid);
+            const r = await window.electronAPI.forkConversation(tabId, replyUuid);
+            setForkingUuid(null);
+            if (r.ok === false) {
+                latest.current.setNotice({level: "warning", message: "새 탭으로 갈라내지 못했습니다", detail: r.error});
+                return;
+            }
+            latest.current.onFork(tabId, r.sessionId, r.title, r.cwd);
+        },
+        [tabId]
+    );
+    // 고치는 중인 메시지 — 그 아래 메시지를 흐리게 그려 무엇이 버려지는지 보여 준다
+    const [editingId, setEditingId] = useState<number | null>(null);
+    const handleEditingChange = useCallback((msgId: number, editing: boolean) => {
+        setEditingId((cur) => (editing ? msgId : cur === msgId ? null : cur));
+    }, []);
+
     const handleMessageScroll = () => {
         const el = messageListRef.current;
         if (!el) return;
@@ -328,6 +371,12 @@ function ChatTabViewBase({tabId, active, cwd, backgroundRunning, load, resetToke
     );
 
     const lastUserIdx = messages.map((m) => m.role).lastIndexOf("user");
+    // 마지막으로 대화를 요약한 답변 — 그 앞 메시지는 기록이 요약으로 바뀌어 되돌리거나 갈라낼 수 없다
+    const lastCompactIdx = useMemo(() => {
+        for (let i = messages.length - 1; i >= 0; i--) if (messages[i].segments?.some((sg) => sg.kind === "compact")) return i;
+        return -1;
+    }, [messages]);
+    const editingIdx = editingId === null ? -1 : messages.findIndex((m) => m.id === editingId);
 
     return (
         <div className={cx("tabView", {tabViewHidden: !active})} aria-hidden={!active} ref={rootRef} {...dragHandlers}>
@@ -340,6 +389,7 @@ function ChatTabViewBase({tabId, active, cwd, backgroundRunning, load, resetToke
             {/* 채팅 영역 */}
             <div className={cx("messageListWrap")}>
                 <TabIdContext.Provider value={tabId}>
+                <ImageViewerContext.Provider value={setLightboxSrc}>
                     <div
                         className={cx("messageList")}
                         ref={messageListRef}
@@ -351,6 +401,7 @@ function ChatTabViewBase({tabId, active, cwd, backgroundRunning, load, resetToke
                                 key={msg.id}
                                 msg={msg}
                                 isStreaming={isThinking && i === messages.length - 1}
+                                isLive={isLoading && i === messages.length - 1}
                                 onImageClick={setLightboxSrc}
                                 onRegenerate={
                                     !isLoading && i === messages.length - 1 && msg.role === "assistant" && lastUserIdx >= 0
@@ -359,6 +410,12 @@ function ChatTabViewBase({tabId, active, cwd, backgroundRunning, load, resetToke
                                 }
                                 onEditResend={!isLoading && i === lastUserIdx ? handleEditResend : undefined}
                                 onRewindFiles={!isLoading ? handleRewindFiles : undefined}
+                                onRewrite={!isLoading && i < lastUserIdx && i > lastCompactIdx ? handleRewrite : undefined}
+                                belowCount={messages.length - i - 1}
+                                onFork={!isLoading && i >= lastCompactIdx ? handleFork : undefined}
+                                forking={!!msg.replyUuid && forkingUuid === msg.replyUuid}
+                                onEditingChange={handleEditingChange}
+                                dimmed={editingIdx >= 0 && i > editingIdx}
                             />
                         ))}
                         {notice && (
@@ -382,6 +439,7 @@ function ChatTabViewBase({tabId, active, cwd, backgroundRunning, load, resetToke
                             </div>
                         )}
                     </div>
+                </ImageViewerContext.Provider>
                 </TabIdContext.Provider>
                 {findOpen && (
                     <FindBar

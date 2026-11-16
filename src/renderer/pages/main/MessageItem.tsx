@@ -1,5 +1,5 @@
 import type {ReactNode} from "react";
-import {Children, isValidElement, memo, useContext, useEffect, useMemo, useRef, useState} from "react";
+import {Children, Fragment, isValidElement, memo, useContext, useEffect, useMemo, useRef, useState} from "react";
 import ReactMarkdown, {type Components} from "react-markdown";
 import remarkGfm from "remark-gfm";
 import classNames from "classnames/bind";
@@ -9,20 +9,23 @@ import {
     faChevronDown,
     faChevronRight,
     faClockRotateLeft,
+    faCodeBranch,
     faCopy,
     faDownLeftAndUpRightToCenter,
     faPen,
+    faRotateLeft,
     faRotateRight,
 } from "@fortawesome/free-solid-svg-icons";
 import claudeIcon from "../../assets/better-claude-icon.png";
 import styles from "./chat.page.module.scss";
-import type {CompactSegment, Message} from "../../hooks/useClaudeChat";
+import type {CompactSegment, Message, MessageSegment, ToolActivity} from "../../hooks/useClaudeChat";
 import {copyText} from "../../clipboard";
 import {highlightLanguage} from "../../highlight";
 import {editorHint, looksLikeFilePath, openFileRef, resolveFileRef} from "../../file-links";
-import {TabIdContext} from "../../tab-context";
+import {imageRefKey, imageRefsInText, isImagePath, resolveImageRefs} from "../../image-refs";
+import {ImageViewerContext, TabIdContext} from "../../tab-context";
 import {QUESTION_TOOL} from "../../question-answers";
-import {ToolRow} from "./ActivityPanel";
+import {middleTruncate, ToolRow} from "./ActivityPanel";
 import {QuestionCard} from "./QuestionCard";
 import {isImeComposing} from "./ChatInput";
 
@@ -121,7 +124,69 @@ function FileLink({href, children}: {href: string; children: ReactNode}) {
     );
 }
 
+// 그림 원본 — 썸네일이 줄인 그림이면 main에서 원본을 다시 읽는다
+async function fullImageSrc(tabId: string, src: string, path: string | undefined, full: boolean): Promise<string> {
+    if (full || !path || !tabId) return src;
+    return (await window.electronAPI.readImage(tabId, path)) ?? src;
+}
+
+// 마크다운 그림 ![설명](chart.png) — 작업 폴더 기준 경로의 그림을 그 자리에 그린다.
+// 웹 그림은 앱이 불러오지 않는다(CSP가 막는다) — 링크로 바꿔 기본 브라우저에서 열게 한다.
+function MarkdownImage({src, alt}: {src: string; alt: string}) {
+    const tabId = useContext(TabIdContext);
+    const openImage = useContext(ImageViewerContext);
+    const local = isImagePath(src);
+    const [res, setRes] = useState<ResolvedImage | null>(null);
+    useEffect(() => {
+        if (!local || !tabId) return;
+        let alive = true;
+        let retry = 0;
+        const ask = () => {
+            void resolveImageRefs(tabId, [{ref: src}]).then((m) => {
+                if (!alive) return;
+                const r = m.get(imageRefKey({ref: src})) ?? null;
+                setRes(r);
+                // 그림보다 글이 먼저 올 수 있다 — 한 번만 다시 본다
+                if ((!r || r.ok === false) && retry === 0) retry = window.setTimeout(ask, 2500);
+            });
+        };
+        ask();
+        return () => {
+            alive = false;
+            window.clearTimeout(retry);
+        };
+    }, [tabId, src, local]);
+    if (!local) {
+        return /^https?:/i.test(src) ? (
+            <a href={src} target="_blank" rel="noreferrer noopener">
+                {alt || src}
+            </a>
+        ) : (
+            <span>{alt || src}</span>
+        );
+    }
+    if (!res || res.ok === false || !res.thumb) {
+        return (
+            <span className={cx("mdImageMissing")} data-tooltip={res ? `그림을 찾을 수 없습니다: ${middleTruncate(src, 80)}` : undefined}>
+                {alt || src}
+            </span>
+        );
+    }
+    const {thumb, path, full} = res;
+    return (
+        <img
+            className={cx("mdImage")}
+            src={thumb}
+            alt={alt}
+            draggable={false}
+            data-tooltip={middleTruncate(path, 90)}
+            onClick={() => void fullImageSrc(tabId, thumb, path, !!full).then((u) => openImage?.(u))}
+        />
+    );
+}
+
 const MARKDOWN_COMPONENTS: Components = {
+    img: ({src, alt}) => <MarkdownImage src={typeof src === "string" ? src : ""} alt={alt ?? ""} />,
     // 웹 링크는 새 창 요청으로 보낸다. main(link-guard)이 기본 브라우저로 연다 — 그냥 두면 앱 창이 그 페이지로 넘어간다.
     // 그 밖의 링크(상대 경로·파일)는 파일로 보고 IDE에서 연다.
     a: ({href, title, children}) => {
@@ -155,6 +220,149 @@ function CopyMessageButton({text}: {text: string}) {
         <button className={cx("msgActionBtn")} onClick={() => copy(text)} title="이 답변을 마크다운 그대로 복사합니다">
             <FontAwesomeIcon icon={copied ? faCheck : faCopy} /> {copied ? "복사됨" : "복사"}
         </button>
+    );
+}
+
+// ── 답변 속 그림 ──
+// 도구 줄 아래: 도구 결과에 든 그림(Read로 연 그림·스크린샷), 쓰기 도구로 만든 그림 파일, 그 밖의 도구(Bash 등)
+// 입출력에 나온 그림 중 그 도구를 부른 뒤에 바뀐 것(ls로 훑은 옛 그림까지 띄우지 않게).
+// 글 아래: 글에 나온 그림 경로. 같은 그림은 한 답변에 한 번만 — 만든 도구 쪽이 먼저다.
+interface ReplyImage {
+    key: string;
+    src: string; // 썸네일 (작은 그림은 원본)
+    name: string;
+    path?: string; // 파일이면 — 썸네일이 줄인 그림일 때 누르면 원본을 다시 읽는다
+    full: boolean;
+}
+
+interface SegImages {
+    images: ReplyImage[];
+    omitted: number; // 불러온 대화에서 오래돼 싣지 않은 도구 결과 그림
+}
+
+const FILE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "Read"]);
+const STRIP_MAX = 6;
+// 도구를 부른 시각과 파일 수정 시각을 견줄 때의 여유
+const SINCE_SLACK_MS = 2000;
+
+function toolFilePath(tool: ToolActivity): string | undefined {
+    const fp = (tool.input as {file_path?: unknown} | null)?.file_path;
+    return typeof fp === "string" ? fp : undefined;
+}
+
+function toolInputText(input: unknown): string {
+    if (!input || typeof input !== "object") return "";
+    return Object.values(input as Record<string, unknown>)
+        .filter((v): v is string => typeof v === "string")
+        .join("\n");
+}
+
+function baseNameOf(p: string): string {
+    return p.slice(p.lastIndexOf("/") + 1) || p;
+}
+
+// 세그먼트마다 main에 물어볼 그림 경로
+function segmentImageRefs(seg: MessageSegment): ImageRef[] {
+    if (seg.kind === "text") return imageRefsInText(seg.text).mentioned.map((ref) => ({ref}));
+    if (seg.kind !== "tool") return [];
+    const t = seg.tool;
+    if (t.name === QUESTION_TOOL || t.status === "running") return [];
+    const fp = toolFilePath(t);
+    // 결과에 그림이 들어 있으면 그걸 보여 준다 — 경로는 같은 그림을 글 아래에 또 띄우지 않으려고 확인만
+    if (t.images?.length || t.imagesOmitted) return fp && isImagePath(fp) ? [{ref: fp, infoOnly: true}] : [];
+    if (fp && FILE_TOOLS.has(t.name)) return isImagePath(fp) && t.status === "done" ? [{ref: fp}] : [];
+    if (!t.startedAt) return [];
+    const since = t.startedAt - SINCE_SLACK_MS;
+    return imageRefsInText(`${toolInputText(t.input)}\n${t.resultPreview ?? ""}`).mentioned.map((ref) => ({ref, since}));
+}
+
+function useReplyImages(msg: Message, live: boolean): Map<number, SegImages> {
+    const tabId = useContext(TabIdContext);
+    const segments = msg.role === "assistant" && !msg.greeting ? msg.segments : undefined;
+    const bySeg = useMemo(() => (segments ?? []).map(segmentImageRefs), [segments]);
+    const refs = useMemo(() => {
+        const seen = new Set<string>();
+        return bySeg.flat().filter((r) => !seen.has(imageRefKey(r)) && !!seen.add(imageRefKey(r)));
+    }, [bySeg]);
+    const sig = refs.map(imageRefKey).join("\u0001");
+    const [resolved, setResolved] = useState<Map<string, ResolvedImage>>(() => new Map());
+    useEffect(() => {
+        if (!tabId || refs.length === 0) return;
+        let alive = true;
+        // 받는 중에는 잠깐 모았다가 묻고, 턴이 끝나면(live → false) 한 번 더 — 그 사이에 생긴 파일
+        const timer = window.setTimeout(() => {
+            void resolveImageRefs(tabId, refs).then((m) => {
+                if (alive) setResolved(m);
+            });
+        }, live ? 400 : 0);
+        return () => {
+            alive = false;
+            window.clearTimeout(timer);
+        };
+        // refs는 sig가 같으면 내용도 같다 — 배열 자체가 아니라 sig로 다시 묻는다
+    }, [tabId, sig, live]);
+
+    return useMemo(() => {
+        const out = new Map<number, SegImages>();
+        if (!segments) return out;
+        const shown = new Set<string>();
+        const add = (i: number, image: ReplyImage | null, omitted = 0) => {
+            const cur = out.get(i) ?? {images: [], omitted: 0};
+            if (image) cur.images.push(image);
+            cur.omitted += omitted;
+            if (cur.images.length > 0 || cur.omitted > 0) out.set(i, cur);
+        };
+        const fromRefs = (i: number) => {
+            for (const r of bySeg[i] ?? []) {
+                const res = resolved.get(imageRefKey(r));
+                if (!res || res.ok === false || shown.has(res.path)) continue;
+                shown.add(res.path);
+                if (r.infoOnly || !res.thumb) continue;
+                add(i, {key: res.path, src: res.thumb, name: res.name, path: res.path, full: !!res.full});
+            }
+        };
+        // 도구 먼저: "chart.png를 만들겠습니다"라는 글보다 그 그림을 만든 명령 아래가 제자리다
+        segments.forEach((seg, i) => {
+            if (seg.kind !== "tool") return;
+            const fp = toolFilePath(seg.tool);
+            (seg.tool.images ?? []).forEach((src, j) =>
+                add(i, {key: `result-${j}`, src, name: fp ? baseNameOf(fp) : `${seg.tool.name} 결과`, path: fp, full: true})
+            );
+            if (seg.tool.imagesOmitted) add(i, null, seg.tool.imagesOmitted);
+            fromRefs(i);
+        });
+        segments.forEach((seg, i) => {
+            if (seg.kind === "text") fromRefs(i);
+        });
+        return out;
+    }, [segments, bySeg, resolved]);
+}
+
+function ImageStrip({images, omitted, indent, onOpen}: SegImages & {indent: boolean; onOpen?: (src: string) => void}) {
+    const tabId = useContext(TabIdContext);
+    const [all, setAll] = useState(false);
+    const list = all ? images : images.slice(0, STRIP_MAX);
+    return (
+        <div className={cx("imageStrip", {imageStripIndent: indent})}>
+            {list.map((im) => (
+                <button
+                    key={im.key}
+                    className={cx("imageThumb")}
+                    onClick={() => void fullImageSrc(tabId, im.src, im.path, im.full).then((u) => onOpen?.(u))}
+                    data-tooltip={middleTruncate(im.path ?? im.name, 90)}
+                >
+                    {/* 끌어서 놓으면 탭의 파일 놓기로 첨부될 수 있어 막는다 */}
+                    <img className={cx("imageThumbImg")} src={im.src} alt="" draggable={false} />
+                    <span className={cx("imageThumbName")}>{middleTruncate(im.name, 30)}</span>
+                </button>
+            ))}
+            {!all && images.length > STRIP_MAX && (
+                <button className={cx("imageMore")} onClick={() => setAll(true)}>
+                    +{images.length - STRIP_MAX}
+                </button>
+            )}
+            {omitted > 0 && <span className={cx("imageOmitted")}>그림 {omitted}개 — 오래된 그림이라 싣지 않았습니다</span>}
+        </div>
     );
 }
 
@@ -196,25 +404,77 @@ function CompactDivider({seg}: {seg: CompactSegment}) {
 interface Props {
     msg: Message;
     isStreaming: boolean;
+    isLive?: boolean; // 이 답변을 지금 받는 중 (그림 경로를 턴이 끝날 때 한 번 더 확인한다)
     onImageClick?: (src: string) => void;
     onRegenerate?: () => void;
     onEditResend?: (text: string) => void;
     onRewindFiles?: (uuid: string) => void;
+    // 예전 사용자 메시지의 "여기서 다시" — 이 메시지부터 아래를 버리고 고친 글로 다시 보낸다 (탭 전체에 하나뿐인 함수)
+    onRewrite?: (msgId: number, uuid: string, text: string, withFiles: boolean) => void;
+    belowCount?: number; // 여기서 다시 하면 버려지는 아래 메시지 수
+    onFork?: (replyUuid: string) => void; // 답변의 "여기까지 새 탭으로"
+    forking?: boolean;
+    onEditingChange?: (msgId: number, editing: boolean) => void; // 고치는 동안 아래 메시지를 흐리게
+    dimmed?: boolean;
 }
 
-function MessageItemBase({msg, isStreaming, onImageClick, onRegenerate, onEditResend, onRewindFiles}: Props) {
-    const [editing, setEditing] = useState(false);
+type EditMode = "edit" | "rewrite" | null;
+
+// "여기서 다시"를 열면 이 메시지 직전으로 되돌릴 파일이 있는지 미리 본다 (main이 CLI에 dryRun으로 물음)
+type RewindPreview = {state: "checking"} | {state: "none"} | {state: "ready"; count: number};
+
+function MessageItemBase({
+    msg,
+    isStreaming,
+    isLive = false,
+    onImageClick,
+    onRegenerate,
+    onEditResend,
+    onRewindFiles,
+    onRewrite,
+    belowCount = 0,
+    onFork,
+    forking = false,
+    onEditingChange,
+    dimmed = false,
+}: Props) {
+    const tabId = useContext(TabIdContext);
+    const [editing, setEditing] = useState<EditMode>(null);
+    const replyImages = useReplyImages(msg, isLive);
     const [draft, setDraft] = useState(msg.content);
+    const [rewindPreview, setRewindPreview] = useState<RewindPreview>({state: "none"});
+    const [withFiles, setWithFiles] = useState(false); // 기본은 끔 — 파일은 직접 고를 때만 되돌린다
 
     useEffect(() => {
         if (!editing) setDraft(msg.content);
     }, [msg.content, editing]);
 
+    useEffect(() => {
+        onEditingChange?.(msg.id, editing !== null);
+    }, [editing, msg.id, onEditingChange]);
+
+    const startEdit = (mode: Exclude<EditMode, null>) => {
+        setDraft(msg.content);
+        setEditing(mode);
+        if (mode !== "rewrite" || !msg.uuid || !tabId) return;
+        setWithFiles(false);
+        setRewindPreview({state: "checking"});
+        const uuid = msg.uuid;
+        void window.electronAPI
+            .rewindFiles(tabId, uuid, true)
+            .then((r) => setRewindPreview(r.canRewind && (r.filesChanged?.length ?? 0) > 0 ? {state: "ready", count: r.filesChanged?.length ?? 0} : {state: "none"}))
+            .catch(() => setRewindPreview({state: "none"}));
+    };
+
     const saveEdit = () => {
         const t = draft.trim();
         if (!t) return;
-        onEditResend?.(t);
-        setEditing(false);
+        if (editing === "rewrite") {
+            if (msg.uuid) onRewrite?.(msg.id, msg.uuid, t, withFiles && rewindPreview.state === "ready");
+        } else {
+            onEditResend?.(t);
+        }
+        setEditing(null);
     };
 
     // 압축 구분선도 "보이는 내용" — 그 아래에 생각 중 점이 남지 않게
@@ -226,9 +486,14 @@ function MessageItemBase({msg, isStreaming, onImageClick, onRegenerate, onEditRe
     const showRegenerate = !!onRegenerate && msg.role === "assistant" && !compactOnly;
     // 다 받은 답변만 복사할 수 있다 (첫 인사말 제외)
     const canCopy = msg.role === "assistant" && !msg.greeting && !isStreaming && msg.content.trim().length > 0;
+    // 갈라낸 대화로 복사된 메시지는 파일 되돌리기 기록이 없다 (SDK가 복사하지 않는다)
+    const showRewindFiles = !!onRewindFiles && !!msg.uuid && msg.role === "user" && !msg.copied;
+    const showRewrite = !!onRewrite && !!msg.uuid && msg.role === "user";
+    const showFork = !!onFork && !!msg.replyUuid && msg.role === "assistant" && !msg.greeting && !compactOnly;
     return (
         // data-msg-id·data-role: 탭 화면이 "지금 읽는 답변"을 찾는 데 쓴다 (답변 처음으로 버튼)
-        <div className={cx("messageWrapper", msg.role)} data-msg-id={msg.id} data-role={msg.role}>
+        // dimmed: 위 메시지를 고치는 중 — 보내면 버려질 메시지
+        <div className={cx("messageWrapper", msg.role, {messageDimmed: dimmed})} data-msg-id={msg.id} data-role={msg.role}>
             {/* 구분선이 든 답변은 폭을 끝까지 쓴다 — 내용 폭에 맞춰 줄면 구분선이 짧게 끊긴다 */}
             <div className={cx("messageInner", {messageInnerWide: hasCompact})}>
                 <div className={cx("sender")}>
@@ -272,15 +537,32 @@ function MessageItemBase({msg, isStreaming, onImageClick, onRegenerate, onEditRe
                                         e.preventDefault();
                                         saveEdit();
                                     }
-                                    if (e.key === "Escape") setEditing(false);
+                                    if (e.key === "Escape") setEditing(null);
                                 }}
                             />
+                            {editing === "rewrite" && (
+                                <div className={cx("rewriteNote")}>
+                                    <span>
+                                        보내면 여기서부터 다시 시작합니다
+                                        {belowCount > 0 ? ` — 아래 메시지 ${belowCount}개는 버려지고 Claude도 기억하지 않습니다` : ""}.
+                                    </span>
+                                    {rewindPreview.state === "checking" && (
+                                        <span className={cx("rewriteFilesChecking")}>되돌릴 파일이 있는지 확인하는 중…</span>
+                                    )}
+                                    {rewindPreview.state === "ready" && (
+                                        <label className={cx("rewriteFiles")}>
+                                            <input type="checkbox" checked={withFiles} onChange={(e) => setWithFiles(e.target.checked)} />
+                                            파일도 이 메시지를 보내기 직전으로 되돌리기 (Claude가 고친 파일 {rewindPreview.count}개)
+                                        </label>
+                                    )}
+                                </div>
+                            )}
                             <div className={cx("editActions")}>
-                                <button className={cx("editBtn")} onClick={() => setEditing(false)}>
+                                <button className={cx("editBtn")} onClick={() => setEditing(null)}>
                                     취소
                                 </button>
                                 <button className={cx("editBtn", "editBtnPrimary")} onClick={saveEdit}>
-                                    보내기
+                                    {editing === "rewrite" ? "여기서 다시 보내기" : "보내기"}
                                 </button>
                             </div>
                         </div>
@@ -297,23 +579,29 @@ function MessageItemBase({msg, isStreaming, onImageClick, onRegenerate, onEditRe
                 ) : msg.segments && msg.segments.length > 0 ? (
                     // 어시스턴트: 텍스트 말풍선과 도구를 발생 순서대로 분리 렌더
                     <div className={cx("segmentList")}>
-                        {msg.segments.map((seg, i) =>
-                            seg.kind === "compact" ? (
-                                <CompactDivider key={i} seg={seg} />
-                            ) : seg.kind === "tool" ? (
-                                seg.tool.name === QUESTION_TOOL ? (
-                                    <QuestionCard key={seg.tool.id} tool={seg.tool} />
-                                ) : (
-                                    <ToolRow key={seg.tool.id} tool={seg.tool} defaultExpanded />
-                                )
-                            ) : seg.text.trim() ? (
-                                <div key={i} className={cx("bubble", "markdown")}>
-                                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
-                                        {seg.text}
-                                    </ReactMarkdown>
-                                </div>
-                            ) : null
-                        )}
+                        {msg.segments.map((seg, i) => {
+                            const images = replyImages.get(i);
+                            return (
+                                <Fragment key={seg.kind === "tool" ? seg.tool.id : i}>
+                                    {seg.kind === "compact" ? (
+                                        <CompactDivider seg={seg} />
+                                    ) : seg.kind === "tool" ? (
+                                        seg.tool.name === QUESTION_TOOL ? (
+                                            <QuestionCard tool={seg.tool} />
+                                        ) : (
+                                            <ToolRow tool={seg.tool} defaultExpanded />
+                                        )
+                                    ) : seg.text.trim() ? (
+                                        <div className={cx("bubble", "markdown")}>
+                                            <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
+                                                {seg.text}
+                                            </ReactMarkdown>
+                                        </div>
+                                    ) : null}
+                                    {images && <ImageStrip {...images} indent={seg.kind === "tool"} onOpen={onImageClick} />}
+                                </Fragment>
+                            );
+                        })}
                         {isStreaming && !hasVisibleText && (
                             <div className={cx("bubble", "markdown")}>
                                 <span className={cx("thinking")}>
@@ -340,28 +628,34 @@ function MessageItemBase({msg, isStreaming, onImageClick, onRegenerate, onEditRe
                         )}
                     </div>
                 )}
-                {(showRegenerate || (onRewindFiles && msg.uuid) || onEditResend || canCopy) && !editing && (
+                {(showRegenerate || showRewindFiles || onEditResend || canCopy || showRewrite || showFork) && !editing && (
                     <div className={cx("msgActions")}>
                         {canCopy && <CopyMessageButton text={msg.content} />}
                         {onEditResend && !editing && msg.role === "user" && (
                             <button
                                 className={cx("msgActionBtn")}
-                                onClick={() => {
-                                    setDraft(msg.content);
-                                    setEditing(true);
-                                }}
+                                onClick={() => startEdit("edit")}
                                 title="이 메시지를 고쳐서 다시 보냅니다. 기존 답변은 버려지고, 그 답변이 고친 파일은 그대로 남습니다"
                             >
                                 <FontAwesomeIcon icon={faPen} /> 편집
                             </button>
                         )}
-                        {onRewindFiles && msg.uuid && msg.role === "user" && (
+                        {showRewindFiles && (
                             <button
                                 className={cx("msgActionBtn")}
-                                onClick={() => msg.uuid && onRewindFiles(msg.uuid)}
+                                onClick={() => msg.uuid && onRewindFiles?.(msg.uuid)}
                                 title="이 메시지를 보내기 직전 상태로, Claude가 Write·Edit 도구로 고친 파일을 되돌립니다 (대화는 그대로)"
                             >
                                 <FontAwesomeIcon icon={faClockRotateLeft} /> 파일 되돌리기
+                            </button>
+                        )}
+                        {showRewrite && (
+                            <button
+                                className={cx("msgActionBtn")}
+                                onClick={() => startEdit("rewrite")}
+                                title="이 메시지부터 다시 씁니다. 아래 대화는 버려지고 Claude도 기억하지 않습니다 (파일은 고를 때만 되돌림)"
+                            >
+                                <FontAwesomeIcon icon={faRotateLeft} /> 여기서 다시
                             </button>
                         )}
                         {showRegenerate && (
@@ -371,6 +665,16 @@ function MessageItemBase({msg, isStreaming, onImageClick, onRegenerate, onEditRe
                                 title="이 답변을 버리고 다시 생성합니다. 이 답변이 고친 파일은 그대로 남습니다 (필요하면 먼저 '파일 되돌리기')"
                             >
                                 <FontAwesomeIcon icon={faRotateRight} /> 재생성
+                            </button>
+                        )}
+                        {showFork && (
+                            <button
+                                className={cx("msgActionBtn")}
+                                disabled={forking}
+                                onClick={() => msg.replyUuid && onFork?.(msg.replyUuid)}
+                                title="이 답변까지의 대화를 복사해 새 탭에서 이어 갑니다. 원래 대화는 그대로입니다 (작업 폴더는 같아서 같은 파일을 고치면 서로 덮어씁니다)"
+                            >
+                                <FontAwesomeIcon icon={faCodeBranch} /> {forking ? "갈라내는 중…" : "여기까지 새 탭으로"}
                             </button>
                         )}
                     </div>

@@ -615,6 +615,21 @@ const ChatPage = () => {
         }
     }, []);
 
+    // "여기까지 새 탭으로": 갈라낸 대화를 그 탭 바로 옆 새 탭으로 열고 그리로 간다. 설정(모델 등)은 갈라낸 탭을 따른다.
+    const openFork = useCallback(
+        (fromId: string, sessionId: string, title: string, cwd: string) => {
+            const from = tabsRef.current.find((t) => t.id === fromId);
+            const meta = makeTab(newTabId(), {...inheritFrom(from), title, sessionId, cwd, sent: true});
+            setTabs((prev) => {
+                const i = prev.findIndex((t) => t.id === fromId);
+                return i < 0 ? [...prev, meta] : [...prev.slice(0, i + 1), meta, ...prev.slice(i + 1)];
+            });
+            setActiveId(meta.id);
+            void refreshSessions();
+        },
+        [refreshSessions]
+    );
+
     // CLI 세션 기록 자체를 지운다 — 터미널의 /resume 목록에서도 사라진다. 이 대화를 연 탭은 새 대화로 비운다.
     const handleDeleteSession = async (e: React.MouseEvent, session: SessionSummary) => {
         e.stopPropagation();
@@ -1333,6 +1348,7 @@ const ChatPage = () => {
                             callbacks={callbacksFor(t.id)}
                             registerApi={registerApi}
                             promptHooks={promptHooks}
+                            onFork={openFork}
                         />
                     ))}
                 </div>
