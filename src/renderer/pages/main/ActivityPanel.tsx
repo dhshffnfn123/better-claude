@@ -9,12 +9,14 @@ import {
     faTriangleExclamation,
 } from "@fortawesome/free-solid-svg-icons";
 import styles from "./chat.page.module.scss";
-import type {RunningTokens, ToolActivity} from "../../hooks/useClaudeChat";
+import type {Compacting, RunningTokens, ToolActivity} from "../../hooks/useClaudeChat";
+import {isAnswered, QUESTION_TOOL, questionsOf} from "../../question-answers";
 
 const cx = classNames.bind(styles);
 
 interface Props {
     isThinking: boolean;
+    compacting: Compacting;
     tools: ToolActivity[];
     thinkingText: string;
     elapsedMs: number;
@@ -181,17 +183,24 @@ export function ToolDiff({name, input}: {name: string; input: unknown}) {
 export function ToolRow({tool, defaultExpanded = false}: {tool: ToolActivity; defaultExpanded?: boolean}) {
     const [expanded, setExpanded] = useState(defaultExpanded);
     const expandable = DIFF_TOOLS.has(tool.name) && extractEditPairs(tool.name, tool.input).length > 0;
-    const rawInput = rawToolInput(tool.input);
+    // Claude의 질문: JSON 대신 질문 내용을, 답했으면(결과가 deny로 와도) 완료로 보여 준다
+    const isQuestion = tool.name === QUESTION_TOOL;
+    const status = isQuestion && isAnswered(tool.resultPreview) ? "done" : tool.status;
+    const rawInput = isQuestion
+        ? questionsOf(tool.input)
+              .map((q) => q.question)
+              .join(" · ")
+        : rawToolInput(tool.input);
     const icon =
-        tool.status === "running"
+        status === "running"
             ? faCircleNotch
-            : tool.status === "error"
+            : status === "error"
                 ? faTriangleExclamation
                 : faCheck;
     return (
         <div className={cx("toolRowGroup")}>
             <div
-                className={cx("toolRow", tool.status, {toolRowExpandable: expandable, toolRowSub: !!tool.parentToolUseId})}
+                className={cx("toolRow", status, {toolRowExpandable: expandable, toolRowSub: !!tool.parentToolUseId})}
                 onClick={expandable ? () => setExpanded((v) => !v) : undefined}
             >
                 {expandable ? (
@@ -204,10 +213,10 @@ export function ToolRow({tool, defaultExpanded = false}: {tool: ToolActivity; de
                 )}
                 <FontAwesomeIcon
                     icon={icon}
-                    spin={tool.status === "running"}
+                    spin={status === "running"}
                     className={cx("toolIcon")}
                 />
-                <span className={cx("toolName")}>{tool.name}</span>
+                <span className={cx("toolName")}>{isQuestion ? "질문" : tool.name}</span>
                 <span className={cx("toolInput")} title={rawInput || undefined}>
                     {middleTruncate(rawInput)}
                 </span>
@@ -217,14 +226,20 @@ export function ToolRow({tool, defaultExpanded = false}: {tool: ToolActivity; de
     );
 }
 
-function ActivityPanelBase({isThinking, tools, thinkingText, elapsedMs, runningTokens}: Props) {
+function ActivityPanelBase({isThinking, compacting, tools, thinkingText, elapsedMs, runningTokens}: Props) {
     const [thinkingOpen, setThinkingOpen] = useState(false);
     const hasTokens = runningTokens.input + runningTokens.output > 0;
 
     return (
         <div className={cx("activityPanel")}>
             <div className={cx("activityHeader")}>
-                {tools.length === 0 ? (
+                {compacting ? (
+                    // 요약하는 동안은 아무 출력이 없어(수 초~수십 초) 멈춘 것처럼 보인다
+                    <span className={cx("activityLabel")}>
+                        <span className={cx("statusSpinner")} />
+                        {compacting === "manual" ? "대화를 요약하는 중…" : "대화가 길어 앞부분을 요약하는 중…"}
+                    </span>
+                ) : tools.length === 0 ? (
                     isThinking ? (
                         <span className={cx("activityLabel")}>
                             <span className={cx("statusDots")}>

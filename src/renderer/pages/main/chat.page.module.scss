@@ -76,13 +76,123 @@
   padding-top: 8px;
 }
 
+// 대화 기록 머리줄: 이름 + "선택"(여러 개 지우기) / 고르는 중이면 개수 + 모두 선택·삭제·취소
+.convListHead {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 0 12px 0 0;
+}
+
 .convListLabel {
+  flex: 1;
+  min-width: 0;
   padding: 6px 24px;
+  overflow: hidden;
   font-size: 11px;
   font-weight: 600;
   color: var(--c-text-muted);
+  text-overflow: ellipsis;
   text-transform: uppercase;
   letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.convListLabelSelecting {
+  color: var(--c-sidebar-title);
+  text-transform: none;
+}
+
+.convHeadBtn {
+  flex-shrink: 0;
+  height: 22px;
+  padding: 0 8px;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--c-sidebar-muted);
+  cursor: pointer;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 5px;
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.4;
+  }
+
+  &:hover:not(:disabled) {
+    color: var(--c-sidebar-title);
+    background-color: var(--c-sidebar-hover);
+  }
+}
+
+.convHeadBtnDanger:hover:not(:disabled) {
+  color: var(--c-danger);
+  border-color: var(--c-danger);
+}
+
+// 프로젝트명으로 찾기
+.convSearch {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin: 2px 16px 6px;
+}
+
+.convSearchIcon {
+  position: absolute;
+  left: 9px;
+  font-size: 11px;
+  color: var(--c-sidebar-muted);
+  pointer-events: none;
+}
+
+.convSearchInput {
+  width: 100%;
+  height: 28px;
+  padding: 0 26px 0 28px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--c-sidebar-title);
+  background-color: var(--c-sidebar-chip);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  outline: none;
+
+  &::placeholder {
+    color: var(--c-sidebar-muted);
+  }
+
+  &:focus {
+    border-color: var(--c-accent);
+  }
+}
+
+.convSearchClear {
+  position: absolute;
+  right: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  font-size: 10px;
+  color: var(--c-sidebar-muted);
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-radius: 4px;
+
+  &:hover {
+    color: var(--c-sidebar-title);
+  }
+}
+
+.convEmpty {
+  padding: 12px 24px;
+  font-size: 12px;
+  color: var(--c-sidebar-muted);
 }
 
 .convList {
@@ -105,12 +215,42 @@
   cursor: pointer;
   transition: background-color 0.15s;
 
+  // 고르는 중: 왼쪽에 체크 상자 자리
+  &.convItemSelecting {
+    padding-left: 44px;
+  }
+
+  &.convItemSelected {
+    background-color: var(--c-sidebar-hover);
+  }
+
   &:hover {
     background-color: var(--c-sidebar-hover);
 
     .convDelete {
       opacity: 1;
     }
+  }
+}
+
+.convCheck {
+  position: absolute;
+  top: 50%;
+  left: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: 10px;
+  color: var(--c-on-primary);
+  border: 1.5px solid var(--c-sidebar-muted);
+  border-radius: 4px;
+  transform: translateY(-50%);
+
+  .convItemSelected & {
+    background-color: var(--c-accent);
+    border-color: var(--c-accent);
   }
 }
 
@@ -282,6 +422,46 @@
   padding: 0 12px 0 16px;
   background-color: var(--c-toolbar-bg);
   border-bottom: 1px solid var(--c-border);
+}
+
+// 응답 중에 바꾼 설정 안내 — 모델 선택 바로 앞. 자리가 모자라면 글자를 줄인다(선택 상자는 밀지 않는다).
+.settingHint {
+  display: flex;
+  flex: 0 1 auto;
+  gap: 5px;
+  align-items: center;
+  min-width: 0;
+  height: 20px;
+  padding: 0 8px;
+  font-size: 11px;
+  color: var(--c-setting-hint-text);
+  white-space: nowrap;
+  background-color: var(--c-accent-soft);
+  border-radius: 10px;
+  animation: setting-hint-in 0.2s ease-out;
+}
+
+.settingHintIcon {
+  flex-shrink: 0;
+  font-size: 10px;
+}
+
+.settingHintText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@keyframes setting-hint-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .cwdLeft {
@@ -931,6 +1111,77 @@
   }
 }
 
+// ⌘F 찾기 막대 — 메시지 영역 오른쪽 위 ("답변 처음으로"는 열려 있는 동안 그 아래로 내려간다)
+.findBar {
+  position: absolute;
+  top: 10px;
+  right: 20px;
+  z-index: 6;
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  height: 34px;
+  padding: 0 4px 0 10px;
+  background-color: var(--c-elevated);
+  border: 1px solid var(--c-divider);
+  border-radius: 8px;
+  box-shadow: var(--sh-float);
+}
+
+.findInput {
+  width: 180px;
+  min-width: 0;
+  height: 26px;
+  padding: 0;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--c-text);
+  background: none;
+  border: none;
+  outline: none;
+
+  &::placeholder {
+    color: var(--c-placeholder);
+  }
+}
+
+.findCount {
+  min-width: 46px;
+  padding-right: 4px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--c-text-muted);
+  text-align: right;
+}
+
+.findCountNone {
+  color: var(--c-danger);
+}
+
+.findBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  font-size: 12px;
+  color: var(--c-text-soft);
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-radius: 5px;
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.35;
+  }
+
+  &:hover:not(:disabled) {
+    background-color: var(--c-float-hover);
+  }
+}
+
 // 긴 Claude 답변을 읽는 중 그 답변의 시작이 위로 가려지면 뜬다 — 오른쪽 위(맨 아래로 버튼과 같은 쪽)
 .jumpReplyButton {
   position: absolute;
@@ -969,6 +1220,11 @@
 
   &:active {
     transform: translateY(1px);
+  }
+
+  // 찾기 막대가 열려 있으면 그 아래로
+  &.jumpReplyButtonLow {
+    top: 54px;
   }
 }
 
@@ -1098,6 +1354,249 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+// 대화 압축 구분선(MessageItem의 CompactDivider)이 든 답변은 최대 폭까지 — 내용 폭에 맞춰 줄면 선이 짧게 끊긴다
+.messageInner.messageInnerWide {
+  width: 100%;
+}
+
+.compactBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 0;
+}
+
+.compactRule {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+
+  &::before,
+  &::after {
+    flex: 1;
+    height: 1px;
+    content: "";
+    background-color: var(--c-border);
+  }
+}
+
+.compactTitle {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--c-text-2);
+  white-space: nowrap;
+}
+
+.compactMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--c-text-muted);
+}
+
+.compactToggle {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  padding: 2px 6px;
+  font-size: 11px;
+  color: var(--c-text-2);
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  transition: background-color 0.15s, color 0.15s;
+
+  &:hover {
+    color: var(--c-text);
+    background-color: var(--c-hover-alt);
+  }
+}
+
+// 요약 본문 — 길어서(수십 줄) 높이를 묶고 안에서 스크롤한다
+.compactSummary {
+  max-height: 420px;
+  padding: 12px 14px;
+  margin-top: 6px;
+  overflow-y: auto;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--c-text-soft);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: 10px;
+}
+
+// 답변 속 파일 경로 `src/main.ts:120` — IDE에서 열 수 있으면 점선 밑줄, ⌘를 누르고 있으면 링크처럼
+// (meta-down 클래스는 renderer/meta-key.ts가 <html>에 단다)
+.pathCode {
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+
+  :global(.meta-down) &:hover {
+    color: var(--c-accent-text);
+    text-decoration-style: solid;
+    cursor: pointer;
+  }
+}
+
+// 답변 속 Claude의 질문과 내 답 (QuestionCard.tsx) — 답변 말풍선과 같은 바탕에 금색 왼쪽 띠
+.questionCard {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--c-text);
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-left: 3px solid var(--c-accent);
+  border-radius: 12px;
+}
+
+.questionCardHead {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--c-text-2);
+}
+
+.questionCardIcon {
+  color: var(--c-accent);
+}
+
+.questionCardStatus {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  margin-left: auto;
+  font-weight: 400;
+  color: var(--c-text-muted);
+}
+
+.questionCardItem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.questionCardText {
+  white-space: pre-wrap;
+}
+
+.questionCardChip {
+  display: inline-block;
+  padding: 0 6px;
+  margin-right: 6px;
+  font-size: 11px;
+  color: var(--c-text-2);
+  background-color: var(--c-fill-strong);
+  border-radius: 4px;
+}
+
+.questionAnswer {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 6px 10px;
+  background-color: var(--c-accent-soft);
+  border-radius: 8px;
+}
+
+.questionAnswerLabel {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--c-accent-text);
+}
+
+.questionAnswerText {
+  min-width: 0;
+  font-weight: 600;
+  color: var(--c-text);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+// 내 답 안: 고른 선택지(칩)와 직접 입력을 나눠 쌓는다
+.questionAnswerBody {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.questionPicks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.questionPick {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  padding: 1px 9px;
+  font-weight: 600;
+  color: var(--c-text);
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-accent);
+  border-radius: 12px;
+}
+
+.questionPickIcon {
+  font-size: 10px;
+  color: var(--c-accent);
+}
+
+.questionCustomAnswer {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding-left: 9px;
+  border-left: 2px solid var(--c-accent);
+}
+
+.questionCustomLabel {
+  font-size: 11px;
+  color: var(--c-accent-text);
+}
+
+.questionCustomText {
+  color: var(--c-text);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+// 건너뛴 질문
+.questionAnswerSkipped {
+  background-color: var(--c-fill);
+
+  .questionAnswerText {
+    font-weight: 400;
+    color: var(--c-text-muted);
+  }
+}
+
+.questionOther {
+  font-size: 12px;
+  color: var(--c-text-muted);
+  white-space: pre-wrap;
 }
 
 .msgActions {
@@ -1775,10 +2274,6 @@
   gap: 0;
   background-color: var(--c-surface);
   border-top: 1px solid var(--c-border);
-}
-
-.inputAreaDragging {
-  background-color: var(--c-drop-bg);
 }
 
 .dragOverlay {
@@ -3096,6 +3591,54 @@
   color: var(--c-text-muted);
 }
 
+// "Claude 수정" 보기 맨 위 줄 — Git 보기의 브랜치 줄과 같은 모양
+.changedBar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 10px 6px;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: var(--c-text-2);
+  border-bottom: 1px dashed var(--c-divider);
+}
+
+.changedSummary {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11px;
+  color: var(--c-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.changedClearBtn {
+  display: flex;
+  flex-shrink: 0;
+  gap: 5px;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  margin-left: auto;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--c-text-soft);
+  cursor: pointer;
+  background: none;
+  border: 1px solid var(--c-border);
+  border-radius: 5px;
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.45;
+  }
+
+  &:hover:not(:disabled) {
+    color: var(--c-danger);
+    border-color: var(--c-danger);
+  }
+}
+
 .gitBranchName {
   min-width: 0;
   overflow: hidden;
@@ -4062,6 +4605,7 @@
 
 // 탭 하나의 대화 화면 — 보고 있는 탭만 보이고, 나머지는 숨긴 채 응답을 계속 받는다
 .tabView {
+  position: relative; // 파일을 끌어 올 때 탭 화면 전체를 덮는 안내(.dragOverlay)의 기준
   display: flex;
   flex: 1;
   flex-direction: column;

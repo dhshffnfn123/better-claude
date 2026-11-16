@@ -40,9 +40,17 @@ export interface ToolActivity {
     parentToolUseId?: string;
 }
 
+export type CompactSegment = {kind: "compact"} & CompactInfo;
+
 export type MessageSegment =
     | {kind: "text"; text: string}
-    | {kind: "tool"; tool: ToolActivity};
+    | {kind: "tool"; tool: ToolActivity}
+    | CompactSegment;
+
+// 대화 압축 중 — manual: 사용자가 보낸 /compact, auto: 컨텍스트가 차서 CLI가 스스로
+export type Compacting = "manual" | "auto" | null;
+
+const COMPACT_COMMAND_RE = /^\/compact(\s|$)/;
 
 export interface PermissionRequest {
     id: string;
@@ -80,6 +88,7 @@ export interface RunningTokens {
 export interface TurnEnd {
     seq: number;
     stopped: boolean;
+    failed: boolean; // 오류로 끝났다 (사용량 한도·API 오류 등) — 대기 메시지를 보내지 않는다
 }
 
 export type Attention = "permission" | "question" | null;
@@ -134,7 +143,8 @@ export function useClaudeChat(tabId: string, callbacks: ChatCallbacks = {}) {
     const [elapsedMs, setElapsedMs] = useState(0);
     const [runningTokens, setRunningTokens] = useState<RunningTokens>({input: 0, output: 0});
     const [notice, setNotice] = useState<ChatNotice | null>(null);
-    const [turnEnd, setTurnEnd] = useState<TurnEnd>({seq: 0, stopped: false});
+    const [turnEnd, setTurnEnd] = useState<TurnEnd>({seq: 0, stopped: false, failed: false});
+    const [compacting, setCompacting] = useState<Compacting>(null);
     const idCounter = useRef(2);
     const turnSeqRef = useRef(0);
     const startedAtRef = useRef<number | null>(null);
@@ -183,7 +193,8 @@ export function useClaudeChat(tabId: string, callbacks: ChatCallbacks = {}) {
 
     const nextId = useCallback(() => ++idCounter.current, []);
 
-    const startResponse = useCallback((apiCall: () => Promise<void>, userId?: number) => {
+    // compactCommand: 보낸 메시지가 /compact — 진행 표시 문구만 다르다
+    const startResponse = useCallback((apiCall: () => Promise<void>, userId?: number, compactCommand = false) => {
         const assistantId = nextId();
 
         startedAtRef.current = Date.now();
@@ -193,6 +204,7 @@ export function useClaudeChat(tabId: string, callbacks: ChatCallbacks = {}) {
         toolsRef.current = [];
         setRunningTokens({input: 0, output: 0});
         setNotice(null);
+        setCompacting(null);
 
         setIsLoading(true);
         setIsThinking(true);
@@ -205,11 +217,8 @@ export function useClaudeChat(tabId: string, callbacks: ChatCallbacks = {}) {
                 .filter((s): s is { kind: "text"; text: string } => s.kind === "text")
                 .map((s) => s.text)
                 .join("\n\n");
-            const snapshot = segs.map((s) =>
-                s.kind === "text"
-                    ? { kind: "text" as const, text: s.text }
-                    : { kind: "tool" as const, tool: s.tool }
-            );
+            // 텍스트 조각은 이어 붙이며 고치므로 복사한다 (도구·압축 조각은 바뀔 때 통째로 바꿔 끼운다)
+            const snapshot = segs.map((s) => (s.kind === "text" ? {kind: "text" as const, text: s.text} : s));
             setMessages((prev) =>
                 prev.map((m) => (m.id === assistantId ? { ...m, content, segments: snapshot } : m))
             );
@@ -277,6 +286,31 @@ export function useClaudeChat(tabId: string, callbacks: ChatCallbacks = {}) {
             flush();
         });
 
+        // 대화 압축: 진행 표시(start~done) → 답변 자리에 구분선(boundary) → 구분선의 "요약 보기"(summary).
+        // 자동 압축은 답변 도중에 일어나고, 끝나면 같은 답변이 이어진다.
+        const removeCompact = onTab("compact", tabId, (ev) => {
+            if (ev.phase === "start") {
+                setCompacting(compactCommand ? "manual" : "auto");
+            } else if (ev.phase === "done" || ev.phase === "failed") {
+                // 실패는 따로 알리지 않는다: /compact 실패는 CLI가 답변 글로 알려 주고("Error: …"),
+                // 자동 압축 실패("too_few_groups" 등)는 CLI도 조용히 넘어간다
+                setCompacting(null);
+            } else if (ev.phase === "boundary") {
+                setCompacting(null);
+                segs.push({kind: "compact", trigger: ev.trigger, preTokens: ev.preTokens, postTokens: ev.postTokens});
+                flush();
+            } else if (ev.phase === "summary" && ev.summary) {
+                for (let i = segs.length - 1; i >= 0; i--) {
+                    const sg = segs[i];
+                    if (sg.kind === "compact") {
+                        segs[i] = {...sg, summary: ev.summary};
+                        flush();
+                        break;
+                    }
+                }
+            }
+        });
+
         let finished = false;
         const finish = (stopped: boolean) => {
             if (finished) return;
@@ -289,6 +323,7 @@ export function useClaudeChat(tabId: string, callbacks: ChatCallbacks = {}) {
             removeThinking();
             removeToolUse();
             removeToolResult();
+            removeCompact();
             removeDone();
             if (stopped) {
                 // 결과를 못 받은 도구가 계속 "실행 중"으로 남지 않게 정리한다
@@ -307,9 +342,10 @@ export function useClaudeChat(tabId: string, callbacks: ChatCallbacks = {}) {
             }
             setIsThinking(false);
             setIsLoading(false);
+            setCompacting(null);
             const seq = ++turnSeqRef.current;
-            setTurnEnd({seq, stopped});
             const failedNotice = failed as ChatNotice | null;
+            setTurnEnd({seq, stopped, failed: !!failedNotice});
             const lastText = [...segs].reverse().find((sg) => sg.kind === "text" && sg.text.trim());
             callbacksRef.current.onTurnEnd?.({
                 seq,
@@ -319,7 +355,9 @@ export function useClaudeChat(tabId: string, callbacks: ChatCallbacks = {}) {
                     ? plainSummary(failedNotice.message)
                     : lastText?.kind === "text"
                       ? plainSummary(lastText.text)
-                      : "작업을 마쳤습니다",
+                      : segs.some((sg) => sg.kind === "compact")
+                        ? "대화를 요약했습니다"
+                        : "작업을 마쳤습니다",
             });
         };
         finishRef.current = finish;
@@ -350,7 +388,11 @@ export function useClaudeChat(tabId: string, callbacks: ChatCallbacks = {}) {
 
             lastSentRef.current = { message: trimmed, images };
             const imageDataList = images.map(({ data, mediaType }) => ({ data, mediaType }));
-            startResponse(() => window.electronAPI.sendMessage(tabId, trimmed, imageDataList), userId);
+            startResponse(
+                () => window.electronAPI.sendMessage(tabId, trimmed, imageDataList),
+                userId,
+                COMPACT_COMMAND_RE.test(trimmed)
+            );
         },
         [isLoading, startResponse, nextId, tabId]
     );
@@ -368,7 +410,11 @@ export function useClaudeChat(tabId: string, callbacks: ChatCallbacks = {}) {
         setMessages(trimmed);
         const imageData = images.map(({ data, mediaType }) => ({ data, mediaType }));
         // uuid를 넘기면 main이 그 메시지 직전부터 이어가서 옛 질문·답이 모델 기록에서도 빠진다
-        startResponse(() => window.electronAPI.sendMessage(tabId, message, imageData, userMsg.uuid), userMsg.id);
+        startResponse(
+            () => window.electronAPI.sendMessage(tabId, message, imageData, userMsg.uuid),
+            userMsg.id,
+            COMPACT_COMMAND_RE.test(message)
+        );
     }, [isLoading, messages, startResponse, tabId]);
 
     // 마지막 사용자 메시지를 수정한 뒤 다시 보낸다.
@@ -385,7 +431,11 @@ export function useClaudeChat(tabId: string, callbacks: ChatCallbacks = {}) {
         setMessages(trimmed);
         lastSentRef.current = { message: text, images };
         const imageData = images.map(({ data, mediaType }) => ({ data, mediaType }));
-        startResponse(() => window.electronAPI.sendMessage(tabId, text, imageData, userMsg.uuid), userMsg.id);
+        startResponse(
+            () => window.electronAPI.sendMessage(tabId, text, imageData, userMsg.uuid),
+            userMsg.id,
+            COMPACT_COMMAND_RE.test(text)
+        );
     }, [isLoading, messages, startResponse, tabId]);
 
     // 허용/거부를 CLI에 되돌려 보낸다. 예전처럼 요청을 통째로 다시 보내는 게 아니라,
@@ -441,6 +491,7 @@ export function useClaudeChat(tabId: string, callbacks: ChatCallbacks = {}) {
         messages,
         isLoading,
         isThinking,
+        compacting,
         permissionRequest,
         questionRequest,
         setPermissionRequest,

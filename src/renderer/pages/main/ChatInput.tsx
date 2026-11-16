@@ -200,9 +200,18 @@ interface Props {
     turnEnd: TurnEnd;
     // 다른 대화로 옮기면 바뀐다 — 대기 중인 메시지를 새 대화로 보내지 않고 입력창으로 되돌린다
     resetSignal: number;
+    promptHooks?: PromptHooks;
+    // 탭 화면에 끌어다 놓은 파일을 붙이는 함수를 넘긴다 (빠질 때 null)
+    onRegisterAddFiles?: (add: ((files: File[]) => void) | null) => void;
 }
 
-export function ChatInput({tabId, active, isLoading, onSend, onStop, turnEnd, resetSignal}: Props) {
+// 시스템 프롬프트 추가·삭제 전후에 셸이 할 일: confirm = 계속할지(백그라운드 작업이 꺼질 수 있다), changed = 탭마다 안내
+export interface PromptHooks {
+    confirm: () => boolean;
+    changed: () => void;
+}
+
+export function ChatInput({tabId, active, isLoading, onSend, onStop, turnEnd, resetSignal, promptHooks, onRegisterAddFiles}: Props) {
     const [input, setInput] = useState("");
     const [selectedImages, setSelectedImages] = useState<ImagePayload[]>([]);
     const [selectedFiles, setSelectedFiles] = useState<{name: string; path: string}[]>([]);
@@ -212,7 +221,6 @@ export function ChatInput({tabId, active, isLoading, onSend, onStop, turnEnd, re
     const [commands, setCommands] = useState<SlashCommand[]>([]);
     const [commandsOpen, setCommandsOpen] = useState(false);
     const [activeCommand, setActiveCommand] = useState(0);
-    const [isDragging, setIsDragging] = useState(false);
     const [mentionOpen, setMentionOpen] = useState(false);
     const [mentionFiles, setMentionFiles] = useState<string[]>([]);
     const [activeMention, setActiveMention] = useState(0);
@@ -222,7 +230,6 @@ export function ChatInput({tabId, active, isLoading, onSend, onStop, turnEnd, re
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const resizeFrameRef = useRef<number | null>(null);
-    const dragCounterRef = useRef(0);
     const mentionStartRef = useRef(-1);
     const pendingCursorRef = useRef<number | null>(null);
     const activeMentionRef = useRef<HTMLDivElement>(null);
@@ -371,7 +378,9 @@ export function ChatInput({tabId, active, isLoading, onSend, onStop, turnEnd, re
         sendAfterStopRef.current = false;
         if (!queued) return;
         setQueued(null);
-        if (turnEnd.stopped && !sendNow) {
+        // 중지했거나 오류로 끝났으면 보내지 않고 입력창으로 되돌린다 — 사용량 한도 같은 오류면 보내도 같은 오류가 난다.
+        // ("지금 보내기"는 일부러 멈추고 보내는 것이라 그대로 보낸다)
+        if ((turnEnd.stopped || turnEnd.failed) && !sendNow) {
             restoreDraft(queued);
             return;
         }
@@ -518,38 +527,12 @@ export function ChatInput({tabId, active, isLoading, onSend, onStop, turnEnd, re
         await addFiles(files);
     };
 
-    const hasDraggedFiles = (e: React.DragEvent) =>
-        Array.from(e.dataTransfer.types).includes("Files");
-
-    const handleDragEnter = (e: React.DragEvent) => {
-        if (!hasDraggedFiles(e)) return;
-        e.preventDefault();
-        dragCounterRef.current += 1;
-        setIsDragging(true);
-    };
-
-    const handleDragLeave = (e: React.DragEvent) => {
-        if (!hasDraggedFiles(e)) return;
-        e.preventDefault();
-        dragCounterRef.current -= 1;
-        if (dragCounterRef.current <= 0) {
-            dragCounterRef.current = 0;
-            setIsDragging(false);
-        }
-    };
-
-    const handleDragOver = (e: React.DragEvent) => {
-        if (!hasDraggedFiles(e)) return;
-        e.preventDefault();
-    };
-
-    const handleDrop = (e: React.DragEvent) => {
-        if (!hasDraggedFiles(e)) return;
-        e.preventDefault();
-        dragCounterRef.current = 0;
-        setIsDragging(false);
-        void addFiles(Array.from(e.dataTransfer.files));
-    };
+    // 탭 화면 전체에 끌어다 놓은 파일을 받는다 (ChatTabView가 드래그를 맡는다 — 예전에는 입력창 위에 놓아야만 붙었다)
+    useEffect(() => {
+        if (!onRegisterAddFiles) return;
+        onRegisterAddFiles((files) => void addFiles(files));
+        return () => onRegisterAddFiles(null);
+    }, [onRegisterAddFiles, addFiles]);
 
     const removeImage = (index: number) => {
         setSelectedImages((prev) => prev.filter((_, i) => i !== index));
@@ -562,14 +545,18 @@ export function ChatInput({tabId, active, isLoading, onSend, onStop, turnEnd, re
     const handleAddPrompt = async () => {
         const trimmed = newPromptInput.trim();
         if (!trimmed) return;
+        if (promptHooks && !promptHooks.confirm()) return;
         const updated = await window.electronAPI.addPrompt(trimmed);
         setPrompts(updated);
         setNewPromptInput("");
+        promptHooks?.changed();
     };
 
     const handleRemovePrompt = async (index: number) => {
+        if (promptHooks && !promptHooks.confirm()) return;
         const updated = await window.electronAPI.removePrompt(index);
         setPrompts(updated);
+        promptHooks?.changed();
     };
 
     const canSend =
@@ -579,19 +566,7 @@ export function ChatInput({tabId, active, isLoading, onSend, onStop, turnEnd, re
         mentionedFiles.length > 0;
 
     return (
-        <div
-            className={cx("inputArea", {inputAreaDragging: isDragging})}
-            onDragEnter={handleDragEnter}
-            onDragLeave={handleDragLeave}
-            onDragOver={handleDragOver}
-            onDrop={handleDrop}
-        >
-            {isDragging && (
-                <div className={cx("dragOverlay")}>
-                    <FontAwesomeIcon icon={faPaperclip} />
-                    <span>여기에 파일을 놓으세요</span>
-                </div>
-            )}
+        <div className={cx("inputArea")}>
             {promptInputOpen && (
                 <div className={cx("promptArea")}>
                     {prompts.length > 0 && (
@@ -806,6 +781,7 @@ export function ChatInput({tabId, active, isLoading, onSend, onStop, turnEnd, re
                     )}
                 </button>
                 <textarea
+                    data-chat-input
                     ref={textareaRef}
                     className={cx("textarea")}
                     placeholder={

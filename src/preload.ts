@@ -22,6 +22,7 @@ const TAB_EVENTS = {
     mcp: "chat:mcp",
     changedFiles: "files:changed",
     session: "chat:session",
+    compact: "chat:compact",
 } as const;
 
 contextBridge.exposeInMainWorld("electronAPI", {
@@ -69,6 +70,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
     selectDirectory: (tabId: string) => ipcRenderer.invoke("dialog:select_directory", tabId),
     searchFiles: (tabId: string, query: string) => ipcRenderer.invoke("files:search", tabId, query),
     getFileChanges: (tabId: string, path: string) => ipcRenderer.invoke("files:changes", tabId, path),
+    clearChangedFiles: (tabId: string) => ipcRenderer.invoke("files:clear_changed", tabId),
+    resolveEditorTarget: (tabId: string, raw: string) => ipcRenderer.invoke("editor:resolve", tabId, raw),
+    openInEditor: (tabId: string, raw: string) => ipcRenderer.invoke("editor:open", tabId, raw),
     listDir: (tabId: string, dir: string) => ipcRenderer.invoke("files:list_dir", tabId, dir),
     readFileForView: (tabId: string, path: string) => ipcRenderer.invoke("files:read", tabId, path),
     revealFile: (tabId: string, path: string) => ipcRenderer.invoke("files:reveal", tabId, path),

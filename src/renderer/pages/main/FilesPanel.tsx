@@ -7,8 +7,10 @@ import {
     faArrowUpRightFromSquare,
     faChevronDown,
     faChevronRight,
+    faCode,
     faCodeBranch,
     faCopy,
+    faEraser,
     faFile,
     faFolder,
     faFolderOpen,
@@ -286,6 +288,19 @@ function FileViewer({tabId, filePath, cwd, info, gitEntry, gitVersion, preferTab
         };
     }, [view, filePath]);
 
+    // 이 파일을 열 JetBrains IDE (그 프로젝트를 마지막으로 연 IDE) — 없으면 버튼을 숨긴다
+    const [ide, setIde] = useState<EditorTarget | null>(null);
+    useEffect(() => {
+        let alive = true;
+        setIde(null);
+        void window.electronAPI.resolveEditorTarget(tabId, filePath).then((t) => {
+            if (alive) setIde(t);
+        });
+        return () => {
+            alive = false;
+        };
+    }, [tabId, filePath]);
+
     const copyPath = () => {
         void copyText(filePath).then((ok) => {
             if (!ok) return;
@@ -311,6 +326,11 @@ function FileViewer({tabId, filePath, cwd, info, gitEntry, gitVersion, preferTab
                     {folder && <span className={cx("fileViewerDir")}>{middleTruncate(folder, 60)}</span>}
                 </div>
                 <div className={cx("fileViewerActions")}>
+                    {ide?.ok && (
+                        <button onClick={() => void window.electronAPI.openInEditor(tabId, filePath)} title={`${ide.app}에서 열기`}>
+                            <FontAwesomeIcon icon={faCode} />
+                        </button>
+                    )}
                     <button onClick={() => void window.electronAPI.revealFile(tabId, filePath)} title="Finder에서 보기">
                         <FontAwesomeIcon icon={faArrowUpRightFromSquare} />
                     </button>
@@ -682,6 +702,32 @@ export function FilesPanel({tabId, cwd, changed, refreshKey, width, onResize, on
         return rows;
     };
 
+    // "Claude 수정" 내역 지우기 — 오래 작업하면 쌓여서 너무 많아진다. 파일은 그대로, 목록과 표시만 비운다.
+    const clearChanged = () => {
+        const n = changed.files.length;
+        if (n === 0) return;
+        if (!window.confirm(`Claude 수정 내역 ${n}개를 지울까요?\n파일은 그대로 두고 목록과 '수정' 표시만 지웁니다. 이후 수정부터 다시 쌓입니다.`)) return;
+        void window.electronAPI.clearChangedFiles(tabId);
+    };
+
+    // "Claude 수정" 보기 맨 위 줄: 몇 개인지(지운 적 있으면 언제 이후인지) + 내역 지우기
+    const changedBar = (
+        <div key="c:bar" className={cx("changedBar")}>
+            <span className={cx("changedSummary")}>
+                파일 {changed.files.length}
+                {changed.clearedAt ? ` · ${formatTime(changed.clearedAt)}에 지운 뒤` : ""}
+            </span>
+            <button
+                className={cx("changedClearBtn")}
+                onClick={clearChanged}
+                disabled={changed.files.length === 0}
+                title="이 대화의 Claude 수정 내역을 비웁니다 (파일은 그대로)"
+            >
+                <FontAwesomeIcon icon={faEraser} /> 내역 지우기
+            </button>
+        </div>
+    );
+
     // "Claude 수정" 트리 — 모두 펼친 채로
     const renderChanged = (node: TreeNode<ChangedFile>, depth: number): ReactElement[] =>
         sortedNodes(node).flatMap((n) =>
@@ -819,9 +865,22 @@ export function FilesPanel({tabId, cwd, changed, refreshKey, width, onResize, on
                 {view === "git"
                     ? renderGit()
                     : view === "claude"
-                      ? insideFiles.length > 0
-                          ? renderChanged(buildTree(cwd, insideFiles), 0)
-                          : outsideFiles.length === 0 && note("none", 0, "이 대화에서 Claude가 바꾼 파일이 아직 없습니다")
+                      ? [
+                            changedBar,
+                            ...(insideFiles.length > 0
+                                ? renderChanged(buildTree(cwd, insideFiles), 0)
+                                : outsideFiles.length === 0
+                                  ? [
+                                        note(
+                                            "none",
+                                            0,
+                                            changed.clearedAt
+                                                ? "내역을 지운 뒤 Claude가 바꾼 파일이 아직 없습니다"
+                                                : "이 대화에서 Claude가 바꾼 파일이 아직 없습니다"
+                                        ),
+                                    ]
+                                  : []),
+                        ]
                       : cwd && renderDir(cwd, 0)}
                 {view !== "git" && outsideFiles.length > 0 && (
                     <>

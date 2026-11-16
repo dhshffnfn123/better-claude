@@ -8,6 +8,7 @@ import {readJsonFile, writeJsonFile} from "./main/services/json-store";
 import {expandPathForChildProcesses} from "./main/services/path-expander";
 import {loadSdk} from "./main/services/claude-sdk";
 import {getGitDiff, getGitStatus} from "./main/services/git-changes";
+import {openInIde, pickIde} from "./main/services/jetbrains";
 import type {GitChange, GitStatusResult} from "./main/services/git-changes";
 import type {
     McpServerStatus,
@@ -85,6 +86,8 @@ interface ChatTab {
     fileTurn: number;
     // 비울 때마다 올린다 — 세션 기록을 읽는 동안 다른 대화로 옮겼으면 그 결과를 버리기 위해
     changedFilesGen: number;
+    // "Claude 수정" 내역을 지운 시각(0 = 안 지움) — 이 시각 이후에 끝난 수정만 센다
+    changesClearedAt: number;
     // 이 대화에서 최근에 끝난 백그라운드 작업 (최신순). CLI 프로세스가 끝나도 남는다.
     finishedTasks: FinishedTask[];
     // 끝난 셸 작업의 출력 파일 (작업 id → 경로) — 끝난 뒤에도 출력을 보여주려고
@@ -115,6 +118,7 @@ function createTab(id: string, sender: Electron.WebContents): ChatTab {
         pendingEdits: new Map(),
         fileTurn: 0,
         changedFilesGen: 0,
+        changesClearedAt: 0,
         finishedTasks: [],
         finishedOutputFiles: new Map(),
         lastGit: null,
@@ -468,13 +472,33 @@ function parseQuestions(input: Record<string, unknown>): AskQuestion[] | null {
 }
 
 // 답변은 tool_result로 모델에게 전달된다. 영어 라벨을 그대로 실어 보낸다.
+// 화면도 이 글을 다시 읽어 답변 속 질문 카드에 "내 답"을 보여 준다(src/renderer/question-answers.ts) —
+// 형식을 바꾸면 그쪽 파서도 같이 바꿀 것. 질문마다 순서대로 "- 이름: 답" 한 줄이고, 답 안에서
+//   고른 선택지는 ", "로 잇고, 직접 입력은 "Other: "로 시작하는 줄로 따로 둔다(도구가 직접 입력을 부르는 이름).
+//   예전에는 둘을 ", "로 이어 붙여 화면에서 어디까지가 선택지인지 가를 수 없었다.
+//   여러 줄은 둘째 줄부터 두 칸 들여 쓴다 — 그래야 답 안의 "- "로 시작하는 줄이 다음 질문으로 읽히지 않는다.
+//   모델은 이 형식을 그대로 읽는다(확인함).
+const QUESTION_ANSWER_PREFIX = "The user answered:";
+const QUESTION_OTHER_PREFIX = "Other: ";
 function formatQuestionAnswers(questions: AskQuestion[], answers: string[][]): string {
     const lines = questions.map((q, i) => {
-        const picked = (answers[i] ?? []).filter(Boolean);
-        const label = q.header || q.question;
-        return `- ${label}: ${picked.length > 0 ? picked.join(", ") : "(skipped)"}`;
+        // 질문 창은 [고른 선택지들, 직접 입력]을 보낸다 — 선택지 이름과 같으면 고른 것, 아니면 직접 입력
+        const given = (answers[i] ?? []).map((a) => a.trim()).filter(Boolean);
+        const labels = new Set(q.options.map((o) => o.label));
+        const picks = given.filter((a) => labels.has(a));
+        const custom = given.filter((a) => !labels.has(a)).join("\n");
+        const parts: string[] = [];
+        if (picks.length > 0) parts.push(picks.join(", "));
+        if (custom) parts.push(QUESTION_OTHER_PREFIX + custom);
+        const text = parts.length > 0 ? parts.join("\n") : "(skipped)";
+        return `- ${q.header || q.question}: ${text.replace(/\n/g, "\n  ")}`;
     });
-    return `The user answered:\n${lines.join("\n")}`;
+    return `${QUESTION_ANSWER_PREFIX}\n${lines.join("\n")}`;
+}
+
+// 도구 결과 미리보기 — 화면에는 앞부분만 보낸다. 질문의 답(위 형식)은 질문 카드가 통째로 다시 읽으므로 넉넉히.
+function toolResultPreview(text: string): string {
+    return text.slice(0, text.startsWith(QUESTION_ANSWER_PREFIX) ? 4000 : 500);
 }
 
 type PendingPermission = (result: PermissionResult) => void;
@@ -812,6 +836,8 @@ function trackFileEdits(tab: ChatTab, msg: {type: string; message?: unknown}, at
             if (!p) continue;
             tab.pendingEdits.delete(b.tool_use_id);
             if (b.is_error) continue;
+            // 내역을 지운 시각 이전에 끝난 수정 — 지운 내역이다
+            if (at <= tab.changesClearedAt) continue;
             const f = tab.changedFiles.get(p.path) ?? {path: p.path, edits: 0, lastTurn: tab.fileTurn, lastAt: at, hunks: []};
             f.edits += 1;
             f.lastTurn = tab.fileTurn;
@@ -828,6 +854,7 @@ function changedFileList(tab: ChatTab) {
     return {
         turn: tab.fileTurn,
         files: [...tab.changedFiles.values()].map((f) => ({path: f.path, edits: f.edits, lastTurn: f.lastTurn, lastAt: f.lastAt})),
+        clearedAt: tab.changesClearedAt || undefined,
     };
 }
 
@@ -840,6 +867,40 @@ function resetChangedFiles(tab: ChatTab) {
     tab.pendingEdits.clear();
     tab.fileTurn = 0;
     tab.changedFilesGen++;
+    tab.changesClearedAt = 0;
+}
+
+// "Claude 수정" 내역을 지운 시각 — 대화(세션)별로 기억한다. 대화를 다시 열면(앱 재시작 포함) 고친 파일을
+// 세션 기록 전체에서 다시 계산하므로, 이걸 기억하지 않으면 지운 내역이 그대로 되살아난다.
+// userData/changes-cleared.json = {세션 id: 지운 시각(ms)}, 최근 것 200개까지만.
+const CLEARED_KEEP = 200;
+let clearedAtCache: Record<string, number> | null = null;
+
+function clearedFile(): string {
+    return path.join(app.getPath("userData"), "changes-cleared.json");
+}
+
+function clearedAtBySession(): Record<string, number> {
+    if (!clearedAtCache) {
+        const raw = readJsonFile<unknown>(clearedFile(), {});
+        clearedAtCache = {};
+        if (raw && typeof raw === "object") {
+            for (const [sid, at] of Object.entries(raw as Record<string, unknown>)) {
+                if (typeof at === "number" && Number.isFinite(at)) clearedAtCache[sid] = at;
+            }
+        }
+    }
+    return clearedAtCache;
+}
+
+function saveClearedAt(sid: string, at: number) {
+    const map = {...clearedAtBySession(), [sid]: at};
+    clearedAtCache = Object.fromEntries(Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, CLEARED_KEEP));
+    try {
+        writeJsonFile(clearedFile(), clearedAtCache);
+    } catch (e) {
+        console.error("[files] 내역 지운 시각 저장 실패", e);
+    }
 }
 
 // 세션 기록 항목의 시각. SDK 타입에는 없지만 실제 항목에는 timestamp(ISO 문자열)가 들어 있다(확인함).
@@ -849,15 +910,100 @@ function entryTime(e: unknown): number {
     return Number.isFinite(t) ? t : 0;
 }
 
+// ── 대화별 비용·컨텍스트 (작업 폴더 줄의 "$0.12", 컨텍스트 게이지) ──
+// 둘 다 응답이 끝날 때만 CLI가 알려 준다. 그래서 앱을 다시 켜거나 지난 대화를 열면 다음 응답 전까지 비어 있었다.
+// 받을 때마다 대화별로 저장해 두고(userData/session-stats.json, 최근 300개), 대화를 열 때 다시 보낸다.
+// 앱 밖(터미널)에서 이어 쓴 대화는 저장한 값이 낡았다 — 그때는 기록의 마지막 응답 사용량으로 컨텍스트만 다시 계산한다
+// (CLI의 getContextUsage "summary"도 마지막 응답의 사용량으로 계산한다). 비용은 다시 계산할 방법이 없어 보이지 않는다.
+interface ApiUsage {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+}
+interface ContextStat {
+    totalTokens: number;
+    maxTokens: number;
+    percentage: number;
+}
+interface SavedSessionStat {
+    cost?: number;
+    context?: ContextStat;
+    at: number; // 저장한 시각(epoch ms)
+}
+interface SessionStatsFile {
+    sessions: Record<string, SavedSessionStat>;
+    maxTokensByModel: Record<string, number>; // 모델별 컨텍스트 크기 — 다시 계산할 때 게이지의 분모
+}
+
+const SESSION_STATS_KEEP = 300;
+let sessionStatsCache: SessionStatsFile | null = null;
+
+function sessionStatsFile(): string {
+    return path.join(app.getPath("userData"), "session-stats.json");
+}
+
+function sessionStats(): SessionStatsFile {
+    if (!sessionStatsCache) {
+        const raw = readJsonFile<Partial<SessionStatsFile>>(sessionStatsFile(), {});
+        sessionStatsCache = {
+            sessions: raw && typeof raw.sessions === "object" && raw.sessions ? raw.sessions : {},
+            maxTokensByModel: raw && typeof raw.maxTokensByModel === "object" && raw.maxTokensByModel ? raw.maxTokensByModel : {},
+        };
+    }
+    return sessionStatsCache;
+}
+
+function saveSessionStats(sid: string, update: {cost?: number; context?: ContextStat; model?: string}) {
+    const stats = sessionStats();
+    const prev = stats.sessions[sid];
+    stats.sessions[sid] = {
+        cost: update.cost ?? prev?.cost,
+        context: update.context ?? prev?.context,
+        at: Date.now(),
+    };
+    if (update.context && update.model && update.context.maxTokens > 0) stats.maxTokensByModel[update.model] = update.context.maxTokens;
+    stats.sessions = Object.fromEntries(Object.entries(stats.sessions).sort((a, b) => b[1].at - a[1].at).slice(0, SESSION_STATS_KEEP));
+    try {
+        writeJsonFile(sessionStatsFile(), stats);
+    } catch (e) {
+        console.error("[stats] 저장 실패", e);
+    }
+}
+
+function restoreSessionStats(tab: ChatTab, sid: string, lastUsage: ApiUsage | null, lastModel: string, lastAt: number) {
+    if (tab.sessionId !== sid) return; // 읽는 사이 다른 대화로 옮겼다
+    const stats = sessionStats();
+    const saved = stats.sessions[sid];
+    // 앱에서 마지막으로 받은 값이 기록의 끝보다 나중이면 그대로 쓴다 (응답이 끝난 뒤에 저장하므로)
+    if (saved && saved.at >= lastAt) {
+        if (typeof saved.cost === "number") send(tab, "chat:cost", {totalCostUsd: saved.cost});
+        if (saved.context) send(tab, "chat:context", saved.context);
+        return;
+    }
+    if (!lastUsage) return;
+    // CLI(getContextUsage "summary")와 같은 셈: 마지막 요청에 들어간 입력(캐시 포함)만 센다 — 그 답의 출력은 빼고.
+    // 출력까지 더했더니 앱이 받았던 값보다 정확히 그 답의 출력 토큰만큼 많았다(38,568 vs 38,473).
+    const total =
+        (lastUsage.input_tokens ?? 0) + (lastUsage.cache_creation_input_tokens ?? 0) + (lastUsage.cache_read_input_tokens ?? 0);
+    const max = stats.maxTokensByModel[lastModel] ?? saved?.context?.maxTokens;
+    if (!max || total <= 0) return;
+    send(tab, "chat:context", {totalTokens: total, maxTokens: max, percentage: Math.round((total / max) * 100)});
+}
+
 // 저장된 대화를 열면 세션 기록에서 고친 파일을 다시 계산한다 (서브에이전트 항목 포함).
 // 반영했으면 true. 읽는 사이 새 대화·다른 대화·폴더 변경이 있었으면 아무것도 바꾸지 않고 false.
 async function loadChangedFilesFromSession(tab: ChatTab, sid: string): Promise<boolean> {
     resetChangedFiles(tab);
+    tab.changesClearedAt = clearedAtBySession()[sid] ?? 0;
     const gen = tab.changedFilesGen;
     try {
         const {getSessionMessages} = await loadSdk();
         const entries = await getSessionMessages(sid);
         if (gen !== tab.changedFilesGen) return false;
+        let lastUsage: ApiUsage | null = null;
+        let lastModel = "";
+        let lastAt = 0;
         for (const e of entries) {
             if (e.type === "user" && !e.parent_tool_use_id) {
                 const c = (e.message as {content?: unknown} | undefined)?.content;
@@ -865,7 +1011,19 @@ async function loadChangedFilesFromSession(tab: ChatTab, sid: string): Promise<b
                 if (isPrompt) tab.fileTurn += 1;
             }
             trackFileEdits(tab, e, entryTime(e));
+            // 슬래시 명령의 출력 줄("<local-command-stdout>Compacted")은 CLI가 result를 낸 뒤에 적어서 앱이 통계를
+            // 저장한 시각보다 늦게 찍힌다 — 세면 /compact 직후 다시 열 때마다 "터미널에서 이어 쓴 대화"로 보고
+            // 저장값을 버렸다(재현됨). 컨텍스트를 바꾸지 않는 줄이라 뺀다.
+            if (!contentText((e.message as {content?: unknown} | undefined)?.content).includes("<local-command-stdout>")) {
+                lastAt = Math.max(lastAt, entryTime(e));
+            }
+            const m = e.message as {model?: string; usage?: ApiUsage} | undefined;
+            if (e.type === "assistant" && !e.parent_tool_use_id && m?.usage) {
+                lastUsage = m.usage;
+                lastModel = m.model ?? "";
+            }
         }
+        restoreSessionStats(tab, sid, lastUsage, lastModel, lastAt);
         return true;
     } catch (e) {
         console.error("[files] 세션 기록에서 고친 파일 계산 실패", e);
@@ -1268,11 +1426,9 @@ async function reportContextUsage(s: LiveSession) {
         const usage = await withTimeout(s.q.getContextUsage({detail: "summary"}), 5000);
         // 기다리는 사이 중지됐으면 보내지 않는다
         if (s.stopped) return;
-        send(s.tab, "chat:context", {
-            totalTokens: usage.totalTokens,
-            maxTokens: usage.rawMaxTokens,
-            percentage: usage.percentage,
-        });
+        const context = {totalTokens: usage.totalTokens, maxTokens: usage.rawMaxTokens, percentage: usage.percentage};
+        send(s.tab, "chat:context", context);
+        if (s.tab.sessionId) saveSessionStats(s.tab.sessionId, {context, model: s.tab.model});
     } catch (e) {
         console.error("[context] 사용량 조회 실패", e);
     }
@@ -1570,7 +1726,18 @@ interface LoadedTool {
     resultPreview?: string;
 }
 
-type LoadedSegment = {kind: "text"; text: string} | {kind: "tool"; tool: LoadedTool};
+// compact: 대화 압축(/compact 또는 컨텍스트가 차서 자동) — 앞 대화가 이 요약으로 바뀌었다
+type LoadedSegment =
+    | {kind: "text"; text: string}
+    | {kind: "tool"; tool: LoadedTool}
+    | {
+          kind: "compact";
+          trigger?: "manual" | "auto";
+          preTokens?: number;
+          postTokens?: number;
+          summary?: string;
+          restored?: boolean; // 기록에서 불러옴 — 그 앞 메시지는 화면에 없다(요약 속에만 있다)
+      };
 
 interface LoadedMessage {
     role: "user" | "assistant";
@@ -1595,6 +1762,38 @@ interface ContentBlock {
     source?: {type?: string; media_type?: string; data?: string};
 }
 
+// 압축 요약 — CLI가 앞 대화 대신 넣는 사용자 메시지(영어, CLI가 쓴 것). 라이브에서는 isSynthetic,
+// 기록에서는 isCompactSummary가 붙어 온다.
+const COMPACT_SUMMARY_PREFIX = "This session is being continued from a previous conversation";
+
+function contentText(content: unknown): string {
+    if (typeof content === "string") return content;
+    if (!Array.isArray(content)) return "";
+    return (content as {type?: string; text?: string}[])
+        .filter((b) => b?.type === "text" && typeof b.text === "string")
+        .map((b) => b.text)
+        .join("\n");
+}
+
+// 화면에 보일 요약 본문만 — 첫 안내 문장, <system-reminder>, 끝의 모델용 지시("If you need specific details…",
+// "Continue the conversation…")를 뺀다. 문구가 바뀌어 못 찾으면 그 부분은 그대로 둔다.
+function cleanCompactSummary(text: string): string {
+    let t = text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").trim();
+    if (t.startsWith(COMPACT_SUMMARY_PREFIX)) t = t.slice(t.indexOf("\n") >= 0 ? t.indexOf("\n") : t.length).trim();
+    const tails = ["If you need specific details from before compaction", "Continue the conversation from where it left off"]
+        .map((m) => t.indexOf(m))
+        .filter((i) => i > 0);
+    if (tails.length > 0) t = t.slice(0, Math.min(...tails)).trim();
+    return t.replace(/^Summary:\s*\n/, "").trim();
+}
+
+// 라이브: isSynthetic 사용자 메시지가 이 문장으로 시작하면 요약 (사용자가 붙여 넣은 글은 isSynthetic이 아니다)
+function compactSummaryText(content: unknown): string | null {
+    const text = contentText(content);
+    if (!text.trimStart().startsWith(COMPACT_SUMMARY_PREFIX)) return null;
+    return cleanCompactSummary(text) || text.trim();
+}
+
 // 슬래시 명령 실행은 기록에 <command-name>/x</command-name><command-args>…</command-args>로 남는다
 function describeCommandEntry(text: string): string | null {
     const name = text.match(/<command-name>([\s\S]*?)<\/command-name>/)?.[1]?.trim();
@@ -1613,6 +1812,8 @@ function sessionToMessages(entries: SessionMessage[]): LoadedMessage[] {
     let turnUser: LoadedMessage | null = null;
     let turnTokens = {input: 0, output: 0};
     const countedIds = new Set<string>();
+    // 방금 만든, 아직 요약만 든 답변 — 바로 뒤에 "/compact" 명령이 오면 명령을 그 앞에 놓는다
+    let compactReply: LoadedMessage | null = null;
 
     const closeAssistant = () => {
         if (assistant) {
@@ -1635,7 +1836,23 @@ function sessionToMessages(entries: SessionMessage[]): LoadedMessage[] {
         const blocks: ContentBlock[] =
             typeof raw?.content === "string" ? [{type: "text", text: raw.content}] : raw?.content ?? [];
 
+        // 대화 압축 요약. 기록은 마지막 압축부터만 오고(그 앞 메시지는 요약 속에만 있다), 요약이 사용자 메시지로
+        // 적혀 있다 — "나" 말풍선이 아니라 답변 자리의 구분선으로 둔다. 자동 압축 뒤 이어진 응답은 같은 답변에 붙는다.
+        // 기록에는 "/compact" 명령이 요약 뒤에 적히므로, 바로 뒤에 오면 화면에서는 명령 → 요약 순서로 바꾼다.
+        if ((entry as {isCompactSummary?: boolean}).isCompactSummary) {
+            closeAssistant();
+            const text = contentText(raw?.content);
+            assistant = {
+                role: "assistant",
+                content: "",
+                segments: [{kind: "compact", trigger: "auto", summary: cleanCompactSummary(text) || text.trim(), restored: true}],
+            };
+            compactReply = assistant;
+            continue;
+        }
+
         if (entry.type === "assistant") {
+            compactReply = null;
             if (!assistant) assistant = {role: "assistant", content: "", segments: []};
             const apiMessage = entry.message as {id?: string; usage?: {input_tokens?: number; output_tokens?: number}} | undefined;
             if (apiMessage?.id && apiMessage.usage && !countedIds.has(apiMessage.id)) {
@@ -1669,11 +1886,14 @@ function sessionToMessages(entries: SessionMessage[]): LoadedMessage[] {
                 if (tool) {
                     const text = typeof b.content === "string" ? b.content : JSON.stringify(b.content ?? "");
                     tool.status = b.is_error ? "error" : "done";
-                    tool.resultPreview = text.slice(0, 500);
+                    tool.resultPreview = toolResultPreview(text);
                 }
             }
         }
-        if (hasToolResult) continue;
+        if (hasToolResult) {
+            compactReply = null;
+            continue;
+        }
 
         const text = blocks
             .filter((b) => b.type === "text" && b.text)
@@ -1685,6 +1905,17 @@ function sessionToMessages(entries: SessionMessage[]): LoadedMessage[] {
             .map((b) => `data:${b.source?.media_type ?? "image/png"};base64,${b.source?.data}`);
         const content = describeCommandEntry(text) ?? text;
         if (!content && images.length === 0) continue;
+
+        const pendingCompact = compactReply;
+        compactReply = null;
+        if (pendingCompact && pendingCompact === assistant && /^\/compact(\s|$)/.test(content)) {
+            // 요약 답변은 열어 둔 채(다음 메시지 때 닫혀 들어간다) 명령을 먼저 넣는다
+            const seg = pendingCompact.segments?.[0];
+            if (seg?.kind === "compact") seg.trigger = "manual";
+            turnUser = {role: "user", content, uuid: entry.uuid};
+            out.push(turnUser);
+            continue;
+        }
 
         closeAssistant();
         turnUser = {role: "user", content, uuid: entry.uuid, images: images.length > 0 ? images : undefined};
@@ -1770,6 +2001,12 @@ function handleSdkMessage(tab: ChatTab, msg: SDKMessage, notify: (n: ChatNotice)
     }
 
     if (msg.type === "user") {
+        // 압축이 끝나면 CLI가 요약을 사용자 메시지로 넣는다 — 화면에는 구분선의 "요약 보기"로
+        const summary = !parentToolUseId && (msg as {isSynthetic?: boolean}).isSynthetic ? compactSummaryText(msg.message?.content) : null;
+        if (summary) {
+            send(tab, "chat:compact", {phase: "summary", summary});
+            return;
+        }
         const blocks = (msg.message?.content ?? []) as {
             type: string;
             content?: string | unknown[];
@@ -1786,7 +2023,7 @@ function handleSdkMessage(tab: ChatTab, msg: SDKMessage, notify: (n: ChatNotice)
                 send(tab, "chat:tool_result", {
                     id: block.tool_use_id,
                     isError: !!block.is_error,
-                    content: raw.slice(0, 500),
+                    content: toolResultPreview(raw),
                     parentToolUseId,
                 });
             }
@@ -1802,6 +2039,7 @@ function handleSdkMessage(tab: ChatTab, msg: SDKMessage, notify: (n: ChatNotice)
         // 세션 누적 예상 비용(재개한 세션은 이전 턴 포함). 청구서가 아니라 추정치.
         if (typeof msg.total_cost_usd === "number") {
             send(tab, "chat:cost", {totalCostUsd: msg.total_cost_usd});
+            if (tab.sessionId) saveSessionStats(tab.sessionId, {cost: msg.total_cost_usd});
         }
         if (tab.sessionId) void recordTokenUsage(tab, tab.sessionId, inputTokens, outputTokens);
         if (msg.is_error) {
@@ -1814,6 +2052,30 @@ function handleSdkMessage(tab: ChatTab, msg: SDKMessage, notify: (n: ChatNotice)
                 detail: stderrTail().trim() || undefined,
             });
         }
+        return;
+    }
+
+    // 대화 압축: status "compacting" → status null + compact_result → compact_boundary → 요약(위 user)
+    // → 이어서 원래 턴이 계속된다(자동) / 그대로 끝난다(/compact). 서브에이전트 자신의 압축은 본문과 무관하다.
+    if (msg.type === "system" && msg.subtype === "status") {
+        if (parentToolUseId) return;
+        const st = msg as unknown as {status: string | null; compact_result?: "success" | "failed"; compact_error?: string};
+        if (st.status === "compacting") send(tab, "chat:compact", {phase: "start"});
+        else if (st.compact_result === "success") send(tab, "chat:compact", {phase: "done"});
+        else if (st.compact_result === "failed") send(tab, "chat:compact", {phase: "failed", error: st.compact_error});
+        return;
+    }
+    if (msg.type === "system" && msg.subtype === "compact_boundary") {
+        if (parentToolUseId) return;
+        const meta = (msg as unknown as {
+            compact_metadata?: {trigger?: "manual" | "auto"; pre_tokens?: number; post_tokens?: number};
+        }).compact_metadata;
+        send(tab, "chat:compact", {
+            phase: "boundary",
+            trigger: meta?.trigger,
+            preTokens: meta?.pre_tokens,
+            postTokens: meta?.post_tokens,
+        });
         return;
     }
 
@@ -1886,6 +2148,7 @@ interface RateLimitWindow {
     utilization?: number; // 0~1
     resetsAt?: number; // epoch 초
     status?: string;
+    receivedAt?: number; // 이 값을 받은 시각(epoch ms) — 다시 켠 뒤 보여 주는 값이 언제 것인지
 }
 interface RateLimitInfo extends RateLimitWindow {
     rateLimitType?: string;
@@ -1896,20 +2159,53 @@ const rateLimits = new Map<string, RateLimitWindow>();
 
 function mergeRateLimits(info: RateLimitInfo | undefined) {
     if (!info) return;
+    const receivedAt = Date.now();
     if (info.unifiedWindows && Object.keys(info.unifiedWindows).length > 0) {
-        for (const [type, w] of Object.entries(info.unifiedWindows)) rateLimits.set(type, {...rateLimits.get(type), ...w});
+        for (const [type, w] of Object.entries(info.unifiedWindows)) rateLimits.set(type, {...rateLimits.get(type), ...w, receivedAt});
     } else if (info.rateLimitType) {
         rateLimits.set(info.rateLimitType, {
             ...rateLimits.get(info.rateLimitType),
             utilization: info.utilization,
             resetsAt: info.resetsAt,
             status: info.status,
+            receivedAt,
         });
+    }
+    saveRateLimits();
+}
+
+// 초기화 시각이 지난 한도는 뺀다 — 그 뒤로 새 값을 받기 전까지는 모른다
+function rateLimitList() {
+    const now = Date.now() / 1000;
+    return [...rateLimits.entries()].filter(([, w]) => !w.resetsAt || w.resetsAt > now).map(([type, w]) => ({type, ...w}));
+}
+
+// 요금제 사용량은 응답을 받아야만 온다. 앱을 다시 켜면 첫 응답 전까지 비어 있었다 — 마지막 값을 저장해 둔다.
+function rateLimitsFile(): string {
+    return path.join(app.getPath("userData"), "rate-limits.json");
+}
+
+function saveRateLimits() {
+    try {
+        writeJsonFile(rateLimitsFile(), Object.fromEntries(rateLimits));
+    } catch (e) {
+        console.error("[rate-limits] 저장 실패", e);
     }
 }
 
-function rateLimitList() {
-    return [...rateLimits.entries()].map(([type, w]) => ({type, ...w}));
+function loadSavedRateLimits() {
+    const raw = readJsonFile<unknown>(rateLimitsFile(), {});
+    if (!raw || typeof raw !== "object") return;
+    const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+    for (const [type, w] of Object.entries(raw as Record<string, Record<string, unknown>>)) {
+        if (!w || typeof w !== "object") continue;
+        rateLimits.set(type, {
+            utilization: num(w.utilization),
+            resetsAt: num(w.resetsAt),
+            status: typeof w.status === "string" ? w.status : undefined,
+            receivedAt: num(w.receivedAt),
+        });
+    }
 }
 
 function refusalDetail(category?: string | null, explanation?: string | null): string | undefined {
@@ -1974,10 +2270,88 @@ ipcMain.handle("background:output", (event, tabId: string, taskId: string) => {
 
 // ── 작업 파일 패널 (보고 있는 탭의 작업 폴더·고친 파일) ──
 ipcMain.handle("files:changes", (event, tabId: string, p: string) => tabFor(event, tabId).changedFiles.get(p)?.hunks ?? []);
+// "Claude 수정" 내역 지우기 — 목록과 표시만 비운다(파일은 그대로). 이 시각 이후에 끝난 수정부터 다시 쌓인다.
+// 응답 도중이면 결과를 기다리는 수정(pendingEdits)은 남겨 둔다 — 지운 뒤에 끝나므로 새 내역이 된다(다시 계산할 때와 같다).
+ipcMain.handle("files:clear_changed", (event, tabId: string) => {
+    const tab = tabFor(event, tabId);
+    const at = Date.now();
+    tab.changedFiles.clear();
+    tab.changesClearedAt = at;
+    if (tab.sessionId) saveClearedAt(tab.sessionId, at);
+    sendChangedFiles(tab);
+});
 ipcMain.handle("files:list_dir", (event, tabId: string, dir: string) => listDir(tabFor(event, tabId), dir));
 ipcMain.handle("files:read", (event, tabId: string, p: string) => readFileForView(tabFor(event, tabId), p));
 ipcMain.handle("files:reveal", (event, tabId: string, p: string) => {
     if (canViewPath(tabFor(event, tabId), p) && fs.existsSync(p)) shell.showItemInFolder(p);
+});
+
+// ── 파일을 JetBrains IDE로 열기 (src/main/services/jetbrains.ts) ──
+// 답변 속 경로는 작업 폴더 기준 상대 경로이거나 절대 경로다. 끝의 ":줄(:칸)"·"#L줄"은 떼어 줄 번호로 쓴다.
+// 있는 파일만 연다(폴더·없는 경로는 아니다). IDE에 보여 주기만 하고 실행하지는 않는다.
+type EditorResult =
+    | {ok: true; app: string; path: string; line?: number}
+    | {ok: false; reason: "not-found" | "no-ide" | "error"; message?: string};
+
+function parseFileRef(tab: ChatTab, raw: string): {abs: string; line?: number} | null {
+    let s = raw.trim().replace(/^[`'"]+|[`'"]+$/g, "");
+    if (s.startsWith("file://")) {
+        try {
+            s = new URL(s).pathname;
+        } catch {
+            return null;
+        }
+    }
+    if (s.includes("%")) {
+        try {
+            s = decodeURIComponent(s);
+        } catch {
+            // 그대로 쓴다
+        }
+    }
+    let line: number | undefined;
+    const hash = /#L?(\d+)(?:-L?\d+)?$/.exec(s);
+    const colon = hash ? null : /:(\d+)(?::\d+)?(?:-\d+)?$/.exec(s);
+    const lineMatch = hash ?? colon;
+    if (lineMatch) {
+        line = Number(lineMatch[1]);
+        s = s.slice(0, lineMatch.index);
+    }
+    if (!s) return null;
+    if (s.startsWith("~/")) s = path.join(os.homedir(), s.slice(2));
+    const abs = path.isAbsolute(s) ? path.normalize(s) : path.resolve(tab.cwd, s);
+    try {
+        if (!fs.statSync(abs).isFile()) return null;
+    } catch {
+        return null;
+    }
+    return {abs, line: line && line > 0 ? line : undefined};
+}
+
+function editorTarget(tab: ChatTab, raw: unknown): EditorResult & {ide?: ReturnType<typeof pickIde>} {
+    const ref = parseFileRef(tab, String(raw ?? ""));
+    if (!ref) return {ok: false, reason: "not-found"};
+    const ide = pickIde(ref.abs);
+    if (!ide) return {ok: false, reason: "no-ide"};
+    return {ok: true, app: ide.name, path: ref.abs, line: ref.line, ide};
+}
+
+ipcMain.handle("editor:resolve", (event, tabId: string, raw: string): EditorResult => {
+    const target = editorTarget(tabFor(event, tabId), raw);
+    // IDE 실행 경로는 화면에 넘기지 않는다
+    delete target.ide;
+    return target;
+});
+
+ipcMain.handle("editor:open", async (event, tabId: string, raw: string): Promise<EditorResult> => {
+    const {ide, ...target} = editorTarget(tabFor(event, tabId), raw);
+    if (!target.ok || !ide) return target;
+    try {
+        await openInIde(ide, target.path, target.line);
+        return target;
+    } catch (e) {
+        return {ok: false, reason: "error", message: (e as Error).message};
+    }
 });
 
 // ── 작업 파일 패널의 "Git 변경" 보기 ──
@@ -2537,6 +2911,7 @@ app.on("browser-window-focus", () => {
 app.whenReady().then(() => {
     installSignalQuit(); // ready 뒤여야 한다 — 위 설명
     loadChatSettings();
+    loadSavedRateLimits();
     installAppMenu({confirmReload: (win) => confirmStopWork(win, "reload")});
     const claudePath = resolveClaudePath();
     if (claudePath) {

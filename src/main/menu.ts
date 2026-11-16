@@ -5,7 +5,7 @@ import {app, BrowserWindow, Menu, type MenuItemConstructorOptions} from "electro
 // 편집 메뉴(복사·붙여넣기·실행 취소)는 role로 그대로 둔다 — 빼면 입력칸에서 ⌘C/⌘V가 안 먹는다.
 // 보기 메뉴는 새로고침에 확인을 걸려고 직접 만든다(나머지 항목은 role 그대로).
 
-export type TabMenuAction = "new" | "close" | "next" | "prev" | `select:${number}`;
+export type TabMenuAction = "new" | "close" | "next" | "prev" | `select:${number}` | "find" | "find-next" | "find-prev";
 
 function sendTab(action: TabMenuAction) {
     const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
@@ -50,7 +50,26 @@ export function installAppMenu(hooks: AppMenuHooks) {
                 {label: "창 닫기", accelerator: "CmdOrCtrl+Shift+W", role: "close"},
             ],
         },
-        {role: "editMenu"},
+        // 편집 메뉴: 기본 항목은 role 그대로(빼면 입력칸에서 ⌘C/⌘V가 안 먹는다) + 찾기.
+        // ⌘F는 화면이 자기 찾기 막대로 처리한다 — 보고 있는 탭의 대화 안에서만 찾는다(FindBar.tsx).
+        {
+            label: "편집",
+            submenu: [
+                {label: "실행 취소", role: "undo"},
+                {label: "실행 복귀", role: "redo"},
+                {type: "separator"},
+                {label: "오려두기", role: "cut"},
+                {label: "복사하기", role: "copy"},
+                {label: "붙여넣기", role: "paste"},
+                {label: "붙여넣고 스타일 일치시키기", role: "pasteAndMatchStyle"},
+                {label: "삭제", role: "delete"},
+                {label: "모두 선택", role: "selectAll"},
+                {type: "separator"},
+                {label: "찾기…", accelerator: "CmdOrCtrl+F", click: () => sendTab("find")},
+                {label: "다음 찾기", accelerator: "CmdOrCtrl+G", click: () => sendTab("find-next")},
+                {label: "이전 찾기", accelerator: "Shift+CmdOrCtrl+G", click: () => sendTab("find-prev")},
+            ],
+        },
         {
             label: "보기",
             submenu: [

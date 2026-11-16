@@ -6,6 +6,7 @@ import {
     faArrowUp,
     faCircleExclamation,
     faClockRotateLeft,
+    faPaperclip,
     faShield,
     faTriangleExclamation,
     faXmark,
@@ -14,7 +15,9 @@ import styles from "./chat.page.module.scss";
 import type {ChatCallbacks, ChatNotice, ImagePayload} from "../../hooks/useClaudeChat";
 import {useClaudeChat} from "../../hooks/useClaudeChat";
 import {MessageItem} from "./MessageItem";
-import {ChatInput} from "./ChatInput";
+import {ChatInput, type PromptHooks} from "./ChatInput";
+import {FindBar} from "./FindBar";
+import {TabIdContext} from "../../tab-context";
 import {ActivityPanel, middleTruncate} from "./ActivityPanel";
 import {QuestionModal} from "./QuestionModal";
 
@@ -39,6 +42,9 @@ export interface TabViewApi {
     setNotice: (notice: ChatNotice | null) => void;
     respondPermission: (allow: boolean, always?: boolean) => void;
     stop: () => void;
+    // ⌘F / ⌘G / ⇧⌘G (앱 메뉴)
+    openFind: () => void;
+    findStep: (dir: 1 | -1) => void;
 }
 
 interface RewindState {
@@ -60,14 +66,17 @@ interface Props {
     resetToken: number;
     callbacks: ChatCallbacks;
     registerApi: (tabId: string, api: TabViewApi | null) => void;
+    // 시스템 프롬프트를 바꾸기 전 확인·바꾼 뒤 안내 (모든 탭에 적용되므로 셸이 맡는다)
+    promptHooks: PromptHooks;
 }
 
 // 탭 하나의 대화 화면: 메시지·알림·진행 패널·입력창, 그리고 이 탭의 모달(권한·질문·되돌리기·이미지)
-function ChatTabViewBase({tabId, active, cwd, backgroundRunning, load, resetToken, callbacks, registerApi}: Props) {
+function ChatTabViewBase({tabId, active, cwd, backgroundRunning, load, resetToken, callbacks, registerApi, promptHooks}: Props) {
     const {
         messages,
         isLoading,
         isThinking,
+        compacting,
         permissionRequest,
         questionRequest,
         thinkingText,
@@ -88,6 +97,43 @@ function ChatTabViewBase({tabId, active, cwd, backgroundRunning, load, resetToke
     } = useClaudeChat(tabId, callbacks);
 
     const [rewind, setRewind] = useState<RewindState | null>(null);
+    const rootRef = useRef<HTMLDivElement>(null);
+    // 파일을 탭 화면 어디에 끌어다 놓아도 입력창에 붙인다 (스크린샷을 대화 영역에 놓는 일이 많다)
+    const [dragging, setDragging] = useState(false);
+    const dragDepthRef = useRef(0);
+    const addFilesRef = useRef<((files: File[]) => void) | null>(null);
+    const registerAddFiles = useCallback((add: ((files: File[]) => void) | null) => {
+        addFilesRef.current = add;
+    }, []);
+    // 글자·링크를 끄는 건 받지 않는다 — 파일만
+    const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes("Files");
+    const dragHandlers = {
+        onDragEnter: (e: React.DragEvent) => {
+            if (!hasFiles(e)) return;
+            e.preventDefault();
+            dragDepthRef.current += 1;
+            setDragging(true);
+        },
+        // 안쪽 요소로 옮겨 갈 때도 leave가 온다 — 들어온 횟수를 세어 바깥으로 완전히 나갔을 때만 끈다
+        onDragLeave: (e: React.DragEvent) => {
+            if (!hasFiles(e)) return;
+            e.preventDefault();
+            dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+            if (dragDepthRef.current === 0) setDragging(false);
+        },
+        onDragOver: (e: React.DragEvent) => {
+            if (!hasFiles(e)) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "copy";
+        },
+        onDrop: (e: React.DragEvent) => {
+            if (!hasFiles(e)) return;
+            e.preventDefault();
+            dragDepthRef.current = 0;
+            setDragging(false);
+            addFilesRef.current?.(Array.from(e.dataTransfer.files));
+        },
+    };
     const [showScrollBottom, setShowScrollBottom] = useState(false);
     // 지금 읽고 있는(화면 맨 위에 걸친) Claude 답변 — 시작이 위로 가려져 있을 때만 값이 있다
     const [jumpTargetId, setJumpTargetId] = useState<number | null>(null);
@@ -129,10 +175,33 @@ function ChatTabViewBase({tabId, active, cwd, backgroundRunning, load, resetToke
         setJumpTargetId((prev) => (prev === next ? prev : next));
     }, []);
 
+    // ⌘F 찾기 (FindBar.tsx) — 탭마다 따로 열고, 검색어도 탭마다 남는다
+    const [findOpen, setFindOpen] = useState(false);
+    const [findFocusSeq, setFindFocusSeq] = useState(0);
+    const [findStepReq, setFindStepReq] = useState<{dir: 1 | -1; seq: number} | null>(null);
+    const findStepSeqRef = useRef(0);
+    const openFind = useCallback(() => {
+        setFindOpen(true);
+        setFindFocusSeq((n) => n + 1);
+    }, []);
+    const findStep = useCallback((dir: 1 | -1) => {
+        setFindOpen(true);
+        setFindStepReq({dir, seq: ++findStepSeqRef.current});
+    }, []);
+    const closeFind = useCallback(() => {
+        setFindOpen(false);
+        // 찾기를 닫으면 입력창으로 돌아간다
+        rootRef.current?.querySelector<HTMLTextAreaElement>("[data-chat-input]")?.focus();
+    }, []);
+    // 찾은 곳으로 넘기면 맨 아래 따라가기를 푼다 — 응답이 흘러 들어와도 끌려 내려가지 않게
+    const releaseFollow = useCallback(() => {
+        isAtBottomRef.current = false;
+    }, []);
+
     // 탭 바깥에서 쓰는 기능을 등록한다
     useEffect(() => {
-        registerApi(tabId, {setNotice, respondPermission, stop: stopGeneration});
-    }, [registerApi, tabId, setNotice, respondPermission, stopGeneration]);
+        registerApi(tabId, {setNotice, respondPermission, stop: stopGeneration, openFind, findStep});
+    }, [registerApi, tabId, setNotice, respondPermission, stopGeneration, openFind, findStep]);
     useEffect(() => () => registerApi(tabId, null), [registerApi, tabId]);
 
     // 저장된 대화 채우기 (사이드바에서 열기, 앱 재시작 후 복원)
@@ -261,54 +330,73 @@ function ChatTabViewBase({tabId, active, cwd, backgroundRunning, load, resetToke
     const lastUserIdx = messages.map((m) => m.role).lastIndexOf("user");
 
     return (
-        <div className={cx("tabView", {tabViewHidden: !active})} aria-hidden={!active}>
+        <div className={cx("tabView", {tabViewHidden: !active})} aria-hidden={!active} ref={rootRef} {...dragHandlers}>
+            {dragging && (
+                <div className={cx("dragOverlay")}>
+                    <FontAwesomeIcon icon={faPaperclip} />
+                    <span>여기에 놓으면 메시지에 첨부합니다</span>
+                </div>
+            )}
             {/* 채팅 영역 */}
             <div className={cx("messageListWrap")}>
-                <div
-                    className={cx("messageList")}
-                    ref={messageListRef}
-                    onScroll={handleMessageScroll}
-                    onWheel={handleMessageWheel}
-                >
-                    {messages.map((msg, i) => (
-                        <MessageItem
-                            key={msg.id}
-                            msg={msg}
-                            isStreaming={isThinking && i === messages.length - 1}
-                            onImageClick={setLightboxSrc}
-                            onRegenerate={
-                                !isLoading && i === messages.length - 1 && msg.role === "assistant" && lastUserIdx >= 0
-                                    ? handleRegenerate
-                                    : undefined
-                            }
-                            onEditResend={!isLoading && i === lastUserIdx ? handleEditResend : undefined}
-                            onRewindFiles={!isLoading ? handleRewindFiles : undefined}
-                        />
-                    ))}
-                    {notice && (
-                        <div className={cx("notice", notice.level === "error" ? "noticeError" : "noticeWarning")}>
-                            <FontAwesomeIcon
-                                icon={notice.level === "error" ? faCircleExclamation : faTriangleExclamation}
-                                className={cx("noticeIcon")}
+                <TabIdContext.Provider value={tabId}>
+                    <div
+                        className={cx("messageList")}
+                        ref={messageListRef}
+                        onScroll={handleMessageScroll}
+                        onWheel={handleMessageWheel}
+                    >
+                        {messages.map((msg, i) => (
+                            <MessageItem
+                                key={msg.id}
+                                msg={msg}
+                                isStreaming={isThinking && i === messages.length - 1}
+                                onImageClick={setLightboxSrc}
+                                onRegenerate={
+                                    !isLoading && i === messages.length - 1 && msg.role === "assistant" && lastUserIdx >= 0
+                                        ? handleRegenerate
+                                        : undefined
+                                }
+                                onEditResend={!isLoading && i === lastUserIdx ? handleEditResend : undefined}
+                                onRewindFiles={!isLoading ? handleRewindFiles : undefined}
                             />
-                            <div className={cx("noticeBody")}>
-                                <div className={cx("noticeMessage")}>{notice.message}</div>
-                                {notice.detail && notice.detail !== notice.message && (
-                                    <details className={cx("noticeDetails")}>
-                                        <summary className={cx("noticeSummary")}>자세히</summary>
-                                        <pre className={cx("noticeDetail")}>{notice.detail}</pre>
-                                    </details>
-                                )}
+                        ))}
+                        {notice && (
+                            <div className={cx("notice", notice.level === "error" ? "noticeError" : "noticeWarning")}>
+                                <FontAwesomeIcon
+                                    icon={notice.level === "error" ? faCircleExclamation : faTriangleExclamation}
+                                    className={cx("noticeIcon")}
+                                />
+                                <div className={cx("noticeBody")}>
+                                    <div className={cx("noticeMessage")}>{notice.message}</div>
+                                    {notice.detail && notice.detail !== notice.message && (
+                                        <details className={cx("noticeDetails")}>
+                                            <summary className={cx("noticeSummary")}>자세히</summary>
+                                            <pre className={cx("noticeDetail")}>{notice.detail}</pre>
+                                        </details>
+                                    )}
+                                </div>
+                                <button className={cx("noticeClose")} onClick={() => setNotice(null)} aria-label="닫기">
+                                    <FontAwesomeIcon icon={faXmark} />
+                                </button>
                             </div>
-                            <button className={cx("noticeClose")} onClick={() => setNotice(null)} aria-label="닫기">
-                                <FontAwesomeIcon icon={faXmark} />
-                            </button>
-                        </div>
-                    )}
-                </div>
+                        )}
+                    </div>
+                </TabIdContext.Provider>
+                {findOpen && (
+                    <FindBar
+                        listRef={messageListRef}
+                        active={active}
+                        contentKey={messages}
+                        focusSeq={findFocusSeq}
+                        step={findStepReq}
+                        onClose={closeFind}
+                        onJump={releaseFollow}
+                    />
+                )}
                 {/* 긴 답변을 읽다가(또는 다 읽고) 그 답변의 처음으로 */}
                 <button
-                    className={cx("jumpReplyButton", {visible: jumpTargetId != null})}
+                    className={cx("jumpReplyButton", {visible: jumpTargetId != null, jumpReplyButtonLow: findOpen})}
                     onClick={jumpToReplyStart}
                     aria-label="이 답변의 처음으로"
                     tabIndex={jumpTargetId != null ? 0 : -1}
@@ -330,6 +418,7 @@ function ChatTabViewBase({tabId, active, cwd, backgroundRunning, load, resetToke
             {isLoading && (
                 <ActivityPanel
                     isThinking={isThinking}
+                    compacting={compacting}
                     tools={tools}
                     thinkingText={thinkingText}
                     elapsedMs={elapsedMs}
@@ -346,6 +435,8 @@ function ChatTabViewBase({tabId, active, cwd, backgroundRunning, load, resetToke
                 onStop={stopGeneration}
                 turnEnd={turnEnd}
                 resetSignal={conversationSeq}
+                promptHooks={promptHooks}
+                onRegisterAddFiles={registerAddFiles}
             />
 
             {/* 이미지 라이트박스 */}

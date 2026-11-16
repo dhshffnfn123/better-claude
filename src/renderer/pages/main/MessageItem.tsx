@@ -1,16 +1,29 @@
 import type {ReactNode} from "react";
-import {Children, isValidElement, memo, useEffect, useMemo, useRef, useState} from "react";
+import {Children, isValidElement, memo, useContext, useEffect, useMemo, useRef, useState} from "react";
 import ReactMarkdown, {type Components} from "react-markdown";
 import remarkGfm from "remark-gfm";
 import classNames from "classnames/bind";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
-import {faCheck, faClockRotateLeft, faCopy, faPen, faRotateRight} from "@fortawesome/free-solid-svg-icons";
+import {
+    faCheck,
+    faChevronDown,
+    faChevronRight,
+    faClockRotateLeft,
+    faCopy,
+    faDownLeftAndUpRightToCenter,
+    faPen,
+    faRotateRight,
+} from "@fortawesome/free-solid-svg-icons";
 import claudeIcon from "../../assets/better-claude-icon.png";
 import styles from "./chat.page.module.scss";
-import type {Message} from "../../hooks/useClaudeChat";
+import type {CompactSegment, Message} from "../../hooks/useClaudeChat";
 import {copyText} from "../../clipboard";
 import {highlightLanguage} from "../../highlight";
+import {editorHint, looksLikeFilePath, openFileRef, resolveFileRef} from "../../file-links";
+import {TabIdContext} from "../../tab-context";
+import {QUESTION_TOOL} from "../../question-answers";
 import {ToolRow} from "./ActivityPanel";
+import {QuestionCard} from "./QuestionCard";
 import {isImeComposing} from "./ChatInput";
 
 const cx = classNames.bind(styles);
@@ -63,14 +76,69 @@ function CodeBlock({lang, code}: {lang?: string; code: string}) {
     );
 }
 
-const MARKDOWN_COMPONENTS: Components = {
-    // 링크는 새 창 요청으로 보낸다. main(link-guard)이 웹 링크만 기본 브라우저로 열고 나머지는 막는다.
-    // 그냥 두면 링크를 누르는 순간 앱 창이 그 페이지로 넘어가 버린다.
-    a: ({href, title, children}) => (
-        <a href={href} title={title ?? href} target="_blank" rel="noreferrer noopener">
+// 답변 속 파일 경로 `src/main.ts:120` — 마우스를 올리면 열 수 있는지 알아보고, ⌘+클릭으로 JetBrains IDE에서 연다.
+// 그냥 클릭은 글자를 고르는 데 쓰이므로 ⌘가 필요하다(JetBrains의 ⌘+클릭 이동과 같다).
+function FileCode({text}: {text: string}) {
+    const tabId = useContext(TabIdContext);
+    const [target, setTarget] = useState<EditorTarget | null>(null);
+    const resolve = () => {
+        if (tabId && !target) void resolveFileRef(tabId, text).then(setTarget);
+    };
+    return (
+        <code
+            className={cx({pathCode: target?.ok === true})}
+            onMouseEnter={resolve}
+            onClick={(e) => {
+                if (!e.metaKey || !tabId) return;
+                e.preventDefault();
+                void openFileRef(tabId, text).then(setTarget);
+            }}
+            data-tooltip={target?.ok ? editorHint(target, true) : undefined}
+        >
+            {text}
+        </code>
+    );
+}
+
+// 마크다운 파일 링크 [main.ts](src/main.ts#L120) — 그냥 클릭으로 IDE에서 연다 (예전에는 눌러도 아무 일이 없었다)
+function FileLink({href, children}: {href: string; children: ReactNode}) {
+    const tabId = useContext(TabIdContext);
+    const [target, setTarget] = useState<EditorTarget | null>(null);
+    return (
+        <a
+            href={href}
+            onMouseEnter={() => {
+                if (tabId && !target) void resolveFileRef(tabId, href).then(setTarget);
+            }}
+            onClick={(e) => {
+                e.preventDefault();
+                if (tabId) void openFileRef(tabId, href).then(setTarget);
+            }}
+            data-tooltip={target ? editorHint(target, false) : href}
+        >
             {children}
         </a>
-    ),
+    );
+}
+
+const MARKDOWN_COMPONENTS: Components = {
+    // 웹 링크는 새 창 요청으로 보낸다. main(link-guard)이 기본 브라우저로 연다 — 그냥 두면 앱 창이 그 페이지로 넘어간다.
+    // 그 밖의 링크(상대 경로·파일)는 파일로 보고 IDE에서 연다.
+    a: ({href, title, children}) => {
+        if (href && !/^(https?:|mailto:|#)/i.test(href)) return <FileLink href={href}>{children}</FileLink>;
+        return (
+            <a href={href} title={title ?? href} target="_blank" rel="noreferrer noopener">
+                {children}
+            </a>
+        );
+    },
+    // 문장 속 `코드` 중 파일 경로처럼 보이는 것. 코드 블록 안의 code는 아래 pre가 통째로 바꾸므로 여기로 오지 않는다.
+    code: ({className, children}) =>
+        !className && typeof children === "string" && looksLikeFilePath(children) ? (
+            <FileCode text={children} />
+        ) : (
+            <code className={className}>{children}</code>
+        ),
     // 코드 블록만 바꾼다 — 문장 속 `코드`는 <pre> 밖이라 그대로 남는다
     pre: ({children}) => {
         const code = Children.toArray(children)[0];
@@ -87,6 +155,41 @@ function CopyMessageButton({text}: {text: string}) {
         <button className={cx("msgActionBtn")} onClick={() => copy(text)} title="이 답변을 마크다운 그대로 복사합니다">
             <FontAwesomeIcon icon={copied ? faCheck : faCopy} /> {copied ? "복사됨" : "복사"}
         </button>
+    );
+}
+
+// 대화 압축 — 답변 자리의 구분선. 위쪽 대화가 요약으로 바뀌었다는 표시이고, 요약 본문(CLI가 쓴 영어)은 눌러서 펼친다.
+// 기록에서 불러온 대화는 마지막 압축부터만 보이므로(그 앞은 요약 속에만 있다) 맨 위에 "이전 대화 요약"으로 온다.
+function CompactDivider({seg}: {seg: CompactSegment}) {
+    const [open, setOpen] = useState(false);
+    const meta = [
+        seg.trigger === "manual" ? "/compact" : seg.trigger === "auto" ? "대화가 길어 자동으로" : null,
+        seg.preTokens != null && seg.postTokens != null
+            ? `컨텍스트 ${seg.preTokens.toLocaleString()} → ${seg.postTokens.toLocaleString()} 토큰`
+            : null,
+    ].filter(Boolean);
+    return (
+        <div className={cx("compactBlock")}>
+            <div className={cx("compactRule")}>
+                <span className={cx("compactTitle")}>
+                    <FontAwesomeIcon icon={faDownLeftAndUpRightToCenter} />
+                    {seg.restored ? "이전 대화 요약" : "여기까지의 대화를 요약했습니다"}
+                </span>
+            </div>
+            {(meta.length > 0 || seg.summary) && (
+                <div className={cx("compactMeta")}>
+                    {meta.length > 0 && <span>{meta.join(" · ")}</span>}
+                    {seg.summary && (
+                        <button className={cx("compactToggle")} onClick={() => setOpen((v) => !v)}>
+                            <FontAwesomeIcon icon={open ? faChevronDown : faChevronRight} />
+                            요약 {open ? "접기" : "보기"}
+                        </button>
+                    )}
+                </div>
+            )}
+            {/* 마크다운으로 그리지 않는다 — 들여쓰기로 짠 글이라 목록 사이가 크게 벌어진다. 원문 줄바꿈·들여쓰기 그대로. */}
+            {open && seg.summary && <div className={cx("compactSummary")}>{seg.summary}</div>}
+        </div>
     );
 }
 
@@ -114,23 +217,30 @@ function MessageItemBase({msg, isStreaming, onImageClick, onRegenerate, onEditRe
         setEditing(false);
     };
 
+    // 압축 구분선도 "보이는 내용" — 그 아래에 생각 중 점이 남지 않게
     const hasVisibleText =
-        msg.segments?.some((s) => s.kind === "text" && s.text.trim().length > 0) ?? false;
+        msg.segments?.some((s) => (s.kind === "text" && s.text.trim().length > 0) || s.kind === "compact") ?? false;
+    const hasCompact = msg.segments?.some((s) => s.kind === "compact") ?? false;
+    // /compact의 답처럼 구분선뿐인 답변 — 다시 생성할 것이 없다
+    const compactOnly = hasCompact && (msg.segments?.every((s) => s.kind === "compact") ?? false);
+    const showRegenerate = !!onRegenerate && msg.role === "assistant" && !compactOnly;
     // 다 받은 답변만 복사할 수 있다 (첫 인사말 제외)
     const canCopy = msg.role === "assistant" && !msg.greeting && !isStreaming && msg.content.trim().length > 0;
     return (
         // data-msg-id·data-role: 탭 화면이 "지금 읽는 답변"을 찾는 데 쓴다 (답변 처음으로 버튼)
         <div className={cx("messageWrapper", msg.role)} data-msg-id={msg.id} data-role={msg.role}>
-            <div className={cx("messageInner")}>
+            {/* 구분선이 든 답변은 폭을 끝까지 쓴다 — 내용 폭에 맞춰 줄면 구분선이 짧게 끊긴다 */}
+            <div className={cx("messageInner", {messageInnerWide: hasCompact})}>
                 <div className={cx("sender")}>
                     {msg.role === "assistant" && (
                         <img src={claudeIcon} className={cx("senderIcon")} alt="" />
                     )}
                     {msg.role === "user" ? "나" : "Claude"}
-                    {msg.role === "user" && msg.inputTokens != null && (
+                    {/* 0은 띄우지 않는다 — /compact·/cost처럼 모델이 답하지 않은 턴 */}
+                    {msg.role === "user" && !!msg.inputTokens && (
                         <span className={cx("tokenBadge")}>{msg.inputTokens.toLocaleString()} tokens</span>
                     )}
-                    {msg.role === "assistant" && msg.outputTokens != null && (
+                    {msg.role === "assistant" && !!msg.outputTokens && (
                         <span className={cx("tokenBadge")}>{msg.outputTokens.toLocaleString()} tokens</span>
                     )}
                 </div>
@@ -188,8 +298,14 @@ function MessageItemBase({msg, isStreaming, onImageClick, onRegenerate, onEditRe
                     // 어시스턴트: 텍스트 말풍선과 도구를 발생 순서대로 분리 렌더
                     <div className={cx("segmentList")}>
                         {msg.segments.map((seg, i) =>
-                            seg.kind === "tool" ? (
-                                <ToolRow key={seg.tool.id} tool={seg.tool} defaultExpanded />
+                            seg.kind === "compact" ? (
+                                <CompactDivider key={i} seg={seg} />
+                            ) : seg.kind === "tool" ? (
+                                seg.tool.name === QUESTION_TOOL ? (
+                                    <QuestionCard key={seg.tool.id} tool={seg.tool} />
+                                ) : (
+                                    <ToolRow key={seg.tool.id} tool={seg.tool} defaultExpanded />
+                                )
                             ) : seg.text.trim() ? (
                                 <div key={i} className={cx("bubble", "markdown")}>
                                     <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
@@ -224,7 +340,7 @@ function MessageItemBase({msg, isStreaming, onImageClick, onRegenerate, onEditRe
                         )}
                     </div>
                 )}
-                {(onRegenerate || (onRewindFiles && msg.uuid) || onEditResend || canCopy) && !editing && (
+                {(showRegenerate || (onRewindFiles && msg.uuid) || onEditResend || canCopy) && !editing && (
                     <div className={cx("msgActions")}>
                         {canCopy && <CopyMessageButton text={msg.content} />}
                         {onEditResend && !editing && msg.role === "user" && (
@@ -248,7 +364,7 @@ function MessageItemBase({msg, isStreaming, onImageClick, onRegenerate, onEditRe
                                 <FontAwesomeIcon icon={faClockRotateLeft} /> 파일 되돌리기
                             </button>
                         )}
-                        {onRegenerate && msg.role === "assistant" && (
+                        {showRegenerate && (
                             <button
                                 className={cx("msgActionBtn")}
                                 onClick={onRegenerate}

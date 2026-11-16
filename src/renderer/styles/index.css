@@ -72,3 +72,17 @@ body,
   width: 100%;
   height: 100%;
 }
+
+/* ⌘F 찾기 (FindBar.tsx) — CSS Custom Highlight API로 칠한다. 이름은 전역이라 모듈 CSS가 아니라 여기에 둔다.
+   stylelint(이 설정의 버전)가 ::highlight()를 몰라 끈다 — Chromium 105+의 표준 문법이다. */
+/* stylelint-disable selector-pseudo-element-no-unknown, selector-type-no-unknown */
+::highlight(bc-find) {
+  color: var(--c-find-match-text);
+  background-color: var(--c-find-match-bg);
+}
+
+::highlight(bc-find-current) {
+  color: var(--c-find-current-text);
+  background-color: var(--c-find-current-bg);
+}
+/* stylelint-enable selector-pseudo-element-no-unknown, selector-type-no-unknown */

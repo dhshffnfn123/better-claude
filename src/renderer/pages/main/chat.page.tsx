@@ -5,10 +5,13 @@ import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 import {
     faBars,
     faBolt,
+    faCheck,
     faFolder,
     faFolderTree,
     faGears,
+    faHourglassHalf,
     faLayerGroup,
+    faMagnifyingGlass,
     faPlug,
     faRotateRight,
     faShield,
@@ -26,6 +29,7 @@ import {ThemeSettings} from "./ThemeSettings";
 import {BackgroundTasksPanel} from "./BackgroundTasksPanel";
 import {FilesPanel} from "./FilesPanel";
 import {FILES_PANEL_MIN_WIDTH, readPref, writePref} from "./files-panel-prefs";
+import {isImeComposing, type PromptHooks} from "./ChatInput";
 import {ChatTabView, type TabLoadRequest, type TabViewApi} from "./ChatTabView";
 import {TabStrip} from "./TabStrip";
 
@@ -136,7 +140,32 @@ interface TabMeta {
     turnSeq: number;
     load: TabLoadRequest | null;
     resetToken: number;
+    // 응답 중에 바꾼 설정 안내 ("다음 메시지부터 적용됩니다") — 그 탭을 볼 때 작업 폴더 줄에 보인다
+    settingHint: SettingHint | null;
 }
+
+// 응답 중에 모델·effort·fast·ultracode를 바꾸거나 방패를 확인 모드로 바꾸면 그 답변에는 들어가지 않는다 —
+// CLI는 띄울 때 받은 설정으로 이번 답변을 끝낸다(main의 optionsKey). 다음 메시지를 보낼 때 새 설정으로 다시 띄운다.
+interface SettingHint {
+    seq: number; // 바꿀 때마다 오른다 — 같은 안내를 다시 띄우면 애니메이션이 다시 돈다
+    settings: boolean; // 모델·effort·fast·ultracode를 바꿨다
+    shield: boolean; // 방패를 확인 모드로 바꿨다 (전체 허용으로 되돌리면 바로 적용되므로 거둔다)
+    shownAt: number;
+}
+
+function settingHintText(h: SettingHint): {text: string; detail: string} {
+    if (h.shield && h.settings) {
+        return {
+            text: "바꾼 설정과 확인 모드는 다음 메시지부터 적용됩니다",
+            detail: "지금 답변은 바꾸기 전 설정으로 끝까지 진행되고, 도구도 묻지 않고 계속 실행합니다",
+        };
+    }
+    if (h.shield) return {text: "확인 모드는 다음 메시지부터 적용됩니다", detail: "지금 답변에서는 도구를 묻지 않고 계속 실행합니다"};
+    return {text: "다음 메시지부터 적용됩니다", detail: "지금 답변은 바꾸기 전 설정으로 끝까지 진행됩니다"};
+}
+
+// 응답이 끝나도 이만큼은 보이게 둔다 (바꾸자마자 응답이 끝나도 읽을 시간)
+const SETTING_HINT_MIN_MS = 4000;
 
 function makeTab(id: string, init: Partial<TabMeta> = {}): TabMeta {
     return {
@@ -163,6 +192,7 @@ function makeTab(id: string, init: Partial<TabMeta> = {}): TabMeta {
         turnSeq: 0,
         load: null,
         resetToken: 0,
+        settingHint: null,
         ...init,
     };
 }
@@ -214,6 +244,10 @@ const ChatPage = () => {
     const [openNonce, setOpenNonce] = useState(0);
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [sessions, setSessions] = useState<SessionSummary[]>([]);
+    // 대화 기록: 프로젝트명(작업 폴더 이름)으로 찾기, 여러 개 골라 한 번에 지우기
+    const [sessionQuery, setSessionQuery] = useState("");
+    const [selecting, setSelecting] = useState(false);
+    const [selectedSids, setSelectedSids] = useState<Set<string>>(() => new Set());
     const [mcpOpen, setMcpOpen] = useState(false);
     const [mcpRefreshing, setMcpRefreshing] = useState(false);
     const [models, setModels] = useState<ModelOption[]>(FALLBACK_MODELS);
@@ -296,8 +330,13 @@ const ChatPage = () => {
                 if (!stopped) notifyTurnDone(folderTitle(), `${failed ? "오류로 끝났습니다" : "응답 완료"} — ${summary}`, id);
                 void refreshSessions();
             },
+            // 새 메시지는 지금 설정으로 나간다 — 남아 있던 "다음 메시지부터" 안내는 거둔다
             onUserMessage: (text) =>
-                patchTab(id, (t) => ({sent: true, title: t.title === NEW_TAB_TITLE ? titleFromMessage(text) : t.title})),
+                patchTab(id, (t) => ({
+                    sent: true,
+                    title: t.title === NEW_TAB_TITLE ? titleFromMessage(text) : t.title,
+                    settingHint: null,
+                })),
         };
         callbacksCache.current.set(id, cb);
         return cb;
@@ -531,6 +570,9 @@ const ChatPage = () => {
                 else if (action === "next") cycleTab(1);
                 else if (action === "prev") cycleTab(-1);
                 else if (action.startsWith("select:")) selectTabAt(Number(action.slice(7)));
+                else if (action === "find") apiRef.current.get(activeIdRef.current)?.openFind();
+                else if (action === "find-next") apiRef.current.get(activeIdRef.current)?.findStep(1);
+                else if (action === "find-prev") apiRef.current.get(activeIdRef.current)?.findStep(-1);
             }),
         [newTab, closeTab, cycleTab, selectTabAt]
     );
@@ -589,8 +631,134 @@ const ChatPage = () => {
         await refreshSessions();
     };
 
+    const visibleSessions = useMemo(() => {
+        const q = sessionQuery.trim().toLowerCase();
+        return q ? sessions.filter((s) => folderName(s.cwd).toLowerCase().includes(q)) : sessions;
+    }, [sessions, sessionQuery]);
+
+    const stopSelecting = () => {
+        setSelecting(false);
+        setSelectedSids(new Set());
+    };
+
+    const toggleSelected = (sid: string) =>
+        setSelectedSids((prev) => {
+            const next = new Set(prev);
+            if (next.has(sid)) next.delete(sid);
+            else next.add(sid);
+            return next;
+        });
+
+    // 지금 보이는(검색된) 대화를 모두 고르거나, 이미 다 골랐으면 모두 푼다
+    const allVisibleSelected = visibleSessions.length > 0 && visibleSessions.every((s) => selectedSids.has(s.sessionId));
+    const toggleSelectAll = () => setSelectedSids(allVisibleSelected ? new Set() : new Set(visibleSessions.map((s) => s.sessionId)));
+
+    const deleteSelectedSessions = async () => {
+        const targets = sessions.filter((s) => selectedSids.has(s.sessionId));
+        if (targets.length === 0) return;
+        const sids = new Set(targets.map((s) => s.sessionId));
+        const openTabs = tabsRef.current.filter((t) => t.sessionId && sids.has(t.sessionId));
+        const running = openTabs.reduce((n, t) => n + t.background.running.length, 0);
+        const message =
+            `대화 기록 ${targets.length}개를 삭제할까요?\n터미널의 /resume 목록에서도 사라지며 되돌릴 수 없습니다.` +
+            (openTabs.length > 0
+                ? `\n\n이 중 ${openTabs.length}개는 탭으로 열려 있어 그 탭은 새 대화로 비워집니다${
+                      running > 0 ? ` (백그라운드 작업 ${running}개도 종료)` : ""
+                  }.`
+                : "");
+        if (!window.confirm(message)) return;
+        let failed = 0;
+        for (const s of targets) {
+            try {
+                await window.electronAPI.deleteSession(s.sessionId, s.cwd);
+            } catch (e) {
+                failed++;
+                console.error("[sessions] 삭제 실패", s.sessionId, e);
+            }
+        }
+        for (const t of openTabs) patchTab(t.id, clearedTab);
+        stopSelecting();
+        await refreshSessions();
+        if (failed > 0) window.alert(`${failed}개는 삭제하지 못했습니다.`);
+    };
+
+    // 사이드바를 닫으면 고르던 것은 그만둔다 (검색어는 남긴다 — 입력칸에 보인다)
+    useEffect(() => {
+        if (!sidebarOpen) {
+            setSelecting(false);
+            setSelectedSids(new Set());
+        }
+    }, [sidebarOpen]);
+
     // ── 보고 있는 탭의 설정 ──
     // 설정은 CLI를 띄울 때 고정된다. 다음 메시지를 보낼 때 새 설정으로 다시 띄우면서 작업이 종료된다.
+
+    // 응답 중에 바꿨으면 이번 답변에는 안 들어간다고 알린다 (응답이 없을 때는 어차피 다음 메시지부터라 띄우지 않는다)
+    const hintSeqRef = useRef(0);
+    const markDeferred = useCallback(
+        (id: string, kind: "settings" | "shield") => {
+            if (!tabsRef.current.find((t) => t.id === id)?.isLoading) return;
+            const seq = ++hintSeqRef.current;
+            patchTab(id, (t) => ({
+                settingHint: {
+                    seq,
+                    settings: !!t.settingHint?.settings || kind === "settings",
+                    shield: !!t.settingHint?.shield || kind === "shield",
+                    shownAt: Date.now(),
+                },
+            }));
+        },
+        [patchTab]
+    );
+    const noteDeferredSetting = (kind: "settings" | "shield") => {
+        if (active) markDeferred(active.id, kind);
+    };
+
+    // 시스템 프롬프트는 모든 탭에 적용된다(main의 optionsKey에 들어 있다). 그래서 바꾸면 백그라운드 작업이 도는 탭은
+    // 다음 메시지 때 CLI를 다시 띄우면서 그 작업이 꺼진다 — 먼저 묻고, 바꾼 뒤에는 탭마다 안내한다.
+    const promptHooks = useMemo<PromptHooks>(
+        () => ({
+            confirm: () => {
+                const busy = tabsRef.current.filter((t) => t.background.running.length > 0);
+                if (busy.length === 0) return true;
+                const n = busy.reduce((sum, t) => sum + t.background.running.length, 0);
+                return window.confirm(
+                    `백그라운드 작업 ${n}개가 실행 중입니다${busy.length > 1 ? ` (탭 ${busy.length}개)` : ""}.\n` +
+                        "시스템 프롬프트는 모든 탭에 적용되어, 그 탭에서 다음 메시지를 보낼 때 작업이 종료됩니다. 계속할까요?"
+                );
+            },
+            changed: () => {
+                for (const t of tabsRef.current) {
+                    // 응답 중인 탭: 지금 답변은 바꾸기 전 프롬프트로 끝난다
+                    markDeferred(t.id, "settings");
+                    const n = t.background.running.length;
+                    if (n > 0) {
+                        apiRef.current.get(t.id)?.setNotice({
+                            level: "warning",
+                            message: `백그라운드 작업 ${n}개가 실행 중입니다. 바꾼 시스템 프롬프트는 다음 메시지부터 적용되며, 그때까지 끝나지 않은 작업은 종료됩니다.`,
+                        });
+                    }
+                }
+            },
+        }),
+        [markDeferred]
+    );
+
+    // 안내는 그 탭의 응답이 끝날 때까지 두고(그동안은 바꾸기 전 설정으로 답하고 있다), 끝나면 최소 시간을 채운 뒤 지운다
+    useEffect(() => {
+        const timers = tabs
+            .filter((t) => t.settingHint && !t.isLoading)
+            .map((t) => {
+                const hint = t.settingHint as SettingHint;
+                const left = Math.max(0, SETTING_HINT_MIN_MS - (Date.now() - hint.shownAt));
+                return window.setTimeout(
+                    () => patchTab(t.id, (cur) => (cur.settingHint?.seq === hint.seq ? {settingHint: null} : {})),
+                    left
+                );
+            });
+        return () => timers.forEach((timer) => window.clearTimeout(timer));
+    }, [tabs, patchTab]);
+
     const warnBackgroundOnSettingChange = () => {
         const n = active?.background.running.length ?? 0;
         if (!active || n === 0) return;
@@ -605,6 +773,7 @@ const ChatPage = () => {
         const next = e.target.value;
         patchTab(active.id, {model: next});
         warnBackgroundOnSettingChange();
+        noteDeferredSetting("settings");
         void window.electronAPI.setModel(active.id, next);
     };
 
@@ -613,6 +782,7 @@ const ChatPage = () => {
         const next = e.target.value;
         patchTab(active.id, {effort: next});
         warnBackgroundOnSettingChange();
+        noteDeferredSetting("settings");
         void window.electronAPI.setEffort(active.id, next);
     };
 
@@ -621,6 +791,7 @@ const ChatPage = () => {
         const next = !active.ultracode;
         patchTab(active.id, {ultracode: next});
         warnBackgroundOnSettingChange();
+        noteDeferredSetting("settings");
         void window.electronAPI.setUltracode(active.id, next);
     };
 
@@ -629,6 +800,7 @@ const ChatPage = () => {
         const next = !active.fastMode;
         patchTab(active.id, {fastMode: next});
         warnBackgroundOnSettingChange();
+        noteDeferredSetting("settings");
         void window.electronAPI.setFastMode(active.id, next);
     };
 
@@ -637,6 +809,16 @@ const ChatPage = () => {
         const next = !active.skipPermissions;
         patchTab(active.id, {skipPermissions: next});
         warnBackgroundOnSettingChange();
+        if (!next) {
+            // 이번 답변의 CLI는 전체 허용(bypass)으로 떠 있어 일반 도구는 묻지 않고 실행한다
+            noteDeferredSetting("shield");
+        } else {
+            // 전체 허용은 바로 적용된다 — 확인 모드 안내만 거두고, 다른 설정 안내는 남긴다
+            const seq = ++hintSeqRef.current;
+            patchTab(active.id, (t) =>
+                t.settingHint?.shield ? {settingHint: t.settingHint.settings ? {...t.settingHint, shield: false, seq} : null} : {}
+            );
+        }
         await window.electronAPI.setPermissions(active.id, next);
         // 전체 허용으로 켜는 순간 대기 중인 요청이 있으면 허용으로 답한다.
         // 그냥 닫아버리면 CLI가 답을 기다리며 멈춘 채로 남는다.
@@ -647,8 +829,16 @@ const ChatPage = () => {
     const handleSelectDirectory = async () => {
         if (!active) return;
         const n = active.background.running.length;
-        if (n > 0 && !window.confirm(`백그라운드 작업 ${n}개가 실행 중입니다.\n작업 폴더를 바꾸면 이 작업들이 종료됩니다. 계속할까요?`)) {
-            return;
+        // 폴더를 바꾸면 이 탭은 새 대화로 시작한다 — 응답 중이거나 백그라운드 작업이 있으면 그것도 멈추므로 먼저 묻는다
+        // (예전에는 백그라운드 작업만 물어서, 응답 중에 바꾸면 묻지도 않고 응답이 끊기고 대화가 비워졌다)
+        if (active.isLoading || n > 0) {
+            const state =
+                active.isLoading && n > 0
+                    ? `응답 중이고 백그라운드 작업 ${n}개도 실행 중입니다`
+                    : active.isLoading
+                      ? "응답 중입니다"
+                      : `백그라운드 작업 ${n}개가 실행 중입니다`;
+            if (!window.confirm(`${state}.\n작업 폴더를 바꾸면 새 대화로 시작하면서 모두 멈춥니다. 계속할까요?`)) return;
         }
         const id = active.id;
         const selected = await window.electronAPI.selectDirectory(id);
@@ -743,15 +933,71 @@ const ChatPage = () => {
                 </nav>
                 {sessions.length > 0 && (
                     <div className={cx("convListSection")}>
-                        <div className={cx("convListLabel")}>대화 기록 (터미널 포함)</div>
+                        <div className={cx("convListHead")}>
+                            {selecting ? (
+                                <>
+                                    <span className={cx("convListLabel", "convListLabelSelecting")}>{selectedSids.size}개 선택</span>
+                                    <button className={cx("convHeadBtn")} onClick={toggleSelectAll} disabled={visibleSessions.length === 0}>
+                                        {allVisibleSelected ? "모두 풀기" : "모두 선택"}
+                                    </button>
+                                    <button
+                                        className={cx("convHeadBtn", "convHeadBtnDanger")}
+                                        onClick={() => void deleteSelectedSessions()}
+                                        disabled={selectedSids.size === 0}
+                                    >
+                                        삭제
+                                    </button>
+                                    <button className={cx("convHeadBtn")} onClick={stopSelecting}>
+                                        취소
+                                    </button>
+                                </>
+                            ) : (
+                                <>
+                                    <span className={cx("convListLabel")}>대화 기록 (터미널 포함)</span>
+                                    <button className={cx("convHeadBtn")} onClick={() => setSelecting(true)} title="여러 개 골라 한 번에 삭제">
+                                        선택
+                                    </button>
+                                </>
+                            )}
+                        </div>
+                        <div className={cx("convSearch")}>
+                            <FontAwesomeIcon icon={faMagnifyingGlass} className={cx("convSearchIcon")} />
+                            <input
+                                className={cx("convSearchInput")}
+                                value={sessionQuery}
+                                onChange={(e) => setSessionQuery(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (isImeComposing(e)) return;
+                                    if (e.key === "Escape") setSessionQuery("");
+                                }}
+                                placeholder="프로젝트명으로 찾기"
+                                aria-label="프로젝트명으로 대화 찾기"
+                            />
+                            {sessionQuery && (
+                                <button className={cx("convSearchClear")} onClick={() => setSessionQuery("")} aria-label="검색어 지우기">
+                                    <FontAwesomeIcon icon={faXmark} />
+                                </button>
+                            )}
+                        </div>
                         <div className={cx("convList")}>
-                            {sessions.map((session) => (
+                            {visibleSessions.length === 0 && (
+                                <div className={cx("convEmpty")}>‘{sessionQuery.trim()}’ 프로젝트의 대화가 없습니다</div>
+                            )}
+                            {visibleSessions.map((session) => (
                                 <div
                                     key={session.sessionId}
-                                    className={cx("convItem")}
-                                    onClick={() => openSession(session)}
+                                    className={cx("convItem", {
+                                        convItemSelecting: selecting,
+                                        convItemSelected: selecting && selectedSids.has(session.sessionId),
+                                    })}
+                                    onClick={() => (selecting ? toggleSelected(session.sessionId) : openSession(session))}
                                     title={session.cwd}
                                 >
+                                    {selecting && (
+                                        <span className={cx("convCheck")} aria-hidden>
+                                            {selectedSids.has(session.sessionId) && <FontAwesomeIcon icon={faCheck} />}
+                                        </span>
+                                    )}
                                     <div className={cx("convTitle")}>{session.title}</div>
                                     <div className={cx("convMeta")}>
                                         {openSessionIds.has(session.sessionId) && (
@@ -774,13 +1020,15 @@ const ChatPage = () => {
                                             minute: "2-digit",
                                         })}
                                     </div>
-                                    <button
-                                        className={cx("convDelete")}
-                                        onClick={(e) => handleDeleteSession(e, session)}
-                                        data-tooltip="삭제"
-                                    >
-                                        <FontAwesomeIcon icon={faTrash} />
-                                    </button>
+                                    {!selecting && (
+                                        <button
+                                            className={cx("convDelete")}
+                                            onClick={(e) => handleDeleteSession(e, session)}
+                                            data-tooltip="삭제"
+                                        >
+                                            <FontAwesomeIcon icon={faTrash} />
+                                        </button>
+                                    )}
                                 </div>
                             ))}
                         </div>
@@ -878,6 +1126,18 @@ const ChatPage = () => {
                             앞에 LRM(‎)을 두면 "/"가 왼쪽→오른쪽 글자 사이에 놓여 제자리에 그려진다. */}
                         <span className={cx("cwdPath")}>{active.cwd ? "‎" + active.cwd : "..."}</span>
                     </div>
+                    {active.settingHint && (
+                        <span
+                            key={active.settingHint.seq}
+                            className={cx("settingHint")}
+                            role="status"
+                            data-tooltip={settingHintText(active.settingHint).detail}
+                            data-tooltip-dir="down"
+                        >
+                            <FontAwesomeIcon icon={faHourglassHalf} className={cx("settingHintIcon")} />
+                            <span className={cx("settingHintText")}>{settingHintText(active.settingHint).text}</span>
+                        </span>
+                    )}
                     <select className={cx("modelSelect")} value={model} onChange={handleModelChange} onClick={(e) => e.stopPropagation()}>
                         {models.map((m) => (
                             <option key={m.id} value={m.id} title={m.description}>
@@ -1027,7 +1287,7 @@ const ChatPage = () => {
                                     })}
                                     title={`요금제 사용량 ${label} 한도: ${pct}% 사용 (모든 탭 합계)${
                                         w.resetsAt ? `\n초기화: ${formatResetTime(w.resetsAt)}` : ""
-                                    }`}
+                                    }${w.receivedAt ? `\n${formatResetTime(w.receivedAt / 1000)}에 받은 값 — 다음 응답 때 갱신됩니다` : ""}`}
                                 >
                                     {label} {pct}%
                                 </span>
@@ -1072,6 +1332,7 @@ const ChatPage = () => {
                             resetToken={t.resetToken}
                             callbacks={callbacksFor(t.id)}
                             registerApi={registerApi}
+                            promptHooks={promptHooks}
                         />
                     ))}
                 </div>

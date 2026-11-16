@@ -35,6 +35,18 @@ main via `--inspect`):
 - **`npm start -- --user-data-dir=<dir>`** gives the dev app its own `settings.json` / `tabs.json`
   (Electron honours the switch — verified), so it can run next to the owner's installed app without
   the two overwriting each other's tabs.
+- **Driving it**: menu items via `Menu.getApplicationMenu()…click(undefined, W)` from the main debugger
+  (accelerators can't be synthesized); file drops via CDP `Input.dispatchDragEvent` with `data.files`; IDE
+  launches are captured without opening the owner's IDE by swapping `require("child_process").execFile`
+  in main (the bundle calls `child_process.execFile` at call time). Use a uniquely named test project
+  folder — the sidebar lists *every* session in `~/.claude/projects`, so bulk-delete tests must filter to it.
+- **Harness gotchas**: launched in the background, `electron-forge start` quits as soon as its stdin closes —
+  keep it open (`sleep 86400 | npx electron-forge start -- …`). Every tab view stays mounted, so
+  `querySelector("[data-chat-input]")` finds a *hidden* tab's input first (and sends there) — filter by
+  `offsetParent`. CDP `Emulation.setEmulatedMedia` lasts only while that CDP session stays attached; for
+  one-shot scripts set `nativeTheme.themeSource` from main. A Fast Refresh that fails ("… export is
+  incompatible") remounts the whole shell without a page load and restored tabs can come up empty —
+  reload before judging tab restore.
 - **An occluded window stops rendering**: `visibilityState` is `hidden`, rAF never fires, scroll events
   and smooth scrolling stall — scroll-driven UI looks broken in tests. `setBackgroundThrottling(false)`
   did not survive a reload; `W.setAlwaysOnTop(true, "floating"); W.showInactive()` (from the main
@@ -162,6 +174,24 @@ renderer modal never closes.
   without `updatedInput` — lets the CLI's own implementation run, which has no UI to draw into and
   returns "The user did not answer the questions." `deny` is the only slot in the protocol that
   carries text back, so it is load-bearing here, not an error path.
+- **The answer is shown back in the reply** (`QuestionCard.tsx`, parsing in
+  `src/renderer/question-answers.ts`): instead of the old "⚠ AskUserQuestion {json}" tool row (the
+  answer comes back as an `is_error: true` tool_result, so it looked like a failure), the reply shows each
+  question with "내 답" — waiting / answered / 건너뜀 (skip = empty answers → `(skipped)`) / 답하지 않음
+  (stop → "The user did not answer the questions."). No separate storage: the card re-reads the
+  tool_result text `formatQuestionAnswers` produced, so live turns and loaded conversations match.
+  Format = `The user answered:` + one `- <header or question>: <answer>` line per question, in order.
+  Inside an answer the picked options are joined with ", " and typed text goes on its own line starting
+  `Other: ` (the tool's name for free text) — main tells them apart because the modal sends
+  `[...picked labels, typed text]` and only picks equal an option label. The card shows picks as ✓ chips
+  and the typed text separately under "직접 입력" (before, "로그인, 검색, 메모…" ran together and the
+  card could not tell where the options ended). The parser also reads the older form (typed text appended
+  after the picks with ", "), matching option labels longest-first so labels containing ", " work.
+  Multi-line answers are **indented two spaces** on continuation lines (otherwise a typed line starting
+  with "- " read as the next question). The model reads this form correctly and kept picks and typed
+  text apart in its own summary — verified.
+  Answer previews are kept to 4000 chars (`toolResultPreview`; other tools 500). The activity panel row
+  reads "질문 · <questions>" and turns ✓ once answered.
 
 Model/effort/ultracode: `effort` and `model` are SDK options; ultracode goes through
 `extraArgs: {settings: '{"ultracode":true}'}` because `--effort ultracode` is rejected by the CLI.
@@ -194,6 +224,31 @@ completed `assistant` message that follows is skipped for text/thinking when its
 streamed (`streamedMessageIds`), but `tool_use` is still sent from it. Assistant messages that never
 streamed (e.g. API error frames) are sent whole.
 
+**Compaction** (`/compact`, or automatic when the context fills) shows as a divider inside the reply, not
+as a "나" message. Live order (measured): `system/status {status: "compacting"}` → `status {status: null,
+compact_result, compact_error}` → `compact_boundary {compact_metadata: {trigger, pre_tokens, post_tokens}}`
+→ a user message with `isSynthetic: true` whose text (a string *or* text blocks) starts "This session is
+being continued from a previous conversation" = the summary. `/compact` then ends with a replay
+`<local-command-stdout>Compacted` and `result num_turns: 0`; automatic compaction happens between steps
+of a turn (after a tool result) and the same turn just continues. `handleSdkMessage` turns these into
+`chat:compact {phase: start|done|failed|boundary|summary}`: the activity panel says "대화를 요약하는 중…"
+(`/compact`) or "대화가 길어 앞부분을 요약하는 중…", and the boundary pushes a `{kind: "compact"}` segment
+(`CompactDivider` in `MessageItem.tsx`: trigger, pre → post tokens, "요약 보기"). The summary is shown as
+plain pre-wrap text with the model-facing sentences (`cleanCompactSummary`) removed — rendered as markdown
+its indented lists spread into big gaps. Failures are not surfaced: a failed `/compact` already replies
+"Error: No messages to compact", and automatic compaction fails silently in the CLI too
+(`compact_error: "too_few_groups"` happens routinely). Reopened, `getSessionMessages` starts at the last
+boundary (older messages live only in the summary); the summary entry carries `isCompactSummary` — match
+on that, not on the text, or a user pasting an old summary becomes a divider — and turns into a reply
+with a `restored` segment ("이전 대화 요약"). The transcript writes the `/compact` command entry *after*
+the summary, so `sessionToMessages` moves it back in front. The SDK gives loaded sessions no compact
+metadata (with `includeSystemMessages` the boundary entry is `{}`), so loaded dividers have no token counts.
+Zero-token badges are hidden (`/compact`, `/cost`). The `<local-command-stdout>` line is written ~100 ms
+after `result`, i.e. after `saveSessionStats`, so it is left out of the transcript's "last entry" time —
+otherwise every reopen after `/compact` treated the saved cost/context as stale and showed nothing
+(reproduced). To test automatic compaction cheaply, start the app with `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=1`
+(the SDK passes `process.env` to the CLI): it compacts at almost every step.
+
 **"이 대화에서 항상 허용"**: `canUseTool`'s `suggestions` are narrowed to allow-rules, directories and
 `setMode: acceptEdits`, re-targeted to `destination: 'session'` (never written to settings files),
 and returned as `updatedPermissions`. Session rules die with the CLI process, and the app spawns a
@@ -212,7 +267,36 @@ files Bash creates.
 
 **Plan usage** comes from `rate_limit_event` (`unifiedWindows`, utilization 0–1), merged per window
 type in main because each event may carry only one window. The `usage_EXPERIMENTAL…` API is avoided
-on purpose.
+on purpose. Each window carries `receivedAt`, is saved to `userData/rate-limits.json` and loaded at
+startup (`loadSavedRateLimits`) — without that the header was empty after every restart until the first
+reply; the tooltip says "HH:MM에 받은 값 — 다음 응답 때 갱신됩니다", and windows past `resetsAt` are dropped.
+
+**Cost and context survive reopening**: both only arrive at a turn's end, so a restored tab or an
+old conversation showed nothing. `saveSessionStats` keeps the last `chat:cost` / `chat:context` per
+session (`userData/session-stats.json`, newest 300, plus `maxTokensByModel`); `restoreSessionStats`
+(run inside `loadChangedFilesFromSession`, which already walks the transcript) re-sends them. If the
+transcript is newer than the saved value (continued in the terminal) the context is recomputed from the
+last main-chain response's usage = input + cache-creation + cache-read, **without** output — that is
+what the CLI's `getContextUsage({detail: "summary"})` reports (verified equal: 38,473; adding the output
+was off by exactly that reply's output tokens). Cost can't be recomputed, so it stays hidden then.
+
+**Settings changed mid-response apply from the next message** — the running CLI keeps the options it was
+spawned with (`optionsKey()`; the set_* handlers only update the tab). Verified via the transcript: a reply
+switched Haiku→Sonnet mid-way stayed Haiku to the end, the next message was Sonnet. So when the active tab
+is responding, changing model / effort / fast / ultracode, or the shield to "확인 모드" (bypass keeps
+auto-approving for the rest of the reply; "전체 허용" applies at once and withdraws that part), shows a pill
+before the model select (`settingHint` on `TabMeta`): "다음 메시지부터 적용됩니다" — not while idle, where
+that is the expected behaviour anyway. It stays while the tab keeps responding (the old settings are still
+answering), at least `SETTING_HINT_MIN_MS` (4 s) after the change, and goes away the moment a new message
+is sent (`onUserMessage`) — that message already uses the new settings. The SDK could apply changes live
+(`q.setModel()` hits the next API step of the running reply — measured; `applyFlagSettings` for
+fast/effort/ultracode); the owner chose the notice instead.
+System prompts are global (in every tab's `optionsKey`), so `ChatInput`'s add/remove goes through the
+shell's `promptHooks`: `confirm()` asks first when any tab has running background tasks (their next
+message restarts the CLI and ends them — before, silently), `changed()` marks every responding tab with
+the hint and puts the background warning notice in tabs that have tasks. Changing the tab's working
+folder starts a new conversation, so it now also asks while the tab is responding (it used to ask only
+for background tasks, and a response in progress was silently cut off and the conversation cleared).
 
 Sessions resume via the `resume` option. Model, effort, ultracode and fastMode are per tab (see Tabs);
 the last values set in any tab, and the system prompts, are persisted in `userData/settings.json`
@@ -355,7 +439,11 @@ the session's `cwd`. The CLI finds the session from any folder, so if that folde
 the resume still succeeds and continues in whatever folder is current (verified). `tabs:open`
 therefore returns `{cwd, cwdMissing}` and the renderer warns; `sessions:list` marks `cwdMissing` too.
 Delete = `deleteSession()`, which also removes it from the terminal's `/resume`. The app no longer
-keeps its own copy; the old `userData/conversations.json` is left on disk but unused.
+keeps its own copy; the old `userData/conversations.json` is left on disk but unused. The sidebar
+filters by **project name** (the cwd's folder name, case-insensitive — the owner asked for just that)
+and has a 선택 mode: check conversations (모두 선택 = everything currently filtered), 삭제 asks once
+(how many, how many are open in tabs and will be cleared, background tasks that will end) and deletes
+them one by one with the same rules as a single delete.
 
 **Token badges on loaded messages** ("N tokens" next to 나 / Claude): live turns take them from
 `result.usage` (input → the user message, output → the reply). `sessionToMessages` rebuilds the same
@@ -390,6 +478,13 @@ Open/width/"바뀐 파일만" live in `localStorage` (`filesPanel.*`). Under 760
   path, so without this the file landed in "작업 폴더 밖".
 - **"방금"** = `lastTurn === turn`. `fileTurn` increments in `beginTurn`, which re-sends the list so the
   previous response's marks drop to "수정 N" as soon as a new response starts.
+- **"내역 지우기"** (bar at the top of the Claude 수정 view): empties the list and marks, files untouched
+  (`files:clear_changed`). Only edits whose result lands after that moment count again — `trackFileEdits`
+  skips results with `at <= tab.changesClearedAt`, for live edits and for the transcript recompute alike
+  (an edit in flight at the moment of clearing finishes after it, so it shows up in both). Because
+  reopening a conversation recomputes from the whole transcript, the time is kept **per session** in
+  `userData/changes-cleared.json` (newest 200); without it the cleared list came back on every app start.
+  The bar shows "파일 N · <time>에 지운 뒤" so the shorter list isn't mistaken for broken tracking.
 - **Reset** whenever the tab's conversation is reset; opening a session recomputes from the transcript
   (`loadChangedFilesFromSession`); `changedFilesGen` discards a recompute that finishes after the user
   already moved to another conversation (it used to leak into the new one). Edit times come from each
@@ -421,8 +516,10 @@ Open/width/"바뀐 파일만" live in `localStorage` (`filesPanel.*`). Under 760
 
 - **Typing while Claude responds** (`ChatInput.tsx`): the textarea stays enabled; Enter while loading
   queues a `Draft` (raw text + attachments; queuing again merges into it) shown as "응답이 끝나면 보냄".
-  `useClaudeChat` exposes `turnEnd {seq, stopped}` from `finish`. Normal end → the draft is sent;
-  stopped → it goes back into the input (in front of anything typed since — nothing is dropped); "지금
+  `useClaudeChat` exposes `turnEnd {seq, stopped, failed}` from `finish`. Normal end → the draft is sent;
+  stopped **or failed** (an error-level notice during the turn — usage limit, bad model…; retry warnings
+  don't count) → it goes back into the input (in front of anything typed since — nothing is dropped;
+  sending it after an error just failed again); "지금
   보내기" = stop, then send (`sendAfterStopRef`). Changing the tab's conversation (a session loaded into
   it, folder change, session delete) bumps `resetSignal` (`conversationSeq` in `ChatTabView`, on a new
   `load` / `resetToken`) → draft goes back to the input. That is load-bearing: a reset mid-turn →
@@ -454,6 +551,29 @@ Open/width/"바뀐 파일만" live in `localStorage` (`filesPanel.*`). Under 760
   `data-role`). It is measured on scroll **and** after `messages` change / the tab becomes visible —
   right after a conversation loads, the scroll event can come before layout settles and the button
   stayed hidden.
+- **Files dropped anywhere on the tab** (message list included, not just the input box) attach to the
+  message: `ChatTabView` owns the drag handlers (depth counter for nested enter/leave, files only — text
+  drags are ignored) and calls the `addFiles` that `ChatInput` registers via `onRegisterAddFiles`.
+- **⌘F find** (`FindBar.tsx`; 편집 menu: 찾기 ⌘F, 다음 ⌘G, 이전 ⇧⌘G → `menu:tab` "find…" → the active tab's
+  `TabViewApi`). Searches only the visible tab's message list. Not `webContents.findInPage` — it also
+  matches the find box's own text and searches the whole window. Text nodes are grouped by their block
+  ancestor (p/li/pre/td/div…) and matched case-insensitively, so a phrase across inline formatting
+  ("`src/demo.ts:2` 이고") is found but nothing spans two paragraphs; matches are painted with the CSS
+  Custom Highlight API (`::highlight(bc-find)` / `bc-find-current` in `index.css` — the DOM is untouched,
+  so React doesn't fight it). The registry is document-global: `paintedBy` makes a tab that just went
+  hidden clear only its own paint. Re-searches at most every 300 ms while a reply streams. Highlight
+  tokens set the text colour too (code blocks are dark in both themes); dark-mode colours were raised
+  after the old dim gold vanished on the dark "나" bubble (contrast 1.1).
+- **File paths in replies open in JetBrains IDEs** (`src/main/services/jetbrains.ts`, `file-links.ts`):
+  inline code that looks like a path (`src/main.ts:120`) gets a dotted underline once main confirms the
+  file exists (`editor:resolve` on hover, cached 10 s) and opens with **⌘+click** (plain clicks select
+  text); markdown links that aren't http/mailto/# open on a plain click (they used to do nothing — the
+  link guard blocks file URLs). The file viewer has the same button. No setting: each IDE's
+  `options/recentProjects.xml` says which projects it opened, so the IDE that most recently opened the
+  innermost project containing the file wins, else the most recently used IDE. Launch = what Toolbox's
+  `webstorm`/`idea` scripts do: `open -na <App>/Contents/MacOS/<exe> --args --line N <file>`. `:N`,
+  `:N:C` and `#LN` become the line; only existing regular files open (viewed, never executed).
+  `<html class="meta-down">` (`meta-key.ts`) turns the underline solid while ⌘ is held.
 - **Copy buttons go through main** (`clipboard:write` → Electron `clipboard`): `navigator.clipboard`
   rejects when the document isn't focused (e.g. DevTools focused) — verified.
 - **Code highlighting** is shared (`src/renderer/highlight.ts`). Chat fences render through the `pre`
@@ -510,3 +630,6 @@ acting on the first one sends the text and leaves the last syllable behind in th
 - TypeScript paths are bare relative imports — no path aliases configured.
 - Two ESLint configs exist (`.eslintrc` and `.eslintrc.json`); `.eslintrc.json` is the richer one (prettier + `simple-import-sort`). Don't add a third.
 - 4-space indentation in `.ts`/`.tsx` (matches existing files; not enforced by config).
+- `chat.page.module.scss` is shared by most components (`MessageItem`, `ActivityPanel`, `QuestionModal`,
+  `QuestionCard`, …), so a new class name can silently merge with an existing one (`.questionText` /
+  `.questionHeader` already belonged to the modal). Run stylelint — `no-duplicate-selectors` catches it.

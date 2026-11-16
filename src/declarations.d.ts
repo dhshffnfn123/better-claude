@@ -18,6 +18,21 @@ interface SessionSummary {
     gitBranch?: string;
 }
 
+// 대화 압축(/compact, 또는 컨텍스트가 차서 자동) — 답변 안의 구분선. 앞 대화가 이 요약으로 바뀌었다.
+interface CompactInfo {
+    trigger?: "manual" | "auto";
+    preTokens?: number; // 압축 전·후 컨텍스트 토큰 (라이브만 — 기록에는 SDK가 넘겨주지 않는다)
+    postTokens?: number;
+    summary?: string; // CLI가 쓴 요약(영어), 모델용 안내 문장은 뺀 것
+    restored?: boolean; // 기록에서 불러옴 — 그 앞 메시지는 화면에 없다(요약 속에만 있다)
+}
+
+// main이 압축 진행을 알린다: start → done | failed → boundary(구분선) → summary(요약 본문)
+interface CompactEvent extends CompactInfo {
+    phase: "start" | "done" | "failed" | "boundary" | "summary";
+    error?: string;
+}
+
 // 세션 기록에서 복원한 메시지
 interface LoadedMessage {
     role: "user" | "assistant";
@@ -33,6 +48,7 @@ interface LoadedMessage {
               kind: "tool";
               tool: {id: string; name: string; input: unknown; status: "done" | "error"; resultPreview?: string};
           }
+        | ({kind: "compact"} & CompactInfo)
     )[];
 }
 
@@ -85,6 +101,7 @@ interface RateLimitWindow {
     utilization?: number; // 0~1
     resetsAt?: number; // epoch 초
     status?: string; // allowed, allowed_warning, rejected
+    receivedAt?: number; // 이 값을 받은 시각(epoch ms) — 앱을 다시 켜면 저장해 둔 마지막 값을 보여 준다
 }
 
 interface RewindFilesResult {
@@ -156,9 +173,15 @@ interface ChangedFile {
     lastAt: number;
 }
 
+// 파일을 열 JetBrains IDE (그 프로젝트를 마지막으로 연 IDE) — 없는 파일이면 not-found, IDE가 없으면 no-ide
+type EditorTarget =
+    | {ok: true; app: string; path: string; line?: number}
+    | {ok: false; reason: "not-found" | "no-ide" | "error"; message?: string};
+
 interface ChangedFilesState {
     turn: number; // 지금 몇 번째 응답인지 (lastTurn과 같으면 "방금 바뀐 파일")
     files: ChangedFile[];
+    clearedAt?: number; // 내역을 지운 시각 — 이 뒤의 수정만 들어 있다
 }
 
 // 한 번의 수정 (Edit: 바뀐 부분, Write: 새 내용 전체)
@@ -313,12 +336,13 @@ interface TabEventMap {
     mcp: McpServer[];
     changedFiles: ChangedFilesState;
     session: {sessionId: string}; // 새 대화에 세션 ID가 정해졌다
+    compact: CompactEvent; // 대화 압축 진행
 }
 
 type TabEventName = keyof TabEventMap;
 
 // 앱 메뉴의 탭 단축키
-type TabMenuAction = "new" | "close" | "next" | "prev" | `select:${number}`;
+type TabMenuAction = "new" | "close" | "next" | "prev" | `select:${number}` | "find" | "find-next" | "find-prev";
 
 interface Window {
     electronAPI: {
@@ -350,6 +374,11 @@ interface Window {
         selectDirectory: (tabId: string) => Promise<string | null>;
         searchFiles: (tabId: string, query: string) => Promise<string[]>;
         getFileChanges: (tabId: string, path: string) => Promise<FileHunk[]>;
+        // "Claude 수정" 내역 지우기 (목록·표시만, 파일은 그대로) — files:changed로 빈 목록이 온다
+        clearChangedFiles: (tabId: string) => Promise<void>;
+        // 파일 경로("src/main.ts:120", "#L120", 절대 경로)를 JetBrains IDE로 — 어느 IDE로 열지 미리 알아보기 / 열기
+        resolveEditorTarget: (tabId: string, raw: string) => Promise<EditorTarget>;
+        openInEditor: (tabId: string, raw: string) => Promise<EditorTarget>;
         listDir: (tabId: string, dir: string) => Promise<DirListing | null>;
         readFileForView: (tabId: string, path: string) => Promise<FileView>;
         revealFile: (tabId: string, path: string) => Promise<void>;
