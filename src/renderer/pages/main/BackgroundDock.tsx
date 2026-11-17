@@ -13,8 +13,10 @@ import {
     runningOnly,
     STATUS_INFO,
     taskName,
+    taskTokens,
     useNow,
 } from "./background-tasks";
+import {compactTokens} from "../../token-format";
 
 const cx = classNames.bind(styles);
 
@@ -83,16 +85,19 @@ export const BackgroundDock = memo(function BackgroundDock({tabId, active, state
     if (cards.length === 0) return null;
 
     const secondLine = (c: Card): string => {
+        const tokens = taskTokens(c.task);
+        const tokenText = tokens ? ` · 토큰 ${compactTokens(tokens)}` : "";
         if (c.kind === "done") {
             const t = c.task;
             const took = t.startedAt ? ` · ${formatElapsed(t.endedAt - t.startedAt)}` : "";
-            return `${finishedLabel(t)}${took}`;
+            return `${finishedLabel(t)}${took}${tokenText}`;
         }
         const t = c.task;
         const extra = c.children > 0 ? ` · 작업 ${c.children}개 실행 중` : "";
         if (isShellTask(t)) return (lines[t.id] ?? (t.hasOutput ? "출력 기다리는 중" : "출력 없음")) + extra;
+        // 에이전트: 쓴 토큰을 앞에 — 하는 일 글이 길어 잘려도 토큰은 보이게
         const activity = t.summary ?? t.activity;
-        const label = kindOf(t).label;
+        const label = kindOf(t).label + (tokens ? ` · 토큰 ${compactTokens(tokens)}` : "");
         return (activity ? `${label} · ${activity}` : t.toolUses != null ? `${label} · 도구 ${t.toolUses}회` : label) + extra;
     };
 

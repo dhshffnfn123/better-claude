@@ -232,6 +232,7 @@ interface BackgroundTask {
     launchedByAgent?: boolean;
     toolUseId?: string; // 이 작업을 띄운 도구 호출 (답변 속 그 줄)
     parentTaskId?: string; // 에이전트가 띄운 작업이면 그 에이전트의 작업 id
+    usedTokens?: number; // 에이전트가 모델 호출에 쓴 토큰 합계 (입력·캐시·출력)
 }
 
 // 에이전트가 쓴 도구 한 번
@@ -262,6 +263,15 @@ interface FinishedTask {
     launchedByAgent?: boolean;
     toolUseId?: string;
     parentTaskId?: string;
+    usedTokens?: number;
+}
+
+// 대화의 누적 토큰 (result.modelUsage 합 — 본 대화·에이전트·요약 등 모든 모델 호출)
+interface TokenTotals {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
 }
 
 interface BackgroundState {
@@ -437,7 +447,7 @@ interface TabEventMap {
     questionRequest: {id: string; questions: AskQuestion[]}; // AskUserQuestion — 권한이 아니라 선택지 질문
     permissionResolved: {id: string | null}; // 더 이상 답할 수 없게 된 요청 (null이면 그 탭 전부)
     background: BackgroundState;
-    cost: {totalCostUsd: number};
+    cost: {totalCostUsd: number; usage?: TokenTotals};
     context: ContextUsage;
     commands: SlashCommand[];
     mcp: McpServer[];
@@ -470,6 +480,7 @@ interface Window {
             replaceUuid?: string
         ) => Promise<void>;
         stopGeneration: (tabId: string) => Promise<void>;
+        stopAllBackground: (tabId: string) => Promise<void>;
         rewindFiles: (tabId: string, uuid: string, dryRun: boolean) => Promise<RewindFilesResult>;
         forkConversation: (tabId: string, replyUuid: string) => Promise<ForkResult>;
         getAgentView: (tabId: string, ref: AgentRef) => Promise<AgentViewResult>;
@@ -531,6 +542,7 @@ interface Window {
         listSessions: () => Promise<SessionSummary[]>;
         loadSessionMessages: (sessionId: string, cwd?: string) => Promise<LoadedMessage[]>;
         deleteSession: (sessionId: string, cwd?: string) => Promise<void>;
+        getSessionStats: (sessionIds: string[]) => Promise<Record<string, {cost?: number; usage?: TokenTotals}>>;
         onSessionsChanged: (callback: () => void) => () => void;
         getClaudeStatus: () => Promise<{ found: boolean; path: string | null }>;
         locateClaude: () => Promise<

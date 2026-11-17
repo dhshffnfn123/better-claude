@@ -12,7 +12,7 @@ import {
 } from "@fortawesome/free-solid-svg-icons";
 import styles from "./chat.page.module.scss";
 import type {ToolActivity} from "../../hooks/useClaudeChat";
-import {PreviewOpenContext, type PreviewRequest} from "../../tab-context";
+import {ImageViewerContext, PreviewOpenContext, type PreviewRequest} from "../../tab-context";
 import {FILES_PANEL_MIN_WIDTH} from "./files-panel-prefs";
 import {MiddleName} from "./MiddleName";
 
@@ -153,10 +153,19 @@ export function SvgPreview({code, bg, large = false}: {code: string; bg: Preview
     const src = useMemo(() => "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svgDocument(code)), [code]);
     // XML로 읽을 수 없는 SVG(HTML 전용 문자 &nbsp; 등)는 깨진 그림 대신 안내를 보인다
     const [broken, setBroken] = useState<string | null>(null);
+    // 답변 안에서는 줄여 보이므로 누르면 확대 창에 크게 (오른쪽 패널에 크게 띄운 것은 그대로)
+    const openImage = useContext(ImageViewerContext);
     if (broken === src) return <div className={cx("previewNotice")}>그림으로 그릴 수 없는 SVG입니다 — 코드로 보세요</div>;
     return (
         <div className={cx("previewBox", "previewSvgBox", `previewBg-${bg}`, {previewSvgLarge: large})}>
-            <img src={src} alt="SVG 미리보기" className={cx("previewSvg")} onError={() => setBroken(src)} />
+            <img
+                src={src}
+                alt="SVG 미리보기"
+                className={cx("previewSvg")}
+                onError={() => setBroken(src)}
+                onClick={large || !openImage ? undefined : () => openImage(src)}
+                title={large || !openImage ? undefined : "눌러서 크게 보기"}
+            />
         </div>
     );
 }

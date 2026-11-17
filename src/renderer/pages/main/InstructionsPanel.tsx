@@ -21,6 +21,7 @@ import {middleTruncate} from "./ActivityPanel";
 import {isImeComposing} from "./ChatInput";
 import {FILES_PANEL_MIN_WIDTH} from "./files-panel-prefs";
 import {Markdown} from "./MessageItem";
+import {ImageViewer} from "./Lightbox";
 import {MiddleName} from "./MiddleName";
 import {onTab} from "../../tab-events";
 import {TabIdContext} from "../../tab-context";
@@ -124,10 +125,10 @@ function stripFrontmatter(text: string): string {
 // 지침 파일 보기 — 답변과 같은 마크다운(Markdown: 글이 같으면 다시 파싱하지 않는다 — 이 저장소 CLAUDE.md는 68KB다).
 // 링크 처리가 답변과 같아야 한다: 그냥 그리면 `[설치](#설치)` 같은 목차 링크가 앱 주소의 # 뒤를 바꿔, 해시 라우터가
 // 없는 화면으로 넘어가 앱 전체가 404 화면이 됐다(새로고침해도 그대로 — 검토에서 찾음). 파일 링크는 탭의 폴더 기준이다.
-function MarkdownView({text, tabId}: {text: string; tabId: string}) {
+function MarkdownView({text, tabId, baseDir}: {text: string; tabId: string; baseDir: string}) {
     return (
         <TabIdContext.Provider value={tabId}>
-            <Markdown text={text} />
+            <Markdown text={text} baseDir={baseDir} />
         </TabIdContext.Provider>
     );
 }
@@ -733,9 +734,11 @@ function InstructionFileView({tabId, file, tokens, pathChars, onBack, onClose, o
                                 </div>
                             )}
                             {shown.trim() ? (
-                                <div className={cx("bubble", "markdown", "instrMarkdown")}>
-                                    <MarkdownView text={shown} tabId={tabId} />
-                                </div>
+                                <ImageViewer>
+                                    <div className={cx("bubble", "markdown", "instrMarkdown")}>
+                                        <MarkdownView text={shown} tabId={tabId} baseDir={file.path.slice(0, file.path.lastIndexOf("/"))} />
+                                    </div>
+                                </ImageViewer>
                             ) : (
                                 <div className={cx("instrEmpty")}>비어 있습니다.</div>
                             )}

@@ -54,6 +54,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     sendMessage: (tabId: string, message: string, images?: { data: string; mediaType: string }[], replaceUuid?: string) =>
         ipcRenderer.invoke("chat:send", tabId, message, images ?? [], replaceUuid),
     stopGeneration: (tabId: string) => ipcRenderer.invoke("chat:stop", tabId),
+    // 백그라운드 패널의 "모두 중지" — 응답과 백그라운드 작업을 모두 멈춘다
+    stopAllBackground: (tabId: string) => ipcRenderer.invoke("background:stop_all", tabId),
     rewindFiles: (tabId: string, uuid: string, dryRun: boolean) => ipcRenderer.invoke("chat:rewind_files", tabId, uuid, dryRun),
     // 이 답변까지를 새 대화로 복사한다 (원래 대화는 그대로) — 렌더러가 새 탭으로 연다
     forkConversation: (tabId: string, replyUuid: string) => ipcRenderer.invoke("chat:fork", tabId, replyUuid),
@@ -140,6 +142,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     listSessions: () => ipcRenderer.invoke("sessions:list"),
     loadSessionMessages: (sessionId: string, cwd?: string) => ipcRenderer.invoke("sessions:messages", sessionId, cwd),
     deleteSession: (sessionId: string, cwd?: string) => ipcRenderer.invoke("sessions:delete", sessionId, cwd),
+    // 탭별 사용량 창: 아직 열지 않은 탭의 저장된 비용·토큰 누계
+    getSessionStats: (sessionIds: string[]) => ipcRenderer.invoke("sessions:stats", sessionIds),
     // main이 스스로 세션을 지웠다(첫 메시지 재생성이 성공해 옛 대화를 지움) — 사이드바 목록을 다시 받는다
     onSessionsChanged: (callback: () => void) => {
         const handler = () => callback();

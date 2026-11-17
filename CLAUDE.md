@@ -122,6 +122,18 @@ Things that are load-bearing:
   `chat:done` (a late one would end the *next* turn). The process is reaped in the background
   (`interrupt()` ≤1s, then `close()`). `stopEpoch` cancels a `sendTurn` that is still between awaits
   (spawning the CLI / waiting for the previous process).
+  **While background tasks run, stop ends only the turn** (`stopTurnOnly`; `hasRunningBackground` = a non-ambient
+  `bgMembers` entry). Closing the process (above) also killed the dev server / agents, so a message sent during a
+  background task could not be cancelled without losing the task (owner's report). `q.interrupt()` alone still killed
+  background *agents* (shells survived — measured): the CLI spares them only when the consumer declares
+  **`perTaskStopAffordance: true`** (we do — the panel's per-task ×/"이 작업 중지"); absent, it fails closed and kills
+  them. The interrupted turn's late frames would look like a CLI-started turn (new reply), so `pump` drops everything
+  but `background_tasks_changed` until that turn's `result` (or `INTERRUPT_WAIT_MS` 5 s) — `endInterrupt`; `sendTurn`
+  awaits `interrupting` before pushing the next message ("지금 보내기"), or the CLI folds it into the dying turn. The
+  panel's 모두 중지 is `background:stop_all` = the old full stop (`stopEverything`). Verified: a background loop and a
+  background agent kept running across a stopped reply (same CLI pids, no phantom reply), the next message was answered
+  in the same process, 지금 보내기 interrupted a slow foreground command and answered in ~1 s, 모두 중지 killed the loop,
+  and stop without background tasks behaves as before.
 - **Background tasks on screen** — they used to be an 11px grey "⚙ 백그라운드 N" at the far end of the cwd bar, a
   10px half-transparent "⚙ N" on the tab, and a floating popover that covered the chat and closed on any outside
   click; the tool row that launched a task showed ✓ while the task ran for minutes (the owner: "눈에 안 띈다"). Now:
@@ -159,6 +171,12 @@ Things that are load-bearing:
   not be written yet at notification time. `chat:background` sends `{running, finished}`; both carry `toolUseId` and
   `parentTaskId`. At the moment a task finishes it is briefly in both lists (record → membership update) — the
   renderer prefers the finished record (`runningOnly`, `allTasks`). `background:output` takes an optional byte count.
+  **Tokens per task**: agents show `usedTokens` — the sum over the agent's own model calls (input + cache write + cache
+  read + output), added in `recordTaskArtifacts` from each subagent `assistant` message's `message.usage`, once per
+  `message.id` (a response arrives as one message per content block, usage repeated; the largest value wins). That is
+  the same accounting as the tab total below. `task_progress`'s `total_tokens` (the CLI's "N tokens") is the agent's
+  last context size, not consumption — only a fallback. Shell tasks call no model and show no tokens. Shown in the
+  dock card ("토큰 85K"), the panel rows and the detail ("도구 5회 · 토큰 84,530" — verified with a 5-tool agent).
 - **"에이전트가 한 일" panel** (`AgentPanel.tsx`, main `agents:get`): what an agent (Agent tool; older name
   `Task` — `isAgentTool`) was told, every tool it used with results, and its full report (the main reply
   only keeps a 500-char preview). Opens from an agent row in a reply or the activity panel ("한 일 보기"),
@@ -170,7 +188,8 @@ Things that are load-bearing:
   `parent_tool_use_id` is the spawning call (cached per session, `agentIdsBySession`; nested agents too —
   verified). The transcript (`<session>/subagents/agent-<id>.jsonl`) goes through
   `sessionToMessages(entries, {subagent: true})` and renders with `MessageItem` (`senderLabel` = agent type,
-  `markReport` labels the last text "최종 보고"); the first user entry is the collapsed "받은 지시". Stats:
+  `markReport` labels the last text "최종 보고"); the first user entry is the collapsed "받은 지시" — markdown via
+  `PromptMarkdown` (as is the background panel's "받은 지시 보기"; both used to be raw pre-wrap text). Stats:
   tool_use count, first→last entry time, tokens = the last response's input + cache + output (the CLI's
   "N tokens"). Status: `tab.taskStatuses` (every `task_notification` — `finishedTasks` keeps only background
   ones, so foreground agents showed "끝남" before) → "실행 중" while the live process still has it
@@ -356,6 +375,16 @@ on purpose. Each window carries `receivedAt`, is saved to `userData/rate-limits.
 startup (`loadSavedRateLimits`) — without that the header was empty after every restart until the first
 reply; the tooltip says "HH:MM에 받은 값 — 다음 응답 때 갱신됩니다", and windows past `resetsAt` are dropped.
 
+**Per-tab cumulative usage** (header chip `UsageMeter.tsx`: the active tab's total; click → every open tab's tokens and
+cost + the sum; a row switches to that tab). Source: `result.modelUsage` summed over models (`totalsFromModelUsage`) —
+per the SDK it covers *every* model call (main loop, Task subagents, sidechains, compaction, workflow agents), is
+cumulative across turns, and a resumed session continues from the totals its transcript saved — so with the app's
+process-per-turn model the latest result already carries the whole conversation (verified: 52K → 156K → 348K over
+three turns, the background agent's 85K included). `result.usage` is main-loop-only and per-turn — not used. Sent with
+`chat:cost` (`usage`), saved per session next to the cost (`session-stats.json`) and restored the same way; zero
+totals (local `/cost`, startup errors) never overwrite. Tabs restored but not opened yet read their saved totals via
+`sessions:stats` when the popover opens. Formatting lives in `src/renderer/token-format.ts`.
+
 **Cost and context survive reopening**: both only arrive at a turn's end, so a restored tab or an
 old conversation showed nothing. `saveSessionStats` keeps the last `chat:cost` / `chat:context` per
 session (`userData/session-stats.json`, newest 300, plus `maxTokensByModel`); `restoreSessionStats`
@@ -527,7 +556,15 @@ Markdown links render with `target="_blank"` (`MARKDOWN_COMPONENTS` in `MessageI
 view must use them** (`Markdown` from `MessageItem.tsx`): a plain `<a href="#설치">` (a CLAUDE.md table of contents,
 GFM footnotes) is an in-page navigation — no `will-navigate` — that sets the URL hash, `createHashRouter` reads it as
 the route `/설치`, nothing matches and the whole UI becomes React Router's 404 screen, kept across reloads
-(reproduced in the 지침 panel, which used to render a bare `ReactMarkdown`).
+(reproduced in the 지침 panel, which used to render a bare `ReactMarkdown`). For a markdown *file* (지침 panel, files
+panel) pass `baseDir` = the file's folder: `urlTransform` → `resolveAgainst` makes relative links and images absolute
+against it (scheme, `/`, `#`, `~` left alone) — a README's `docs/pic.png` is relative to the README, not the tab's cwd.
+`prompt` (agent prompts, `PromptMarkdown`) adds `src/renderer/remark-prompt.ts`: react-markdown **drops raw HTML**, and a
+block that starts with a tag line (`<context>` … up to a blank line) vanishes *with its text* — prompts are often split
+into such tags, so `remarkHtmlAsText` shows tags as text (comments dropped, inline `<br>` = line break); and
+`remarkSoftBreaks` keeps single newlines as line breaks (prompts are often one item per line). Replies keep plain
+markdown rules. Line breaks are done in mdast, not CSS: a `p` rule under `.promptMarkdown` (`:global(p)` or a
+`:global {}` block) made stylelint's no-descending-specificity compare it with every `:global(.hljs-…)` rule (+88 errors).
 
 ### IPC contract
 
@@ -608,6 +645,10 @@ Open/width/"바뀐 파일만" live in `localStorage` (`filesPanel.*`). Under 760
   Claude 수정 (the tracking above), Git 변경 (everything since the last commit — Bash, editor, other
   conversations included). The file viewer's tabs follow: 내용 / Claude 수정 / Git 변경, opening on the
   one matching the view the file was clicked in.
+- **Documents open rendered** (`docKind` / `showDoc` in `FileViewer`, 소스 = the highlighted text, whose highlight
+  memo is skipped while the rendered view shows): `.md/.markdown/.mdx` → 보기 = the reply `Markdown` with `baseDir`
+  (relative images load; click → lightbox via `ImageViewer`); `.html/.htm` → 미리보기 = `previewFile` + `PreviewFrame`,
+  the same sandboxed `bc-preview://` serving as reply previews (its own css/js/images under those rules).
 - **Git 변경 is read-only** (`src/main/services/git-changes.ts`): `git status --porcelain=v2 -z --branch
   --untracked-files=all -- .` from the cwd (so only the cwd subtree — same scope as the tree and the file
   access rules) + `git diff HEAD --numstat` for +/− counts (`--cached` while the repo has no commit yet).
@@ -668,8 +709,9 @@ it closes the others, the files toggle closes it). The cwd-bar chip shows the in
   file name used to run over the token count). Text on `--c-accent-soft` uses `--c-accent-soft-text` —
   `--c-accent-ink` is ink *on* the accent colour and nearly black in dark mode. The "기억" badge uses
   `--c-memory-badge-text` (the header's `--c-ultra` was 2:1 on the light panel); 규칙/가져옴 are outlined.
-- Markdown goes through `Markdown` (see "Links never navigate the app window"), wrapped in `TabIdContext` so file
-  links resolve against the tab's folder.
+- Markdown goes through `Markdown` (see "Links never navigate the app window"), wrapped in `TabIdContext`, with
+  `baseDir` = the file's folder so relative links and images resolve next to the file; `ImageViewer` around the
+  bubble makes its images open in the lightbox.
 
 ### HTML preview (`HtmlPreview.tsx`, `src/main/services/previews.ts`)
 
@@ -727,7 +769,18 @@ previewed (they need a build).
   image it is a standalone XML document: a missing `xmlns` (common in HTML-inline SVG) is added (`svgDocument`), and
   SVG that still fails to parse (`&nbsp;`) shows a notice instead of a broken image. An empty block is not a preview
   kind. The background toggle (밝게/어둡게/체크무늬, `--c-preview-light/-dark`) only changes the backdrop — a page that paints
-  its own background keeps it.
+  its own background keeps it. Inline SVG is capped at 420×240 (an unsized one used to grow to the bubble's width) and
+  a click opens the lightbox, where the `<img>` is sized by the SVG's aspect ratio (`--ar` set on load; `width:
+  min(80vw, 960px, 80vh × ar)`) — a fixed box letterboxed it and the checkerboard bands looked like transparent
+  margins in the picture. Verified: 2:1 → 960×480, 1:3 → 221×662, a 24 px icon → 662×662.
+
+### 사용 가이드 (`UserGuide.tsx`, content in `user-guide.ts`)
+
+Sidebar "사용 가이드" (under 새 대화) opens a modal over the tab view — chats keep running underneath. Left: contents
+(sections with item counts, follows scrolling); right: one card per feature (설명 + 쓰는 방법 lines); top: search over
+title/body/how lines. Text markup: `[[⌘T]]` = keycap, `{i:shield}` = the app's own icon (`ICONS` in `UserGuide.tsx`),
+backticks = code. `since: "v5"` shows a version badge. Esc clears the search first, then closes. **The guide is
+hand-written: when a feature or its button/label changes, update its entry in `user-guide.ts`.**
 
 ### Send queue, notifications, copy, code blocks (renderer)
 
@@ -799,7 +852,8 @@ previewed (they need a build).
   paths in their input/output **whose mtime is after the tool started** (`startedAt` − 2 s; loaded
   sessions use the transcript entry time) — so `ls *.png` shows nothing. Under a **text bubble**: image
   paths the text mentions (inline code, links, bare paths — a Korean particle may follow the extension:
-  "chart.png에"; fenced code is skipped). `![](path)` renders in place; web images become links (the CSP
+  "chart.png에"; fenced code is skipped). `![](path)` renders in place, capped at 400×260 (`.mdImage`; a big
+  screenshot used to fill the bubble at 520×360), click → full size; web images become links (the CSP
   blocks them). Each image shows once per reply, tools first — it lands under the command that made it,
   not under "chart.png를 만들겠습니다". Paths resolve in main (`images:resolve`, ≤24 per call; the renderer
   caches hits 20 s and never misses, since the file often appears after the text) and resolve again when
@@ -807,7 +861,8 @@ previewed (they need a build).
   first 4 KB); any location (Claude saves to /tmp, the Desktop…) — only image bytes are ever read.
   Thumbnails ≤1.5 MB go as is, larger ones are shrunk to 640 px with `nativeImage` (fallback: the original
   up to 8 MB); clicking loads the original (`images:read`: paths resolved for this tab or inside the files
-  panel's scope, ≤30 MB) into the existing lightbox. Tool-result previews now join text blocks instead of
+  panel's scope, ≤30 MB) into the lightbox (`Lightbox.tsx` — one component for replies, the agent panel and, via
+  `ImageViewer`, the files/지침 panels' markdown; ×, outside click or Esc closes). Tool-result previews now join text blocks instead of
   `JSON.stringify`-ing the array (the image base64 used to be the preview). Loaded conversations keep
   result images for the newest 40 tools / 40 M chars (`limitLoadedImages`); older ones show a count. Files
   panel: image files render as images (size, dimensions; click toggles actual size only when shrunk), svg

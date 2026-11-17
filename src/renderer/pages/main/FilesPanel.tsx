@@ -21,6 +21,10 @@ import {copyText} from "../../clipboard";
 import {highlightFile} from "../../highlight";
 import {middleTruncate, ToolDiff} from "./ActivityPanel";
 import {FILES_PANEL_MIN_WIDTH, readPref, writePref} from "./files-panel-prefs";
+import {Markdown} from "./MessageItem";
+import {ImageViewer} from "./Lightbox";
+import {PreviewFrame} from "./HtmlPreview";
+import {TabIdContext} from "../../tab-context";
 
 const cx = classNames.bind(styles);
 
@@ -287,13 +291,36 @@ interface ViewerProps {
     onClose: () => void;
 }
 
+// HTML 파일 미리보기 — 답변 속 .html 카드와 같은 격리된 칸(bc-preview)에 그린다. 같은 폴더의 css·js·그림도 함께.
+function HtmlFileView({tabId, filePath, version}: {tabId: string; filePath: string; version: string}) {
+    const [state, setState] = useState<{src: string} | {error: string} | null>(null);
+    useEffect(() => {
+        let alive = true;
+        setState(null);
+        void window.electronAPI.previewFile(tabId, filePath).then((r) => {
+            if (alive) setState(r.ok === true ? {src: r.src} : {error: r.error});
+        });
+        return () => {
+            alive = false;
+        };
+    }, [tabId, filePath, version]);
+    if (!state) return <div className={cx("viewerNotice")}>불러오는 중…</div>;
+    if ("error" in state) return <div className={cx("viewerNotice")}>{state.error}</div>;
+    return (
+        <div className={cx("fileHtmlPreview")}>
+            <PreviewFrame src={state.src} bg="light" inline={false} />
+        </div>
+    );
+}
+
 function FileViewer({tabId, filePath, cwd, info, gitEntry, gitVersion, preferTab, reloadToken, onClose}: ViewerProps) {
     const [tab, setTab] = useState<ViewerTab>(preferTab);
     const [view, setView] = useState<FileView | null>(null);
     const [hunks, setHunks] = useState<FileHunk[] | null>(null);
     const [copied, setCopied] = useState(false);
-    // svg는 그림과 소스를 오간다
+    // 그려 볼 수 있는 파일(svg 그림, 마크다운, HTML)은 그린 모습이 기본이고 소스와 오간다
     const [svgSource, setSvgSource] = useState(false);
+    const docKind = /\.(md|markdown|mdx)$/i.test(filePath) ? "markdown" : /\.html?$/i.test(filePath) ? "html" : null;
     // Claude가 이 파일을 다시 고치면(또는 새로고침하면) 다시 읽는다
     const version = info?.lastAt ?? 0;
     const changed = info !== undefined;
@@ -332,15 +359,17 @@ function FileViewer({tabId, filePath, cwd, info, gitEntry, gitVersion, preferTab
     }, [tab, changed, gitEntry]);
 
     const showImage = !!view?.image && !svgSource;
+    // 마크다운은 보기 좋게 그리고, HTML은 미리보기로 (소스를 고르면 지금처럼 글자 그대로)
+    const showDoc = !!docKind && view?.text != null && !svgSource;
     const code = useMemo(() => {
-        if (view?.text == null || showImage) return null;
+        if (view?.text == null || showImage || showDoc) return null;
         // 파일 끝의 줄바꿈은 <pre>가 빈 줄로 그리지 않는다 — 줄 번호도 맞춰 센다
         const lines = Math.max(1, view.text.split("\n").length - (view.text.endsWith("\n") ? 1 : 0));
         return {
             html: highlightFile(view.text, filePath),
             gutter: Array.from({length: lines}, (_, i) => i + 1).join("\n"),
         };
-    }, [view, filePath, showImage]);
+    }, [view, filePath, showImage, showDoc]);
 
     // 이 파일을 열 JetBrains IDE (그 프로젝트를 마지막으로 연 IDE) — 없으면 버튼을 숨긴다
     const [ide, setIde] = useState<EditorTarget | null>(null);
@@ -426,10 +455,10 @@ function FileViewer({tabId, filePath, cwd, info, gitEntry, gitVersion, preferTab
                     {view?.missing && <div className={cx("viewerNotice")}>파일이 없습니다 (지워졌거나 옮겨졌을 수 있습니다)</div>}
                     {view?.error && <div className={cx("viewerNotice")}>{view.error}</div>}
                     {view?.binary && <div className={cx("viewerNotice")}>텍스트 파일이 아니라 내용을 보여줄 수 없습니다</div>}
-                    {view?.image && view.text != null && (
+                    {(view?.image || docKind) && view?.text != null && (
                         <div className={cx("imageViewSwitch")}>
                             <button className={cx("imageViewSwitchBtn", {active: !svgSource})} onClick={() => setSvgSource(false)}>
-                                그림
+                                {docKind === "markdown" ? "보기" : docKind === "html" ? "미리보기" : "그림"}
                             </button>
                             <button className={cx("imageViewSwitchBtn", {active: svgSource})} onClick={() => setSvgSource(true)}>
                                 소스
@@ -440,6 +469,18 @@ function FileViewer({tabId, filePath, cwd, info, gitEntry, gitVersion, preferTab
                         <ImageView tabId={tabId} filePath={filePath} size={view.size} version={`${version}:${reloadToken}`} />
                     )}
                     {view?.truncated && !showImage && <div className={cx("viewerNotice")}>파일이 커서 앞부분 1MB만 보여줍니다</div>}
+                    {showDoc && docKind === "markdown" && view?.text != null && (
+                        <ImageViewer>
+                            <div className={cx("fileMarkdownScroll")}>
+                                <div className={cx("bubble", "markdown", "instrMarkdown")}>
+                                    <TabIdContext.Provider value={tabId}>
+                                        <Markdown text={view.text} baseDir={dirName(filePath)} />
+                                    </TabIdContext.Provider>
+                                </div>
+                            </div>
+                        </ImageViewer>
+                    )}
+                    {showDoc && docKind === "html" && <HtmlFileView tabId={tabId} filePath={filePath} version={`${version}:${reloadToken}`} />}
                     {code && (
                         <div className={cx("codeScroll")}>
                             <pre className={cx("codeGutter")}>{code.gutter}</pre>

@@ -812,6 +812,10 @@ interface LiveSession {
     turnResolve: (() => void) | null;
     // 이번 턴에 보낸 사용자 메시지의 uuid. 자동 후속 턴이면 null.
     turnUuid: string | null;
+    // 백그라운드 작업이 도는 채로 응답(지금 턴)만 멈췄다 — 그 턴이 정리될(result가 올) 때까지 남은 메시지를 버리고,
+    // 다음 메시지는 그 뒤에 보낸다(stopTurnOnly). endInterrupt를 부르면 끝난다.
+    interrupting: Promise<void> | null;
+    endInterrupt: (() => void) | null;
     backgroundTasks: number;
     // 백그라운드 작업 상세 — 상단 "백그라운드 N" 패널에 보여준다
     bgMembers: Map<string, BgMember>; // 지금 살아 있는 작업 (background_tasks_changed 기준)
@@ -860,6 +864,10 @@ interface TaskDetail {
     toolUses?: number;
     totalTokens?: number;
     lastToolName?: string;
+    // 에이전트가 모델 호출에 쓴 토큰 합계(입력·캐시·출력) — 서브에이전트 응답의 usage를 응답(message.id)마다 한 번씩 더한다.
+    // totalTokens(CLI의 "N tokens")는 마지막 응답의 컨텍스트 크기라, 탭 누적 사용량(modelUsage)과 같은 셈이 아니다.
+    usedTokens?: number;
+    msgTokens?: Map<string, number>;
 }
 
 // ── 작업 파일 패널(오른쪽) ────────────────────────────────────────────────
@@ -1065,9 +1073,18 @@ interface ContextStat {
     maxTokens: number;
     percentage: number;
 }
+// 대화의 누적 토큰 — result.modelUsage(모델별 합)를 더한 것. 본 대화·에이전트(Task)·요약 등 모든 모델 호출이 들어가고,
+// 턴마다 누계가 오며, 이어 쓴 대화는 기록에 저장된 누계부터 이어 간다(SDK 설명). /cost가 보여 주는 숫자와 같은 셈이다.
+interface TokenTotals {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+}
 interface SavedSessionStat {
     cost?: number;
     context?: ContextStat;
+    usage?: TokenTotals;
     at: number; // 저장한 시각(epoch ms)
 }
 interface SessionStatsFile {
@@ -1093,12 +1110,13 @@ function sessionStats(): SessionStatsFile {
     return sessionStatsCache;
 }
 
-function saveSessionStats(sid: string, update: {cost?: number; context?: ContextStat; model?: string}) {
+function saveSessionStats(sid: string, update: {cost?: number; context?: ContextStat; model?: string; usage?: TokenTotals}) {
     const stats = sessionStats();
     const prev = stats.sessions[sid];
     stats.sessions[sid] = {
         cost: update.cost ?? prev?.cost,
         context: update.context ?? prev?.context,
+        usage: update.usage ?? prev?.usage,
         at: Date.now(),
     };
     if (update.context && update.model && update.context.maxTokens > 0) stats.maxTokensByModel[update.model] = update.context.maxTokens;
@@ -1110,13 +1128,32 @@ function saveSessionStats(sid: string, update: {cost?: number; context?: Context
     }
 }
 
+// 응답 하나가 처리한 토큰 (입력 + 캐시 쓰기·읽기 + 출력)
+function tokensOf(u: ApiUsage): number {
+    return (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.output_tokens ?? 0);
+}
+
+function totalsFromModelUsage(raw: unknown): TokenTotals | null {
+    if (!raw || typeof raw !== "object") return null;
+    const t: TokenTotals = {input: 0, output: 0, cacheRead: 0, cacheWrite: 0};
+    const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+    for (const m of Object.values(raw as Record<string, Record<string, unknown>>)) {
+        if (!m || typeof m !== "object") continue;
+        t.input += num(m.inputTokens);
+        t.output += num(m.outputTokens);
+        t.cacheRead += num(m.cacheReadInputTokens);
+        t.cacheWrite += num(m.cacheCreationInputTokens);
+    }
+    return t.input + t.output + t.cacheRead + t.cacheWrite > 0 ? t : null;
+}
+
 function restoreSessionStats(tab: ChatTab, sid: string, lastUsage: ApiUsage | null, lastModel: string, lastAt: number) {
     if (tab.sessionId !== sid) return; // 읽는 사이 다른 대화로 옮겼다
     const stats = sessionStats();
     const saved = stats.sessions[sid];
     // 앱에서 마지막으로 받은 값이 기록의 끝보다 나중이면 그대로 쓴다 (응답이 끝난 뒤에 저장하므로)
     if (saved && saved.at >= lastAt) {
-        if (typeof saved.cost === "number") send(tab, "chat:cost", {totalCostUsd: saved.cost});
+        if (typeof saved.cost === "number") send(tab, "chat:cost", {totalCostUsd: saved.cost, usage: saved.usage});
         if (saved.context) send(tab, "chat:context", saved.context);
         return;
     }
@@ -1271,6 +1308,7 @@ interface FinishedTask {
     launchedByAgent?: boolean;
     toolUseId?: string; // 이 작업을 띄운 도구 호출 — 답변 속 그 줄에 상태를 보인다
     parentTaskId?: string; // 에이전트가 띄운 작업이면 그 에이전트(작업 id)
+    usedTokens?: number; // 에이전트가 쓴 토큰 합계 (TaskDetail.usedTokens)
 }
 
 const MAX_FINISHED = 10;
@@ -1316,6 +1354,20 @@ function recordTaskArtifacts(s: LiveSession, msg: SDKMessage): boolean {
     const parent = (msg as {parent_tool_use_id?: string | null}).parent_tool_use_id;
     const agent = parent ? agentTaskFor(s, parent) : undefined;
     let changed = false;
+    // 에이전트가 쓴 토큰 — 한 응답이 내용 블록마다 여러 메시지로 오고 usage가 반복되므로 응답마다 한 번(큰 값)만 센다
+    if (agent && msg.type === "assistant") {
+        const m = (msg as {message?: {id?: string; usage?: ApiUsage}}).message;
+        if (m?.id && m.usage) {
+            const n = tokensOf(m.usage);
+            const seen = (agent.msgTokens ??= new Map());
+            const prev = seen.get(m.id) ?? 0;
+            if (n > prev) {
+                seen.set(m.id, n);
+                agent.usedTokens = (agent.usedTokens ?? 0) + n - prev;
+                changed = true;
+            }
+        }
+    }
     for (const b of content as {type?: string; id?: string; name?: string; input?: unknown; content?: unknown; tool_use_id?: string; is_error?: boolean}[]) {
         if (msg.type === "assistant" && b.type === "tool_use" && b.id) {
             s.toolInputs.set(b.id, b.input);
@@ -1396,6 +1448,7 @@ function sendBackground(s: LiveSession) {
                 launchedByAgent: !!m.parentTaskId,
                 toolUseId: d?.toolUseId,
                 parentTaskId: m.parentTaskId,
+                usedTokens: d?.usedTokens,
             };
         });
     send(s.tab, "chat:background", {running: list, finished: s.tab.finishedTasks});
@@ -1442,6 +1495,7 @@ function recordFinishedTask(s: LiveSession, msg: SDKMessage) {
         launchedByAgent: !!m.parentTaskId,
         toolUseId: d?.toolUseId,
         parentTaskId: m.parentTaskId,
+        usedTokens: d?.usedTokens,
     };
     s.tab.finishedTasks = [record, ...s.tab.finishedTasks.filter((f) => f.id !== record.id)].slice(0, MAX_FINISHED);
 }
@@ -1581,6 +1635,70 @@ function endInput(s: LiveSession) {
     s.input.end();
 }
 
+function hasRunningBackground(s: LiveSession): boolean {
+    for (const m of s.bgMembers.values()) if (!m.ambient) return true;
+    return false;
+}
+
+// 멈추는 중인 턴의 result가 끝내 안 오면(예상 밖) 이 시간 뒤 다시 메시지를 받는다
+const INTERRUPT_WAIT_MS = 5000;
+
+// 응답(지금 턴)만 멈춘다 — 프로세스와 백그라운드 작업은 그대로. 렌더러는 이미 턴을 스스로 닫았으므로 chat:done은
+// 보내지 않는다(늦게 간 done이 다음 턴을 끝낸다). CLI에는 interrupt(터미널의 Esc와 같다)를 보내고, 그 턴이 정리될
+// 때까지 남은 메시지는 pump가 버린다.
+function stopTurnOnly(tab: ChatTab, s: LiveSession) {
+    tab.stopEpoch++;
+    restoreReplaceFirst(tab);
+    const wasActive = s.turnActive;
+    s.turnActive = false;
+    s.turnUuid = null;
+    s.turnResolve?.();
+    s.turnResolve = null;
+    settlePendingPermissions(tab, "사용자가 중지했습니다");
+    if (!wasActive || s.endInterrupt) return;
+    let release: () => void = () => undefined;
+    s.interrupting = new Promise<void>((r) => {
+        release = r;
+    });
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const end = () => {
+        if (timer) clearTimeout(timer);
+        if (s.endInterrupt !== end) return;
+        s.endInterrupt = null;
+        s.interrupting = null;
+        release();
+    };
+    s.endInterrupt = end;
+    timer = setTimeout(end, INTERRUPT_WAIT_MS);
+    void withTimeout(s.q.interrupt(), INTERRUPT_WAIT_MS).catch(() => end());
+}
+
+// 응답과 백그라운드 작업을 모두 멈춘다. 이 순간부터 이 세션의 메시지는 렌더러로 가지 않는다(pump가 버린다).
+// 프로세스 정리는 기다리지 않는다 — interrupt로 기록을 정리할 기회를 잠깐 주고 강제 종료(백그라운드 셸도 꺼진다).
+function stopEverything(tab: ChatTab) {
+    tab.stopEpoch++;
+    // 첫 메시지 재생성이 새 세션을 만들기 전에 멈췄으면 원래 대화로 되돌린다
+    restoreReplaceFirst(tab);
+    const s = tab.live;
+    if (!s) return;
+    s.stopped = true;
+    s.turnActive = false;
+    s.turnUuid = null;
+    s.turnResolve?.();
+    s.turnResolve = null;
+    s.endInterrupt?.();
+    settlePendingPermissions(tab, "사용자가 중지했습니다");
+    endInput(s);
+    void (async () => {
+        try {
+            await withTimeout(s.q.interrupt(), 1000);
+        } catch {
+            // 무시 — 아래에서 강제 종료
+        }
+        s.q.close();
+    })();
+}
+
 // 백그라운드 작업도 같이 종료된다
 function closeLive(tab: ChatTab) {
     const s = tab.live;
@@ -1705,6 +1823,10 @@ async function startLive(tab: ChatTab, claudePath: string, resumeAt?: string): P
             // 백그라운드 에이전트가 무엇을 하는지 약 30초마다 한 줄 요약(task_progress.summary).
             // 에이전트의 프롬프트 캐시를 재사용해 비용은 거의 없다(SDK 문서).
             agentProgressSummaries: true,
+            // 앱은 작업마다 멈추는 버튼(백그라운드 패널의 ×·"이 작업 중지" = stopTask)을 그린다고 CLI에 알린다. 이게 있어야
+            // 응답 중지(interrupt)가 백그라운드 에이전트를 살려 두고 지금 턴만 멈춘다 — 없으면 CLI가 "멈출 방법이 없는
+            // 작업이 남지 않게" 에이전트까지 끈다(SDK 설명, 실측: 응답을 멈췄더니 돌던 에이전트가 "중지됨"이 됐다).
+            perTaskStopAffordance: true,
             // 전체 허용 모드에서도 항상 넘긴다. 콜백이 없으면 CLI가 AskUserQuestion 도구를 아예 빼서
             // Claude가 질문 창을 띄울 수 없다(실측). 전체 허용일 때 일반 도구는 askPermission이 바로 허용한다.
             canUseTool: (toolName, toolInput, opts) =>
@@ -1743,6 +1865,8 @@ async function startLive(tab: ChatTab, claudePath: string, resumeAt?: string): P
         idleTimer: null,
         suggestions: promptSuggestionsOn,
         waitingSuggestion: false,
+        interrupting: null,
+        endInterrupt: null,
         errorSent: false,
         stderrTail: "",
         stopped: false,
@@ -1821,6 +1945,13 @@ async function pump(s: LiveSession, claudePath: string) {
                 continue;
             }
 
+            // 백그라운드 작업이 도는 채로 응답만 멈춘 직후: 멈춘 턴에서 늦게 온 메시지는 버린다 — 안 그러면 아래에서
+            // "CLI가 스스로 시작한 턴"으로 보여 새 답변처럼 떴다. 그 턴의 result가 오면 다시 받는다. 작업 목록은 계속 갱신.
+            if (s.endInterrupt && !(msg.type === "system" && msg.subtype === "background_tasks_changed")) {
+                if (msg.type === "result") s.endInterrupt();
+                continue;
+            }
+
             // 백그라운드 작업 완료 알림으로 CLI가 스스로 시작한 턴
             let autoTurnMessageId: string | undefined;
             if (!s.turnActive && msg.type === "assistant") {
@@ -1896,6 +2027,7 @@ async function pump(s: LiveSession, claudePath: string) {
             });
         }
     } finally {
+        s.endInterrupt?.();
         endInput(s);
         finishTurn(s);
         settlePendingPermissions(s.tab, "세션이 종료되었습니다");
@@ -1916,6 +2048,9 @@ async function sendTurn(tab: ChatTab, message: string, images: ImageData[], repl
     // 설정 변경으로 닫는 경우 백그라운드 작업도 같이 종료된다.
     const epoch = tab.stopEpoch;
     const prev = tab.live;
+    // 백그라운드 작업이 도는 채로 응답만 멈춘 직후("지금 보내기" 등)면, 멈추는 중인 턴이 정리된 뒤에 보낸다 —
+    // 그 전에 넣으면 CLI가 멈추는 중인 턴에 끼워 넣는다
+    if (prev?.interrupting) await prev.interrupting;
     // 재생성·편집은 이어갈 지점이 바뀌므로 살아 있는 프로세스를 이어 쓸 수 없다
     if (prev && (replaceUuid || prev.inputEnded || prev.key !== optionsKey(tab))) {
         if (!prev.inputEnded) closeLive(tab);
@@ -2329,10 +2464,12 @@ function handleSdkMessage(tab: ChatTab, msg: SDKMessage, notify: (n: ChatNotice)
         const inputTokens = usage?.input_tokens ?? 0;
         const outputTokens = usage?.output_tokens ?? 0;
         send(tab, "chat:usage", {inputTokens, outputTokens});
-        // 세션 누적 예상 비용(재개한 세션은 이전 턴 포함). 청구서가 아니라 추정치.
+        // 세션 누적 예상 비용과 토큰(재개한 세션은 이전 턴 포함). 청구서가 아니라 추정치.
+        // 로컬 명령(/cost)·시작 오류 결과는 modelUsage가 비거나 0일 수 있다 — 그때는 토큰 누계를 덮어쓰지 않는다.
         if (typeof msg.total_cost_usd === "number") {
-            send(tab, "chat:cost", {totalCostUsd: msg.total_cost_usd});
-            if (tab.sessionId) saveSessionStats(tab.sessionId, {cost: msg.total_cost_usd});
+            const usage = totalsFromModelUsage((msg as {modelUsage?: unknown}).modelUsage);
+            send(tab, "chat:cost", {totalCostUsd: msg.total_cost_usd, usage: usage ?? undefined});
+            if (tab.sessionId) saveSessionStats(tab.sessionId, {cost: msg.total_cost_usd, usage: usage ?? undefined});
         }
         if (msg.is_error) {
             // 에러 결과(SDKResultError)에는 result가 없고, 성공 subtype인데 is_error인 경우에만 있다
@@ -2528,29 +2665,18 @@ ipcMain.handle("chat:set_permissions", (event, tabId: string, allow: boolean) =>
 // 여기서는 chat:done을 보내지 않는다 — 늦게 도착한 done이 다음 턴을 끝내 버릴 수 있다.
 ipcMain.handle("chat:stop", (event, tabId: string) => {
     const tab = tabFor(event, tabId);
-    tab.stopEpoch++;
-    // 첫 메시지 재생성이 새 세션을 만들기 전에 멈췄으면 원래 대화로 되돌린다
-    restoreReplaceFirst(tab);
     const s = tab.live;
-    if (!s) return;
-    // 이 순간부터 이 세션의 메시지는 렌더러로 가지 않는다(pump가 버린다)
-    s.stopped = true;
-    s.turnActive = false;
-    s.turnUuid = null;
-    s.turnResolve?.();
-    s.turnResolve = null;
-    settlePendingPermissions(tab, "사용자가 중지했습니다");
-    endInput(s);
-    // 프로세스 정리는 기다리지 않는다. interrupt로 트랜스크립트를 정리할 기회를 잠깐 주고 강제 종료.
-    void (async () => {
-        try {
-            await withTimeout(s.q.interrupt(), 1000);
-        } catch {
-            // 무시 — 아래에서 강제 종료
-        }
-        s.q.close();
-    })();
+    // 백그라운드 작업이 도는 중이면 지금 응답만 멈춘다. 예전에는 프로세스를 닫아서, 작업 중에 보낸 메시지의 답을
+    // 멈추면 돌던 백그라운드 작업까지 같이 꺼졌다(사용자 제보).
+    if (s && !s.stopped && !s.inputEnded && hasRunningBackground(s)) {
+        stopTurnOnly(tab, s);
+        return;
+    }
+    stopEverything(tab);
 });
+
+// 백그라운드 패널의 "모두 중지" — 응답과 백그라운드 작업을 모두 멈춘다(프로세스를 닫는다)
+ipcMain.handle("background:stop_all", (event, tabId: string) => stopEverything(tabFor(event, tabId)));
 
 // 상단 "백그라운드 N" 패널: 셸 작업의 최근 출력. 렌더러는 작업 id만 넘기고, 경로는 CLI가 알려준 것만 쓴다.
 // maxBytes: 끝에서 얼마나 읽을지 — 작업 줄의 마지막 한 줄은 조금, 패널의 큰 로그는 많이
@@ -3428,6 +3554,19 @@ ipcMain.handle("chat:fork", async (event, tabId: string, replyUuid: unknown) => 
         console.error("[fork] 대화 갈라내기 실패", e);
         return {ok: false, error: (e as Error).message};
     }
+});
+
+// 탭별 사용량 창: 아직 열지 않은 탭(복원만 된 탭)의 대화별 저장된 비용·토큰 누계
+ipcMain.handle("sessions:stats", (_event, sids: unknown) => {
+    if (!Array.isArray(sids)) return {};
+    const saved = sessionStats().sessions;
+    const out: Record<string, {cost?: number; usage?: TokenTotals}> = {};
+    for (const sid of sids.slice(0, 100)) {
+        if (typeof sid !== "string") continue;
+        const s = saved[sid];
+        if (s && (typeof s.cost === "number" || s.usage)) out[sid] = {cost: s.cost, usage: s.usage};
+    }
+    return out;
 });
 
 ipcMain.handle("sessions:delete", async (_event, sid: string, cwd?: string) => {

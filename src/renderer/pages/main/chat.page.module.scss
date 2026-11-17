@@ -1059,15 +1059,17 @@
   summary {
     cursor: pointer;
   }
+}
 
-  p {
-    max-height: 140px;
-    margin: 4px 0 0;
-    overflow-y: auto;
-    line-height: 1.5;
-    color: var(--c-text-soft);
-    white-space: pre-wrap;
-  }
+// 받은 지시 — 마크다운(PromptMarkdown)으로. 길면 이 안에서 스크롤.
+.bgpPromptBody {
+  max-height: 240px;
+  padding: 8px 10px;
+  margin-top: 6px;
+  overflow-y: auto;
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-border-soft);
+  border-radius: 8px;
 }
 
 .bgpLogWrap {
@@ -1779,10 +1781,11 @@
 }
 
 // 마크다운 그림 ![설명](chart.png)
+// 답변 속 그림(![](경로)) — 큰 스크린숏이 말풍선을 가득 채워 너무 컸다. 적당히 줄여 보이고 누르면 확대 창에 원본.
 .mdImage {
   display: block;
-  max-width: min(100%, 520px);
-  max-height: 360px;
+  max-width: min(100%, 400px);
+  max-height: 260px;
   margin: 6px 0;
   cursor: zoom-in;
   border-radius: 8px;
@@ -3332,6 +3335,13 @@
   object-fit: contain;
   border-radius: 8px;
   box-shadow: var(--sh-lightbox);
+}
+
+// SVG는 따로 크기가 없으면 300×150으로 그려진다 — 확대 창에서는 그림 비율(--ar = 가로/세로, 불러온 뒤 정해짐)대로
+// 화면에 맞게 키운다. 상자를 고정 크기로 두면 남는 곳이 체크무늬 띠가 되어 그림에 투명한 여백이 있는 것처럼 보였다.
+.lightboxImageSvg {
+  width: min(80vw, 960px, calc(80vh * var(--ar, 2)));
+  height: auto;
 }
 
 .lightboxClose {
@@ -5871,6 +5881,19 @@
   border-radius: 10px;
 }
 
+// 에이전트가 받은 지시 (백그라운드 패널·에이전트 패널) — 답변과 같은 마크다운을 작은 글씨로, 상자는 바깥이 그린다.
+// (문단 안 줄바꿈은 remark-prompt.ts가 살린다 — 여기서 p를 고르면 stylelint가 :global 규칙들과 섞어 본다)
+.promptMarkdown {
+  padding: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--c-text-soft);
+  white-space: normal;
+  background: none;
+  border: none;
+  border-radius: 0;
+}
+
 .instrConflict {
   display: flex;
   flex-direction: column;
@@ -6063,11 +6086,13 @@
   padding: 16px;
 }
 
+// 답변 속 SVG — 크기를 정하지 않은 SVG가 말풍선 폭만큼 커졌다. 적당히 줄이고 누르면 확대 창.
 .previewSvg {
   min-width: 48px;
-  max-width: 100%;
+  max-width: min(100%, 420px);
   min-height: 48px;
-  max-height: 320px;
+  max-height: 240px;
+  cursor: zoom-in;
   object-fit: contain;
 }
 
@@ -6076,7 +6101,9 @@
 
   .previewSvg {
     width: 80%;
+    max-width: 100%;
     max-height: 90%;
+    cursor: default;
   }
 }
 
@@ -6173,4 +6200,444 @@
 .instrBadgeRule {
   background-color: transparent;
   box-shadow: inset 0 0 0 1px var(--c-border);
+}
+
+// 사용 가이드 (UserGuide.tsx) — 사이드바 "사용 가이드"로 여는 창. 왼쪽 목차, 오른쪽 설명, 위쪽 찾기.
+.guideDialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  width: min(920px, calc(100vw - 48px));
+  height: min(680px, calc(100vh - 48px));
+  overflow: hidden;
+  background-color: var(--c-surface);
+  border-radius: 14px;
+  box-shadow: var(--sh-modal);
+  transform: translate(-50%, -50%);
+}
+
+.guideHeader {
+  display: flex;
+  flex-shrink: 0;
+  gap: 14px;
+  align-items: center;
+  padding: 14px 16px 14px 22px;
+  border-bottom: 1px solid var(--c-divider);
+}
+
+.guideTitle {
+  flex-shrink: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--c-text);
+}
+
+.guideSearch {
+  position: relative;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  max-width: 340px;
+  margin-left: auto;
+}
+
+.guideSearchIcon {
+  position: absolute;
+  left: 10px;
+  font-size: 11px;
+  color: var(--c-text-faint);
+  pointer-events: none;
+}
+
+.guideSearchInput {
+  box-sizing: border-box;
+  width: 100%;
+  height: 32px;
+  padding: 0 10px 0 30px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--c-text);
+  background-color: var(--c-input-bg);
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  outline: none;
+
+  &:focus {
+    border-color: var(--c-accent);
+  }
+
+  &::placeholder {
+    color: var(--c-placeholder);
+  }
+}
+
+.guideClose {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  font-size: 15px;
+  color: var(--c-text-muted);
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-radius: 8px;
+
+  &:hover {
+    color: var(--c-text);
+    background-color: var(--c-hover);
+  }
+}
+
+.guideMain {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.guideToc {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: 2px;
+  width: 190px;
+  padding: 12px 10px;
+  overflow-y: auto;
+  background-color: var(--c-panel-bg);
+  border-right: 1px solid var(--c-divider);
+}
+
+.guideTocItem {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--c-text-2);
+  text-align: left;
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-radius: 8px;
+
+  &:hover {
+    color: var(--c-text);
+    background-color: var(--c-hover);
+  }
+}
+
+.guideTocActive,
+.guideTocActive:hover {
+  font-weight: 700;
+  color: var(--c-text);
+  background-color: var(--c-selected);
+}
+
+.guideTocIcon {
+  flex-shrink: 0;
+  width: 14px;
+  font-size: 12px;
+  color: var(--c-accent-text);
+}
+
+.guideTocLabel {
+  flex: 1;
+  min-width: 0;
+}
+
+.guideTocCount {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--c-text-faint);
+}
+
+.guideBody {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  padding: 6px 28px 28px;
+  overflow-y: auto;
+}
+
+.guideSection {
+  padding-top: 14px;
+}
+
+.guideSectionTitle {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0 10px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--c-text);
+
+  svg {
+    font-size: 13px;
+    color: var(--c-accent-text);
+  }
+}
+
+.guideIntro {
+  margin: -4px 0 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--c-text-muted);
+}
+
+.guideItem {
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  background-color: var(--c-panel-bg);
+  border: 1px solid var(--c-border-soft);
+  border-radius: 10px;
+}
+
+.guideItemTitle {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 0 0 6px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--c-text);
+}
+
+.guideSince {
+  padding: 0 7px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--c-accent-soft-text);
+  background-color: var(--c-accent-soft);
+  border-radius: 999px;
+}
+
+.guideItemBody {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--c-text-soft);
+}
+
+.guideHow {
+  padding-left: 18px;
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--c-text-2);
+}
+
+.guideKey {
+  display: inline-block;
+  min-width: 18px;
+  padding: 0 5px;
+  margin: 0 1px;
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 18px;
+  color: var(--c-text);
+  text-align: center;
+  background-color: var(--c-fill-subtle);
+  border: 1px solid var(--c-border);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+}
+
+.guideInlineIcon {
+  margin: 0 2px;
+  font-size: 0.95em;
+  color: var(--c-accent-text);
+}
+
+.guideCode {
+  padding: 1px 5px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.9em;
+  color: var(--c-text);
+  background-color: var(--c-fill-subtle);
+  border-radius: 4px;
+}
+
+.guideEmpty {
+  padding: 40px 0;
+  font-size: 13px;
+  color: var(--c-text-muted);
+  text-align: center;
+}
+
+// 좁은 창에서는 목차를 접고 본문만
+@media (max-width: 640px) {
+  .guideToc {
+    display: none;
+  }
+}
+
+// 헤더의 탭별 누적 사용량 (UsageMeter.tsx) — 버튼에는 보고 있는 탭의 누적 토큰, 누르면 탭마다 토큰·비용
+.usageChip {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  height: 26px;
+  padding: 0 9px;
+  margin-right: 4px;
+  font: inherit;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--c-header-icon);
+  cursor: pointer;
+  background: none;
+  border: 1px solid var(--c-header-border);
+  border-radius: 999px;
+  transition: color 0.15s, background-color 0.15s;
+
+  &:hover {
+    color: var(--c-header-text);
+    background-color: var(--c-header-hover);
+  }
+
+  svg {
+    font-size: 11px;
+  }
+}
+
+.usageChipOpen {
+  color: var(--c-header-text);
+  background-color: var(--c-header-hover);
+}
+
+.usagePopover {
+  width: 340px;
+}
+
+.usageList {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 260px;
+  margin: 0 -6px;
+  overflow-y: auto;
+}
+
+.usageRow {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 6px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--c-text);
+  text-align: left;
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-radius: 6px;
+
+  &:hover {
+    background-color: var(--c-hover);
+  }
+}
+
+.usageRowActive,
+.usageRowActive:hover {
+  background-color: var(--c-selected);
+}
+
+.usageRowName {
+  display: flex;
+  flex: 1;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
+.usageFolder {
+  flex-shrink: 0;
+  max-width: 45%;
+  padding: 0 6px;
+  overflow: hidden;
+  font-size: 10.5px;
+  color: var(--c-text-2);
+  background-color: var(--c-fill-subtle);
+  border-radius: 4px;
+}
+
+.usageTitle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usageTokens {
+  flex-shrink: 0;
+  width: 52px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11.5px;
+  font-weight: 600;
+  text-align: right;
+}
+
+.usageCost {
+  flex-shrink: 0;
+  width: 58px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  color: var(--c-text-muted);
+  text-align: right;
+}
+
+.usageTotal {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding-top: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  border-top: 1px solid var(--c-divider);
+}
+
+.usageBreakdown {
+  font-size: 11px;
+  color: var(--c-text-2);
+}
+
+// 백그라운드 패널 목록의 작업별 토큰 (에이전트만 — 셸 명령은 모델을 부르지 않는다)
+.bgpRowTokens {
+  flex-shrink: 0;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10.5px;
+  color: var(--c-text-muted);
+}
+
+// 작업 파일 패널의 마크다운 보기·HTML 미리보기 (FilesPanel.tsx)
+.fileMarkdownScroll {
+  flex: 1;
+  min-height: 0;
+  padding: 10px 12px 16px;
+  overflow-y: auto;
+}
+
+.fileHtmlPreview {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  margin: 10px 12px 12px;
+  overflow: hidden;
+  border: 1px solid var(--c-border-soft);
+  border-radius: 8px;
+
+  .previewBox {
+    flex: 1;
+    min-height: 0;
+  }
 }

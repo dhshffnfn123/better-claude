@@ -5,7 +5,8 @@ import {faArrowLeft, faChevronDown, faChevronRight, faCircleNotch, faRobot, faXm
 import styles from "./chat.page.module.scss";
 import type {Message, ToolActivity} from "../../hooks/useClaudeChat";
 import {ImageViewerContext, TabIdContext} from "../../tab-context";
-import {MessageItem} from "./MessageItem";
+import {MessageItem, PromptMarkdown} from "./MessageItem";
+import {Lightbox} from "./Lightbox";
 import {FILES_PANEL_MIN_WIDTH} from "./files-panel-prefs";
 
 const cx = classNames.bind(styles);
@@ -47,7 +48,9 @@ function AgentPrompt({text, first}: {text: string; first: boolean}) {
                 {long && <FontAwesomeIcon icon={open ? faChevronDown : faChevronRight} />}
                 {first ? "받은 지시" : "추가로 받은 지시"}
             </button>
-            <div className={cx("agentPromptText", {agentPromptClamped: long && !open})}>{text}</div>
+            <div className={cx("agentPromptText", {agentPromptClamped: long && !open})}>
+                <PromptMarkdown text={text} />
+            </div>
         </div>
     );
 }
@@ -67,6 +70,7 @@ export function AgentPanel({tabId, stack, width, onResize, onClose, onOpenNested
     const refKey = `${ref.toolUseId ?? ""}|${ref.agentId ?? ""}`;
     const [view, setView] = useState<AgentViewResult | null>(null);
     const [lightbox, setLightbox] = useState<string | null>(null);
+    const closeLightbox = useCallback(() => setLightbox(null), []);
     const bodyRef = useRef<HTMLDivElement>(null);
     // 실행 중인 에이전트는 바닥을 따라간다 (사용자가 위로 올리면 멈춘다). 끝난 에이전트는 지시부터 읽게 맨 위에서.
     const followRef = useRef(false);
@@ -206,11 +210,7 @@ export function AgentPanel({tabId, stack, width, onResize, onClose, onOpenNested
                     </ImageViewerContext.Provider>
                 </TabIdContext.Provider>
             </div>
-            {lightbox && (
-                <div className={cx("lightboxOverlay")} onClick={() => setLightbox(null)}>
-                    <img src={lightbox} className={cx("lightboxImage")} alt="" onClick={(e) => e.stopPropagation()} />
-                </div>
-            )}
+            {lightbox && <Lightbox src={lightbox} onClose={closeLightbox} />}
         </aside>
     );
 }

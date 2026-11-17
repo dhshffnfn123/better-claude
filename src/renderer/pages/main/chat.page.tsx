@@ -28,6 +28,8 @@ import {NotificationSettings} from "./NotificationSettings";
 import {ThemeSettings} from "./ThemeSettings";
 import {AgentPanel} from "./AgentPanel";
 import {BackgroundPanel} from "./BackgroundTasksPanel";
+import {UserGuide} from "./UserGuide";
+import {UsageMeter} from "./UsageMeter";
 import {FilesPanel} from "./FilesPanel";
 import {InstructionsPanel} from "./InstructionsPanel";
 import {PreviewPanel} from "./HtmlPreview";
@@ -138,6 +140,8 @@ interface TabMeta {
     unseen: boolean;
     background: BackgroundState;
     cost: number | null;
+    // 대화의 누적 토큰 (CLI의 modelUsage 합 — 헤더의 탭별 사용량)
+    usage: TokenTotals | null;
     context: ContextUsage | null;
     changedFiles: ChangedFilesState;
     mcp: McpServer[];
@@ -190,6 +194,7 @@ function makeTab(id: string, init: Partial<TabMeta> = {}): TabMeta {
         unseen: false,
         background: EMPTY_BACKGROUND,
         cost: null,
+        usage: null,
         context: null,
         changedFiles: EMPTY_CHANGED,
         mcp: [],
@@ -230,6 +235,7 @@ function clearedTab(t: TabMeta): Partial<TabMeta> {
         sent: false,
         skipPermissions: true,
         cost: null,
+        usage: null,
         context: null,
         background: EMPTY_BACKGROUND,
         resetToken: t.resetToken + 1,
@@ -253,6 +259,9 @@ const ChatPage = () => {
     const [selecting, setSelecting] = useState(false);
     const [selectedSids, setSelectedSids] = useState<Set<string>>(() => new Set());
     const [mcpOpen, setMcpOpen] = useState(false);
+    // 사용 가이드 (사이드바 "사용 가이드") — 탭 화면 위에 덮어 연다
+    const [guideOpen, setGuideOpen] = useState(false);
+    const closeGuide = useCallback(() => setGuideOpen(false), []);
     const [mcpRefreshing, setMcpRefreshing] = useState(false);
     const [models, setModels] = useState<ModelOption[]>(FALLBACK_MODELS);
     // 백그라운드 작업 패널 — 작업 파일 패널 자리. 연 탭에서만 보이고, taskId = 보고 있는 작업(null이면 첫 작업)
@@ -392,7 +401,7 @@ const ChatPage = () => {
     useEffect(() => {
         const offs = [
             onAnyTab("background", (id, state) => patchTab(id, {background: state})),
-            onAnyTab("cost", (id, {totalCostUsd}) => patchTab(id, {cost: totalCostUsd})),
+            onAnyTab("cost", (id, {totalCostUsd, usage}) => patchTab(id, usage ? {cost: totalCostUsd, usage} : {cost: totalCostUsd})),
             onAnyTab("context", (id, usage) => patchTab(id, {context: usage})),
             onAnyTab("changedFiles", (id, state) => patchTab(id, {changedFiles: state})),
             onAnyTab("mcp", (id, list) => patchTab(id, {mcp: list})),
@@ -1032,6 +1041,15 @@ const ChatPage = () => {
                     >
                         새 대화 (새 탭)
                     </div>
+                    <div
+                        className={cx("navItem")}
+                        onClick={() => {
+                            setGuideOpen(true);
+                            setSidebarOpen(false);
+                        }}
+                    >
+                        사용 가이드
+                    </div>
                 </nav>
                 {sessions.length > 0 && (
                     <div className={cx("convListSection")}>
@@ -1146,6 +1164,18 @@ const ChatPage = () => {
                 <img src={claudeIcon} className={cx("headerIcon")} alt="Claude" />
                 <span className={cx("headerTitle")}>Better Claude</span>
                 <span className={cx("headerSpacer")} />
+                <UsageMeter
+                    tabs={tabs.map((t) => ({
+                        id: t.id,
+                        title: t.title,
+                        folder: folderName(t.cwd),
+                        sessionId: t.sessionId,
+                        usage: t.usage,
+                        cost: t.cost,
+                    }))}
+                    activeId={active?.id ?? ""}
+                    onSelect={setActiveId}
+                />
                 <NotificationSettings />
                 <ThemeSettings />
                 <button
@@ -1434,7 +1464,7 @@ const ChatPage = () => {
                         onSelect={selectBackgroundTask}
                         canStopAll={!active.isLoading}
                         onStopTask={(id) => void window.electronAPI.stopBackgroundTask(active.id, id)}
-                        onStopAll={() => apiRef.current.get(active.id)?.stop()}
+                        onStopAll={() => void window.electronAPI.stopAllBackground(active.id)}
                         onClearFinished={() => void window.electronAPI.clearFinishedBackground(active.id)}
                         onOpenAgent={(ref) => openAgent(active.id, ref)}
                         width={filesWidth}
@@ -1474,6 +1504,8 @@ const ChatPage = () => {
                     />
                 )}
             </div>
+
+            {guideOpen && <UserGuide onClose={closeGuide} />}
 
             {/* Claude CLI 찾기 모달 */}
             {claudeMissing && (

@@ -14,9 +14,15 @@ import {
     runningOnly,
     STATUS_INFO,
     taskName,
+    taskTokens,
+    TOKENS_HINT,
     useNow,
 } from "./background-tasks";
+import {compactTokens} from "../../token-format";
 import {startPanelResize} from "./files-panel-prefs";
+import {PromptMarkdown} from "./MessageItem";
+import {ImageViewer} from "./Lightbox";
+import {TabIdContext} from "../../tab-context";
 
 const cx = classNames.bind(styles);
 
@@ -126,6 +132,11 @@ export function BackgroundPanel({
                                     <FontAwesomeIcon icon={kind.icon} className={cx("bgpRowKind")} />
                                     <span className={cx("bgpRowName")}>{taskName(t)}</span>
                                     {t.type !== "local_bash" && <span className={cx("bgpTag")}>{kind.label}</span>}
+                                    {taskTokens(t) && (
+                                        <span className={cx("bgpRowTokens")} title={TOKENS_HINT}>
+                                            {compactTokens(taskTokens(t) as number)}
+                                        </span>
+                                    )}
                                     {t.startedAt && <span className={cx("bgpRowTime")}>{formatElapsed(now - t.startedAt)}</span>}
                                     <button
                                         className={cx("bgpRowStop")}
@@ -168,6 +179,11 @@ export function BackgroundPanel({
                                     <FontAwesomeIcon icon={kind.icon} className={cx("bgpRowKind")} />
                                     <span className={cx("bgpRowName")}>{taskName(f)}</span>
                                     {f.status !== "completed" && <span className={cx("bgpRowResult", f.status)}>{finishedLabel(f)}</span>}
+                                    {taskTokens(f) && (
+                                        <span className={cx("bgpRowTokens")} title={TOKENS_HINT}>
+                                            {compactTokens(taskTokens(f) as number)}
+                                        </span>
+                                    )}
                                     {f.startedAt && <span className={cx("bgpRowTime")}>{formatElapsed(f.endedAt - f.startedAt)}</span>}
                                 </div>
                             );
@@ -225,9 +241,9 @@ function TaskDetail({
             <div className={cx("bgpDetailTitle")}>{task.description}</div>
             {task.command && <code className={cx("bgpCommand")}>{task.command}</code>}
             {activity && <div className={cx("bgpActivity")}>{activity}</div>}
-            {(task.toolUses != null || task.totalTokens != null) && (
-                <div className={cx("bgpMeta")}>
-                    도구 {task.toolUses ?? 0}회 · 토큰 {(task.totalTokens ?? 0).toLocaleString()}
+            {(task.toolUses != null || taskTokens(task) != null) && (
+                <div className={cx("bgpMeta")} title={TOKENS_HINT}>
+                    도구 {task.toolUses ?? 0}회 · 토큰 {(taskTokens(task) ?? 0).toLocaleString()}
                 </div>
             )}
             <ToolSteps steps={task.recentTools} />
@@ -242,7 +258,13 @@ function TaskDetail({
             {run?.prompt && (
                 <details className={cx("bgpPrompt")}>
                     <summary>받은 지시 보기</summary>
-                    <p>{run.prompt}</p>
+                    <ImageViewer>
+                        <div className={cx("bgpPromptBody")}>
+                            <TabIdContext.Provider value={tabId}>
+                                <PromptMarkdown text={run.prompt} />
+                            </TabIdContext.Provider>
+                        </div>
+                    </ImageViewer>
                 </details>
             )}
             {task.hasOutput ? (

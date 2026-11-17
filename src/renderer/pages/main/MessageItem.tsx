@@ -1,6 +1,6 @@
 import type {ReactNode} from "react";
 import {Children, Fragment, isValidElement, memo, useContext, useEffect, useMemo, useRef, useState} from "react";
-import ReactMarkdown, {type Components} from "react-markdown";
+import ReactMarkdown, {type Components, defaultUrlTransform} from "react-markdown";
 import remarkGfm from "remark-gfm";
 import classNames from "classnames/bind";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
@@ -25,6 +25,7 @@ import {editorHint, looksLikeFilePath, openFileRef, resolveFileRef} from "../../
 import {imageRefKey, imageRefsInText, isImagePath, resolveImageRefs} from "../../image-refs";
 import {ImageViewerContext, ReplyLiveContext, TabIdContext} from "../../tab-context";
 import {QUESTION_TOOL} from "../../question-answers";
+import {remarkHtmlAsText, remarkSoftBreaks} from "../../remark-prompt";
 import {isAgentTool, middleTruncate, ToolRow} from "./ActivityPanel";
 import {QuestionCard} from "./QuestionCard";
 import {BgToggle, CodePreview, HtmlFileCard, htmlFileOf, OpenLargeButton, type PreviewBg, previewKindOf} from "./HtmlPreview";
@@ -461,13 +462,58 @@ type RewindPreview = {state: "checking"} | {state: "none"} | {state: "ready"; co
 
 // 마크다운 한 덩어리 — 글이 그대로면 다시 파싱하지 않는다. 스트리밍 중에는 마지막 덩어리만 바뀌고, 응답 시작·끝에
 // 모든 메시지가 다시 그려질 때도 파싱은 건너뛴다(예전에는 조각마다 답변 전체를, 턴마다 대화 전체를 다시 파싱했다).
-export const Markdown = memo(function Markdown({text}: {text: string}) {
+// baseDir: 파일을 그릴 때(작업 파일 패널·지침 패널) 상대 경로 그림·링크를 그 파일이 있는 폴더 기준으로 바꾼다 —
+// 그냥 두면 탭의 작업 폴더 기준으로 찾아서, 하위 폴더 README의 `![](docs/a.png)`가 보이지 않았다.
+// prompt: 에이전트가 받은 지시 — HTML 태그를 버리지 않고 글자로, 문단 안 줄바꿈은 그대로 (remark-prompt.ts).
+const PLUGINS = [remarkGfm];
+const PLUGINS_PROMPT = [remarkGfm, remarkHtmlAsText, remarkSoftBreaks];
+
+export const Markdown = memo(function Markdown({text, baseDir, prompt}: {text: string; baseDir?: string; prompt?: boolean}) {
+    const urlTransform = useMemo(
+        () => (baseDir ? (url: string) => defaultUrlTransform(resolveAgainst(baseDir, url)) : undefined),
+        [baseDir]
+    );
     return (
-        <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
+        <ReactMarkdown
+            remarkPlugins={prompt ? PLUGINS_PROMPT : PLUGINS}
+            components={MARKDOWN_COMPONENTS}
+            urlTransform={urlTransform}
+        >
             {text}
         </ReactMarkdown>
     );
 });
+
+// 에이전트가 받은 지시 (백그라운드 패널·에이전트 패널) — 답변과 같은 마크다운으로, 작게. 지시에 흔한 <context> 같은
+// 태그는 글자로 남기고(그냥 그리면 태그 덩어리 안의 글까지 사라진다), 한 줄씩 끊어 쓴 줄은 그대로 둔다.
+export function PromptMarkdown({text}: {text: string}) {
+    return (
+        <div className={cx("bubble", "markdown", "promptMarkdown")}>
+            <Markdown text={text} prompt />
+        </div>
+    );
+}
+
+// 상대 경로만 baseDir 기준 절대 경로로 (웹 주소·절대 경로·#앵커·~ 는 그대로)
+function resolveAgainst(baseDir: string, url: string): string {
+    if (!url || /^[a-z][a-z0-9+.-]*:/i.test(url) || url.startsWith("/") || url.startsWith("#") || url.startsWith("~")) return url;
+    const cut = url.search(/[?#]/);
+    const pathPart = cut >= 0 ? url.slice(0, cut) : url;
+    const rest = cut >= 0 ? url.slice(cut) : "";
+    let decoded = pathPart;
+    try {
+        decoded = decodeURI(pathPart);
+    } catch {
+        // 잘못된 %표기 — 그대로 쓴다
+    }
+    const out: string[] = [];
+    for (const seg of `${baseDir}/${decoded}`.split("/")) {
+        if (seg === "" || seg === ".") continue;
+        if (seg === "..") out.pop();
+        else out.push(seg);
+    }
+    return "/" + out.join("/") + rest;
+}
 
 function MessageItemBase({
     msg,

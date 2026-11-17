@@ -27,6 +27,7 @@ import {
     TabIdContext,
 } from "../../tab-context";
 import {BackgroundDock} from "./BackgroundDock";
+import {Lightbox} from "./Lightbox";
 import {ActivityPanel, middleTruncate} from "./ActivityPanel";
 import {QuestionModal} from "./QuestionModal";
 
@@ -283,14 +284,7 @@ function ChatTabViewBase({
         updateJumpTarget();
     }, [active, updateJumpTarget]);
 
-    useEffect(() => {
-        if (!lightboxSrc) return;
-        const onKey = (e: KeyboardEvent) => {
-            if (e.key === "Escape") setLightboxSrc(null);
-        };
-        window.addEventListener("keydown", onKey);
-        return () => window.removeEventListener("keydown", onKey);
-    }, [lightboxSrc]);
+    const closeLightbox = useCallback(() => setLightboxSrc(null), []);
 
     // 재생성·편집은 세션을 이어갈 지점이 바뀌어 CLI를 새로 띄운다 — 백그라운드 작업도 종료된다
     const confirmStopBackground = (action: string) =>
@@ -589,14 +583,7 @@ function ChatTabViewBase({
             />
 
             {/* 이미지 라이트박스 */}
-            {lightboxSrc && (
-                <div className={cx("lightboxOverlay")} onClick={() => setLightboxSrc(null)}>
-                    <button className={cx("lightboxClose")} onClick={() => setLightboxSrc(null)} aria-label="닫기">
-                        <FontAwesomeIcon icon={faXmark} />
-                    </button>
-                    <img src={lightboxSrc} className={cx("lightboxImage")} alt="" onClick={(e) => e.stopPropagation()} />
-                </div>
-            )}
+            {lightboxSrc && <Lightbox src={lightboxSrc} onClose={closeLightbox} />}
 
             {/* Claude의 선택지 질문 (AskUserQuestion) */}
             {questionRequest && (

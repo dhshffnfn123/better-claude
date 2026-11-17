@@ -52,6 +52,16 @@ export function taskName(t: {description: string; command?: string}): string {
     return d || t.command || "이름 없는 작업";
 }
 
+// 작업이 쓴 토큰 — 에이전트가 모델 호출마다 쓴 토큰의 합(main이 응답마다 더함). 그게 없으면 CLI가 알려 준 값.
+// 셸 명령은 모델을 부르지 않아 토큰이 없다(undefined).
+export function taskTokens(t: {type: string; usedTokens?: number; totalTokens?: number}): number | undefined {
+    if (isShellTask(t)) return undefined;
+    const n = t.usedTokens ?? t.totalTokens;
+    return n && n > 0 ? n : undefined;
+}
+
+export const TOKENS_HINT = "이 작업이 모델 호출에 쓴 토큰 (입력·캐시·출력 합계)";
+
 // 끝난 작업의 상태 글: "완료" / "실패 · 코드 1" / "중지됨"
 export function finishedLabel(f: {status: FinishedTask["status"]; exitCode?: number}): string {
     const base = STATUS_INFO[f.status].label;
