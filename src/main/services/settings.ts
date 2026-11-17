@@ -12,6 +12,8 @@ export interface AppSettings {
     systemPrompts?: string[];
     // 화면 테마 — system이면 macOS 화면 모드를 따른다
     theme?: "system" | "light" | "dark";
+    // 답변이 끝나면 입력창에 "다음 요청" 추천 (SDK promptSuggestions) — 기본 켬
+    promptSuggestions?: boolean;
 }
 
 function settingsPath(): string {

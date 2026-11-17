@@ -19,3 +19,20 @@ export function writePref(key: string, value: string) {
         // 무시
     }
 }
+
+// 오른쪽 패널의 왼쪽 가장자리를 끌어 너비 조절 — 작업 파일 패널과 같은 너비를 쓴다(창 너비의 70%까지)
+export function startPanelResize(e: {preventDefault: () => void}, onResize: (width: number) => void) {
+    e.preventDefault();
+    const move = (ev: PointerEvent) =>
+        onResize(Math.round(Math.min(Math.max(window.innerWidth - ev.clientX, FILES_PANEL_MIN_WIDTH), window.innerWidth * 0.7)));
+    const up = () => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+}

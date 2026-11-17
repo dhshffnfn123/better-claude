@@ -147,6 +147,61 @@ type AgentViewResult =
       }
     | {ok: false; error: string; pending?: boolean};
 
+// ── 지침 패널 (지침 | 기억) ──
+// type: CLI가 주는 종류 — Project(CLAUDE.md·@import·.claude/rules), Local(CLAUDE.local.md), User(사용자 공통),
+// Managed(관리 정책 — 읽기 전용), AutoMem(자동 메모리 목록 MEMORY.md)
+interface InstructionFile {
+    path: string;
+    type: string;
+    tokens: number;
+}
+
+// 대화 도중 불려 온 지침 (하위 폴더 CLAUDE.md, paths가 있는 규칙) — trigger = 그때 Claude가 다룬 파일
+interface NestedInstruction {
+    path: string;
+    display: string;
+    trigger?: string;
+    at?: number;
+}
+
+// 기억 하나 = 기억 폴더의 파일 하나 (+ MEMORY.md 목록의 한 줄)
+interface MemoryItem {
+    path: string;
+    file: string;
+    title: string;
+    hook: string;
+    type?: string; // user | feedback | project | reference
+    modified?: string;
+    listed: boolean;
+}
+
+interface CreatableInstruction {
+    kind: "user" | "project" | "local";
+    path: string;
+    gitIgnored?: boolean | null; // CLAUDE.local.md: git이 무시하는지 (null = 저장소 아님·모름)
+}
+
+type InstructionsList =
+    | {
+          ok: true;
+          cwd: string;
+          files: InstructionFile[];
+          startTotal: number; // 새 대화를 시작하면 바로 쓰는 컨텍스트
+          maxTokens: number;
+          measuredAt: number;
+          nested: NestedInstruction[];
+          memoryDir: string | null;
+          memories: MemoryItem[];
+          creatable: CreatableInstruction[];
+      }
+    | {ok: false; error: string};
+
+type InstructionRead =
+    | {ok: true; exists: boolean; content: string; mtimeMs: number | null; readOnly: boolean}
+    | {ok: false; error: string};
+
+type InstructionWrite = {ok: true; mtimeMs: number} | {ok: false; conflict?: boolean; exists?: boolean; error?: string};
+
 // 대화 갈라지기 결과 — 새 세션을 새 탭으로 연다
 type ForkResult = {ok: true; sessionId: string; title: string; cwd: string} | {ok: false; error: string};
 
@@ -175,6 +230,8 @@ interface BackgroundTask {
     lastToolName?: string;
     recentTools?: ToolStep[]; // 에이전트가 최근에 쓴 도구
     launchedByAgent?: boolean;
+    toolUseId?: string; // 이 작업을 띄운 도구 호출 (답변 속 그 줄)
+    parentTaskId?: string; // 에이전트가 띄운 작업이면 그 에이전트의 작업 id
 }
 
 // 에이전트가 쓴 도구 한 번
@@ -203,6 +260,8 @@ interface FinishedTask {
     hasOutput: boolean;
     recentTools?: ToolStep[];
     launchedByAgent?: boolean;
+    toolUseId?: string;
+    parentTaskId?: string;
 }
 
 interface BackgroundState {
@@ -386,6 +445,8 @@ interface TabEventMap {
     session: {sessionId: string}; // 새 대화에 세션 ID가 정해졌다
     compact: CompactEvent; // 대화 압축 진행
     replyUuid: {uuid: string}; // 지금 답변의 마지막 기록 항목 (답변·도구 결과마다 갱신)
+    suggestion: {text: string}; // 답변이 끝난 뒤 CLI가 짐작한 다음 요청 하나 (prompt_suggestion)
+    instructions: Record<string, never>; // 지침·기억 파일이 바뀌었다 (앱에서 저장, Claude가 고침) — 다시 읽을 것
 }
 
 type TabEventName = keyof TabEventMap;
@@ -412,6 +473,8 @@ interface Window {
         rewindFiles: (tabId: string, uuid: string, dryRun: boolean) => Promise<RewindFilesResult>;
         forkConversation: (tabId: string, replyUuid: string) => Promise<ForkResult>;
         getAgentView: (tabId: string, ref: AgentRef) => Promise<AgentViewResult>;
+        getPromptSuggestions: () => Promise<boolean>;
+        setPromptSuggestions: (on: boolean) => Promise<boolean>;
         setPermissions: (tabId: string, allow: boolean) => Promise<void>;
         respondPermission: (id: string, allow: boolean, always?: boolean) => Promise<void>;
         answerQuestions: (id: string, answers: string[][]) => Promise<void>;
@@ -432,6 +495,15 @@ interface Window {
         openInEditor: (tabId: string, raw: string) => Promise<EditorTarget>;
         listDir: (tabId: string, dir: string) => Promise<DirListing | null>;
         readFileForView: (tabId: string, path: string) => Promise<FileView>;
+        // HTML 미리보기: 코드 블록 글 → bc-preview:// 주소(너무 크면 null) / Claude가 만든 .html 파일 → 주소
+        registerHtmlPreview: (html: string) => Promise<string | null>;
+        previewFile: (tabId: string, path: string) => Promise<{ok: true; src: string; name: string} | {ok: false; error: string}>;
+        // 지침 패널: 작업 폴더 줄의 크기 표시 / 목록 / 파일 읽기·저장 / 기억 지우기
+        getInstructionsSummary: (tabId: string) => Promise<{count: number; tokens: number} | null>;
+        listInstructions: (tabId: string, refresh?: boolean) => Promise<InstructionsList>;
+        readInstruction: (tabId: string, path: string) => Promise<InstructionRead>;
+        writeInstruction: (tabId: string, path: string, content: string, baseMtime: number | null, force?: boolean) => Promise<InstructionWrite>;
+        deleteMemory: (tabId: string, path: string) => Promise<{ok: boolean; error?: string}>;
         resolveImages: (tabId: string, refs: ImageRef[]) => Promise<ResolvedImage[]>;
         readImage: (tabId: string, path: string) => Promise<string | null>;
         revealFile: (tabId: string, path: string) => Promise<void>;
@@ -440,7 +512,7 @@ interface Window {
         listCommands: (tabId: string) => Promise<SlashCommand[]>;
         getMcpStatus: (tabId: string, refresh?: boolean) => Promise<McpServer[]>;
 
-        getBackgroundOutput: (tabId: string, taskId: string) => Promise<BackgroundOutput | null>;
+        getBackgroundOutput: (tabId: string, taskId: string, maxBytes?: number) => Promise<BackgroundOutput | null>;
         stopBackgroundTask: (tabId: string, taskId: string) => Promise<void>;
         clearFinishedBackground: (tabId: string) => Promise<void>;
 
@@ -459,6 +531,7 @@ interface Window {
         listSessions: () => Promise<SessionSummary[]>;
         loadSessionMessages: (sessionId: string, cwd?: string) => Promise<LoadedMessage[]>;
         deleteSession: (sessionId: string, cwd?: string) => Promise<void>;
+        onSessionsChanged: (callback: () => void) => () => void;
         getClaudeStatus: () => Promise<{ found: boolean; path: string | null }>;
         locateClaude: () => Promise<
             | { ok: true; path: string }

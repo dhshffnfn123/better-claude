@@ -5,6 +5,7 @@ import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 import {faBell, faPlay, faVolumeHigh, faVolumeLow, faVolumeXmark} from "@fortawesome/free-solid-svg-icons";
 import styles from "./chat.page.module.scss";
 import {useNotificationSettings} from "../../hooks/useNotificationSound";
+import {useSuggestionsEnabled} from "../../suggestion-setting";
 
 const cx = classNames.bind(styles);
 
@@ -29,6 +30,7 @@ const VOLUME_KEYS = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", 
 // 헤더의 스피커 버튼: 알림음(켜기·음량)과 macOS 알림 설정
 export function NotificationSettings() {
     const s = useNotificationSettings();
+    const [suggestOn, setSuggestOn] = useSuggestionsEnabled();
     const [open, setOpen] = useState(false);
 
     useEffect(() => {
@@ -121,6 +123,19 @@ export function NotificationSettings() {
                         <p className={cx("notifyFootnote")}>
                             알림이 뜨지 않으면 시스템 설정 → 알림에서 이 앱의 알림을 허용하세요.
                         </p>
+
+                        <div className={cx("notifyDivider")} />
+
+                        <div className={cx("notifyRow")}>
+                            <div className={cx("notifyText")}>
+                                <span className={cx("notifyLabel")}>다음 요청 추천</span>
+                                <span className={cx("notifyHint")}>
+                                    답변이 끝나면 Claude가 짐작한 다음 요청을 빈 입력창에 흐리게 보여 줍니다. Tab으로
+                                    채웁니다. 다음 메시지부터 적용됩니다.
+                                </span>
+                            </div>
+                            <Switch checked={suggestOn} onChange={setSuggestOn} label="다음 요청 추천" />
+                        </div>
                     </div>
                 </>
             )}

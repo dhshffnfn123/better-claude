@@ -46,7 +46,16 @@ main via `--inspect`):
   `offsetParent`. CDP `Emulation.setEmulatedMedia` lasts only while that CDP session stays attached; for
   one-shot scripts set `nativeTheme.themeSource` from main. A Fast Refresh that fails ("… export is
   incompatible") remounts the whole shell without a page load and restored tabs can come up empty —
-  reload before judging tab restore.
+  reload before judging tab restore. **The dev app's CLI processes** = children of *its* Electron main
+  process (the one with your `--user-data-dir`, no `--type=`) whose command is the `claude` binary with
+  `--output-format stream-json` — `pgrep -f claude` also matches electron-forge (the repo path contains
+  "better-claude-app"), and the owner's installed app has CLI children of its own.
+  **Port 9333 is not ours alone**: another local session's tooling once drove the dev window over CDP on
+  9333 (navigated it to its own web app), and our scripts then ran against that page — check the page URL
+  in `json/list` before acting, or use uncommon ports. **A message sent while tabs are re-opening** (a
+  Fast Refresh remount, the window navigated away and back) can run in the home folder — `tabFor` creates
+  an unknown tab with `os.homedir()`; a test conversation and its auto memory landed in
+  `~/.claude/projects/-Users-<you>/` (reproduced). Reload fully and check the cwd bar before sending.
 - **An occluded window stops rendering**: `visibilityState` is `hidden`, rAF never fires, scroll events
   and smooth scrolling stall — scroll-driven UI looks broken in tests. `setBackgroundThrottling(false)`
   did not survive a reload; `W.setAlwaysOnTop(true, "floating"); W.showInactive()` (from the main
@@ -103,7 +112,8 @@ Things that are load-bearing:
   (`background_tasks_changed` count > 0). The input is a push queue (`createInputQueue`): a message
   sent meanwhile goes into the same process; a follow-up turn the CLI starts itself is announced with
   `chat:turn_start` and rendered as a new reply. With no background tasks, the input is closed at
-  `result` (otherwise `for await` waits forever). If the query options changed (`optionsKey()`), or
+  `result` (otherwise `for await` waits forever) — or, with next-request suggestions on, once the
+  suggestion arrives / after `SUGGESTION_WAIT_MS` (see below). If the query options changed (`optionsKey()`), or
   when the tab's conversation is reset (`resetConversation`: `tabs:open`, cwd change, session delete)
   or the tab is closed, the process is closed — `q.close()` also kills its background shells (verified).
 - **Stop is immediate and does not wait for main.** The renderer closes the turn itself
@@ -112,7 +122,25 @@ Things that are load-bearing:
   `chat:done` (a late one would end the *next* turn). The process is reaped in the background
   (`interrupt()` ≤1s, then `close()`). `stopEpoch` cancels a `sendTurn` that is still between awaits
   (spawning the CLI / waiting for the previous process).
-- **Background task details panel** (click "백그라운드 N" → `BackgroundTasksPanel.tsx`). `pump` keeps
+- **Background tasks on screen** — they used to be an 11px grey "⚙ 백그라운드 N" at the far end of the cwd bar, a
+  10px half-transparent "⚙ N" on the tab, and a floating popover that covered the chat and closed on any outside
+  click; the tool row that launched a task showed ✓ while the task ran for minutes (the owner: "눈에 안 띈다"). Now:
+  **the dock** above the input (`BackgroundDock.tsx`, passed to `ChatInput` as `top`): one card per running task —
+  spinner, kind icon, name (`taskName`: Claude's description, a trailing "in background" dropped), elapsed time, and
+  for shells the **last output line** (`getBackgroundOutput(…, 2000)` every 2 s, visible tab only), for agents their
+  activity; agent-launched tasks fold into their agent's card (`parentTaskId`); ≤3 cards + "+N"; finished tasks stay
+  as ✓/✗ (red) cards for 15 s (`RECENT_DONE_MS`), then the dock disappears. A card opens **the panel**
+  (`BackgroundPanel` in `BackgroundTasksPanel.tsx`, the files panel's slot, state `bgView` in the shell — agent >
+  background > preview > instructions > files): task list (agent-launched ones nested under their agent, finished
+  ones below with 지우기) + the selected task's detail — a big log (60 KB tail, re-read every 1.5 s while running)
+  that follows new output unless scrolled up ("맨 아래로"), 로그 복사, 이 작업 중지; agents show activity, recent tools,
+  received prompt, 한 일 전체 보기. **Launch rows** (`ToolRow` + `BackgroundBadge`, via `BackgroundLinksContext` from
+  `ChatTabView`, keyed by `toolUseId` = `task_started.tool_use_id`): spinner + "백그라운드 · 실행 중 1:51" →
+  "완료 · 3:02" / "실패 · 코드 1" / "중지됨", click → that task in the panel; with no task info (after a reload/restart
+  or 지우기) a plain "백그라운드" badge from the input's `run_in_background`. The tab shows a coloured pill with a
+  spinner (`--c-task-text` / `--c-on-task`). Verified in the app (running, failed with exit 1, stopped from the panel,
+  agent finished, follow/scroll, light and dark, 480 px).
+  Data (`BackgroundTasksPanel` used to be the popover): `pump` keeps
   per-session maps: membership from `background_tasks_changed` (`bgMembers`, replace-all), details from
   `task_started` (tool_use_id, prompt, subagent/workflow) and `task_progress` (current activity,
   tool uses, tokens, last tool, `summary` — enabled by `agentProgressSummaries: true`), tool inputs (to
@@ -128,7 +156,9 @@ Things that are load-bearing:
   `task_notification` (status, summary, usage) → the tab's `finishedTasks` (last 10, survives the
   CLI process exiting, cleared on new chat / resume / cwd change / "지우기"). Exit code is parsed from
   the summary ("… failed with exit code N") first — the output file's "[exited with code N]" line may
-  not be written yet at notification time. `chat:background` sends `{running, finished}`.
+  not be written yet at notification time. `chat:background` sends `{running, finished}`; both carry `toolUseId` and
+  `parentTaskId`. At the moment a task finishes it is briefly in both lists (record → membership update) — the
+  renderer prefers the finished record (`runningOnly`, `allTasks`). `background:output` takes an optional byte count.
 - **"에이전트가 한 일" panel** (`AgentPanel.tsx`, main `agents:get`): what an agent (Agent tool; older name
   `Task` — `isAgentTool`) was told, every tool it used with results, and its full report (the main reply
   only keeps a 500-char preview). Opens from an agent row in a reply or the activity panel ("한 일 보기"),
@@ -156,9 +186,23 @@ Things that are load-bearing:
   starts with `resumeSessionAt` = that entry, so the old prompt and its replies leave the model's
   context too (before, the app just re-sent into the same session and the model saw both — reproduced).
   The live process is always closed first (resume point changes). If the replaced message is the
-  session's first entry there is no fork point: a fresh session is started and the old one is
-  deleted once the new session id appears (`replaceFirst`); if no new session appears (failure/stop)
+  session's first entry there is no fork point: a fresh session is started (`replaceFirst`), and the old
+  one is deleted only after a reply in the new session **succeeds** (`commitReplaceFirst`: our turn's
+  `result` with `subtype: "success"`, not `is_error`, `num_turns > 0` — `/cost` also "succeeds"). It used
+  to be deleted as soon as the new session id appeared, i.e. before any API call, so a retry that failed
+  (usage limit, offline, bad model) had already destroyed the original (reproduced with a bad model id).
+  Now a failed retry leaves both sessions; the tab stays on the new one (it is what the screen shows) and a
+  later success there deletes the old. If no new session appears at all (the CLI failed to start, stop),
   `restoreReplaceFirst()` puts the old session back. Files the discarded reply edited are not rewound.
+  While a failed retry is pending the old conversation is still in the sidebar, so the delete is guarded:
+  it is skipped when any tab has that session open, or when its last transcript entry differs from the one
+  recorded at `prepareReplace` (`lastUuid` — continued in another tab or the terminal). Before, continuing the
+  original elsewhere and then succeeding in the retry tab deleted the original *with* the new turns (verified
+  fixed, also with the other tab closed first). Retrying again from the failed attempt chains the pending
+  replace (`prev`), so one success deletes the original and the failed attempt — before, the original was
+  forgotten and stayed next to the new one (verified). Grants are copied, not moved, to the new session (the
+  old one lives until the commit). A deletion is announced with `sessions:changed` so the sidebar refreshes
+  (it happens after `result`, i.e. may land after the turn-end refresh).
 - **Any earlier point: "여기서 다시" (user messages) and "여기까지 새 탭으로" (replies).** "여기서 다시" is
   the edit path generalised: an inline editor on that message (`MessageItem` edit mode `rewrite`; the
   messages below are dimmed while it is open), then `rewriteFrom` drops it and everything below and sends
@@ -258,7 +302,12 @@ messages `model_refusal_fallback` / `model_refusal_no_fallback` and surface as `
 **Streaming** (`includePartialMessages`): text/thinking go out from `stream_event` deltas; the
 completed `assistant` message that follows is skipped for text/thinking when its `message.id` was
 streamed (`streamedMessageIds`), but `tool_use` is still sent from it. Assistant messages that never
-streamed (e.g. API error frames) are sent whole.
+streamed (e.g. API error frames) are sent whole. **A follow-up turn the CLI starts on its own** begins with
+`turnActive` false: the first block's deltas arrive before `chat:turn_start` and the renderer drops them, and
+`beginTurn` clears `streamedMessageIds`, so that first block is sent whole — and then the response's id is
+marked streamed again (`autoTurnMessageId` in `pump`). Without that, a response shaped [thinking, text]
+streamed its text *and* re-sent it whole: the follow-up reply showed its text twice (fixed; verified with a
+[thinking, text] follow-up after a background Bash).
 
 **Compaction** (`/compact`, or automatic when the context fills) shows as a divider inside the reply, not
 as a "나" message. Live order (measured): `system/status {status: "compacting"}` → `status {status: null,
@@ -315,6 +364,31 @@ transcript is newer than the saved value (continued in the terminal) the context
 last main-chain response's usage = input + cache-creation + cache-read, **without** output — that is
 what the CLI's `getContextUsage({detail: "summary"})` reports (verified equal: 38,473; adding the output
 was off by exactly that reply's output tokens). Cost can't be recomputed, so it stays hidden then.
+
+**Next-request suggestion ("다음 요청 추천")** = SDK `promptSuggestions: true`: ~2–3 s after `result` the CLI
+emits `{type: "prompt_suggestion", suggestion}` — at most one per turn, sometimes none (nothing obvious to
+suggest, near plan limits, after errors, plan mode). It uses the parent's prompt cache, and it comes with
+the app's process-per-turn model too, even on a conversation's first turn (verified).
+- **The CLI finishes that request even after its input closes** and only then exits, so closing the input
+  at `result` as before made a message sent within ~3 s (e.g. the queued draft, sent at turn end) wait for
+  the old process. `finishTurn` therefore leaves the input open up to `SUGGESTION_WAIT_MS` (8 s) while
+  suggestions are on: such a message goes into the same process (verified by CLI pid), and `pump` ends the
+  input as soon as the suggestion arrives — the CLI exits right after. A suggestion that arrives while a
+  turn is active is dropped (main checks `turnActive`, the renderer `isLoading`).
+- `chat:suggestion {text}` → `useClaudeChat`'s `suggestion` (a subscription that outlives the turn — it
+  arrives after `chat:done`; cleared on send, reset, load) → `ChatInput`: shown only when the input is
+  empty (no attachments either) and not responding. It is drawn by an overlay (`.suggestGhost`: one line
+  with … + a `Tab` keycap) over a transparent placeholder (kept for screen readers) — Chromium does not
+  draw `text-overflow` in a textarea placeholder, so a long suggestion was silently cut and the Tab hint
+  with it. **Tab** fills the input without sending (to edit first) and uses the suggestion up.
+- On/off: a switch in the notification settings popover, `settings.json` `promptSuggestions` (default on),
+  `suggestions:get/set`; `src/renderer/suggestion-setting.ts` shares the value between components. It is
+  deliberately **not** in `optionsKey()` (that would restart processes with background tasks): switching
+  off marks live sessions `suggestions = false` (their suggestions are dropped) and ends the input of an
+  idle waiting one. Measured: that CLI still finishes the suggestion it is making and exits 2–3 s later; a
+  message sent meanwhile waits for it, then goes to a new process without suggestions. Sending right
+  after a reply with a changed `optionsKey` setting waits the same 2–3 s — `q.close()` does not cut the
+  request short either — and the previous reply is still in the model's context (verified).
 
 **Settings changed mid-response apply from the next message** — the running CLI keeps the options it was
 spawned with (`optionsKey()`; the set_* handlers only update the tab). Verified via the transcript: a reply
@@ -390,8 +464,8 @@ Each tab is an independent conversation with its own CLI process, so several can
   the current tab is blank (never sent) → open it there; otherwise → a new tab. Deleting a session
   clears every tab that had it (main in `sessions:delete`, renderer `clearedTab`).
 - **Tab strip** (`TabStrip.tsx`): status icon (orange `!` / spinner / unseen dot), folder name
-  (middle-truncated), title, `⚙ N` while the tab has running background tasks (same count as its
-  "백그라운드 N" — a dev server in a tab you're not looking at stays visible), close. Tabs are 200px
+  (middle-truncated), title, a coloured pill with a spinner and N while the tab has running background tasks (a dev
+  server in a tab you're not looking at stays visible), close. Tabs are 200px
   (`width`, not `flex-basis` — with a basis the auto-width list sized to the tabs' content and they
   shrank to ~110px with room to spare) and shrink to 96px, then the list scrolls sideways with its
   scrollbar hidden: `useOverflowScroll` turns vertical wheel into horizontal scroll (Chromium does not
@@ -449,7 +523,11 @@ default is to navigate the app window itself to a clicked link, leaving no way b
 `setWindowOpenHandler` + `will-navigate` open http(s)/mailto in the default browser and block
 everything else — `file://` and relative links (e.g. `[main.ts](src/main.ts)`) are blocked rather than
 opened, since `openExternal` on a file can execute it. Same-document navigation (reload) is allowed.
-Markdown links render with `target="_blank"` (`MARKDOWN_COMPONENTS` in `MessageItem.tsx`).
+Markdown links render with `target="_blank"` (`MARKDOWN_COMPONENTS` in `MessageItem.tsx`). **Every markdown
+view must use them** (`Markdown` from `MessageItem.tsx`): a plain `<a href="#설치">` (a CLAUDE.md table of contents,
+GFM footnotes) is an in-page navigation — no `will-navigate` — that sets the URL hash, `createHashRouter` reads it as
+the route `/설치`, nothing matches and the whole UI becomes React Router's 404 screen, kept across reloads
+(reproduced in the 지침 panel, which used to render a bare `ReactMarkdown`).
 
 ### IPC contract
 
@@ -461,10 +539,6 @@ All renderer↔main calls go through `window.electronAPI` (defined in `src/prelo
 
 All three must agree. Anything about one conversation is per tab: the request takes `tabId` first and
 the event is sent with `send(tab, …)` and added to `TAB_EVENTS` in the preload (see Tabs).
-
-### External backend at `http://localhost:8080`
-
-`src/main/services/api-client.ts` posts conversation/token-usage records and reads daily stats from a separate backend server (not in this repo). Failures are silently swallowed (`null` return); the app keeps working without it.
 
 ### Conversation history = the CLI's own session transcripts
 
@@ -547,6 +621,113 @@ Open/width/"바뀐 파일만" live in `localStorage` (`filesPanel.*`). Under 760
   (`refreshKey` = `turnEnd.seq`), window focus, the ↻ button — debounced 300 ms, overlapping calls in main
   share one promise. The renderer types use `git.ok === false` for narrowing: `strict` is off, and `!git.ok`
   does not narrow the union.
+
+### Instructions panel (`InstructionsPanel.tsx`, "지침 N" in the cwd bar)
+
+지침 = files Claude reads in every conversation (CLAUDE.md …, written by people); 기억 = auto memory Claude
+writes itself. Two tabs in one panel, in the files panel's slot (agent > background > preview > this > files; opening
+it closes the others, the files toggle closes it). The cwd-bar chip shows the instruction tokens.
+
+- **Which files: ask the CLI.** An idle query in the tab's cwd/model with the chat's system prompt →
+  `getContextUsage({detail: "full"})` (token-count API, ~0.5 s, no conversation cost; `summary` as fallback) →
+  `memoryFiles {path, type, tokens}`. Measured types: Project (CLAUDE.md found walking *up* from the cwd —
+  parent folders too —, its `@imports`, `.claude/rules/*.md` without `paths:`), Local (CLAUDE.local.md), User
+  (`$CLAUDE_CONFIG_DIR` or `~/.claude`, `/CLAUDE.md`), Managed (read-only), AutoMem (MEMORY.md). `totalTokens`
+  of that idle query = a fresh conversation's starting context. Cached per cwd + model + system prompts
+  (`instructionCache`; the prompts are part of that starting context); `invalidateInstructions()` clears it on
+  every app write/delete and when Claude Write/Edits an instruction-like path (`trackFileEdits`'s `onEdited` →
+  `isInstructionLike`), and sends `chat:instructions` to every tab (300 ms debounce). A single memory file
+  (`isMemoryTopicFile` — not MEMORY.md) only refreshes the lists (`notifyInstructions`): it is not read at
+  conversation start, so re-spawning the CLI to recount would be wasted. The chip asks only once the tab is `opened` (before `tabs:open`, main's tab is in the home folder).
+- **Loaded mid-conversation**: a sub-folder's CLAUDE.md (when Claude reads a file there) and rules with
+  `paths:` (when it touches a matching file) are not in `memoryFiles`; the CLI writes them to the transcript as
+  `attachment {type: "nested_memory", path, displayPath}` (measured). `nestedFromTranscript` finds
+  `<configDir>/projects/*/<sid>.jsonl` and reads it **incrementally** (`NestedScan`: byte offset + a
+  `StringDecoder` for split UTF-8 + the unfinished last line; starts over if the file shrank) — it used to
+  re-read the whole transcript at every turn end while the panel was open, and transcripts reach 100+ MB. It
+  infers the trigger by path — the latest file Claude handled inside that
+  folder / matching the rule's globs. "The tool right before it" was wrong when two files were read at once
+  (reproduced). The SDK's `InstructionsLoaded` hook has the exact trigger, but only live.
+- **Edits apply from the next message, mid-conversation too**: on resume the CLI re-reads instruction files and
+  appends the changed file's *whole* content as a new `instructions` attachment before the next user message
+  (verified: added "end every reply with 🍌" → the next reply ended with 🍌). So every save grows each continuing
+  conversation by that file's size — the editor warns for files ≥ 5,000 tokens (`BIG_TOKENS`).
+- **Writes are confined**: `instructions:read/write/delete_memory` accept only paths from the tab's last
+  `instructions:list` (`instructionPaths`; Managed → read-only) or `.md` files directly in its memory dir — never
+  an arbitrary renderer path. Save = temp file + rename onto the *realpath* (a `CLAUDE.md → AGENTS.md` symlink stays
+  a symlink); no folders are created (a deleted cwd is not resurrected). The renderer sends the mtime it loaded;
+  a different mtime → `{conflict}` → 다시 불러오기 / 그래도 덮어쓰기 (verified with an outside edit). Unsaved text lives in
+  a module-level `drafts` map (survives closing the panel / switching tabs; a dot marks it). Creatable: user-level,
+  `<cwd>/CLAUDE.md` (when no project CLAUDE.md), `<cwd>/CLAUDE.local.md` with a `git check-ignore` note (`isGitIgnored`).
+- **Auto memory**: one file per memory (frontmatter `name`, `description`, `metadata.type`) + the MEMORY.md
+  index (`- [title](file.md) — hook`); only MEMORY.md is loaded at start (it is the only AutoMem entry). The
+  memory dir is per *git repository* — a folder inside another repo shares that repo's memories — so the measured
+  AutoMem path is the source of truth. Deleting a memory removes the file and its index line (`removeFromIndex`);
+  files missing from the index are flagged "목록에 없음" (Claude doesn't know they exist).
+- Names keep the file name whole and shorten the folder part (`FileName` → `MiddleName`, `shortPath`; a long rule
+  file name used to run over the token count). Text on `--c-accent-soft` uses `--c-accent-soft-text` —
+  `--c-accent-ink` is ink *on* the accent colour and nearly black in dark mode. The "기억" badge uses
+  `--c-memory-badge-text` (the header's `--c-ultra` was 2:1 on the light panel); 규칙/가져옴 are outlined.
+- Markdown goes through `Markdown` (see "Links never navigate the app window"), wrapped in `TabIdContext` so file
+  links resolve against the tab's folder.
+
+### HTML preview (`HtmlPreview.tsx`, `src/main/services/previews.ts`)
+
+HTML/SVG in replies is shown drawn, like Claude.ai's artifacts. Code blocks whose language is `html`/`htm`/`svg`
+(or `xml` / none starting with `<svg`, or none starting with `<!doctype html`/`<html`) get **미리보기 | 코드** tabs:
+code while the reply streams (`ReplyLiveContext` from `MessageItem` — the block may be unfinished), preview once it
+is done, unless the user picked a tab. A `.html` file written by Write/Edit/MultiEdit gets a card under its tool row
+(`HtmlFileCard`). "크게 보기" / the card open `PreviewPanel` in the files panel's slot (agent > background > preview >
+instructions > files; `PreviewOpenContext` from `ChatTabView`, state `previewView` in the shell). JSX/React components are not
+previewed (they need a build).
+
+- **Isolation**: HTML is served from `bc-preview://<id>/` (scheme registered as privileged/standard before `ready`,
+  `protocol.handle` after) and shown in `<iframe sandbox="allow-scripts">` — no `allow-same-origin`. Measured from
+  inside the frame: `self.origin` = "null", `window.electronAPI` undefined (preloads don't run in subframes),
+  `parent.document` / `parent.electronAPI` / cookies / `localStorage` / `top.location` → SecurityError, `window.open`
+  opens nothing. Each response carries its own CSP: https scripts/styles/fonts/images may load (libraries — the
+  owner's choice; canvas-confetti from jsDelivr loaded), `connect-src 'none'` (fetch blocked — verified),
+  `form-action 'none'`. The app's own CSP (`index.html`) only adds `frame-src bc-preview:`.
+- **Things generated pages use that the sandbox would break**: `localStorage`/`sessionStorage` throw in an opaque
+  origin, and a todo-app style page died on its first line — `withInjected` puts an in-memory `Storage` stand-in
+  right after `<head>` (before page scripts; lost on reload). Module scripts (`type="module"`) and `@font-face` fonts
+  are CORS requests from origin `null`, refused for a non-CORS scheme — the scheme is `corsEnabled` and responses
+  carry `Access-Control-Allow-Origin: *` (verified: module + import + font load; fetch to the same host, the web and
+  another preview host stay blocked; `self.origin` still "null"). Cookies still throw.
+- **A preview could navigate its frame to any website** (`location.href = …` — reproduced): neither the app CSP's
+  `frame-src` nor Electron's `will-frame-navigate` caught a frame's self-initiated navigation (the event did not
+  fire — measured), so `installPreviewProtocol` cancels every http(s) `subFrame` request in
+  `session.defaultSession.webRequest.onBeforeRequest` (the app has no other iframes; the filter's `types:
+  ["subFrame"]` keeps other requests off the main process). The frame turns blank; 미리보기 again reloads it.
+- **What is served**: code blocks by text — id = sha256 of the HTML, so a re-render keeps the same `src` and the
+  frame does not reload. LRU of 300 entries / 64M chars, and serving an entry makes it recent too (it used to go by
+  registration order only, so a streaming block evicted previews still on screen → "not found" on remount).
+  While the reply streams, a block switched to 미리보기 re-registers at most once a second (`LIVE_REFRESH_MS`) —
+  before, every 50 ms flush gave a new id and reloaded the frame (verified: +1.0 s, +2.0 s). Files:
+  `previews:file` checks `canViewPath` (cwd or Claude-changed) and registers the HTML file's **directory** per tab,
+  serving only static web files from it (html/css/js/images/fonts/media), never dot-segments or other types,
+  realpath must stay inside — verified: `card.css` 200; `.env`, `data.json`, encoded `../`, `.git/config` 404 — and
+  each file must itself pass `canViewPath` (checked by the path as opened, since Claude-changed files are recorded
+  under the app's spelling, `/tmp` not `/private/tmp`). Before, an `.html` outside the cwd (Desktop, /tmp) exposed
+  its whole folder to the page; now only files Claude wrote there load (verified: its css 200, a sibling js 404).
+  `?v=<mtime>` makes a reopened file reload. The 404 body is Korean ("미리보기를 찾을 수 없습니다").
+- **Height**: served HTML gets a tiny reporter (ResizeObserver → `parent.postMessage({bcPreviewHeight})`; the parent
+  accepts it only from its own frame's window). It measures the **body box** — `documentElement.scrollHeight` never
+  drops below the viewport, so previews only ever grew (reproduced). Inline 48–560 px, 240 by default; pages sized to
+  `100vh` stay at the current height — unless the body adds margins/padding on top of the viewport height (default
+  8 px margin, content-box padding): then each report is viewport + k and the frame grows to 560. The reporter goes
+  before the *last* `</body>` (the first can be inside a script string).
+- **Width**: a reply bubble shrinks to its content and an iframe's default width is 300 px, so the page was cut —
+  `.previewBoxInline {width: 2000px; max-width: 100%}` makes the bubble take its max width.
+- **Lazy**: inline frames mount only within ~600 px of the visible part of their scroll box (IntersectionObserver
+  with `root` = the nearest scrolling ancestor — with the default root the margin applies to the window only, the
+  message list clipped first, and a preview vanished — state lost — as soon as it left view) — each preview is its
+  own document/process; hidden tabs have none. Verified: 200 px out of view stays, ~640 px away unmounts.
+- SVG renders through `<img src="data:image/svg+xml,…">` (no scripts in images), on a checkerboard by default. As an
+  image it is a standalone XML document: a missing `xmlns` (common in HTML-inline SVG) is added (`svgDocument`), and
+  SVG that still fails to parse (`&nbsp;`) shows a notice instead of a broken image. An empty block is not a preview
+  kind. The background toggle (밝게/어둡게/체크무늬, `--c-preview-light/-dark`) only changes the backdrop — a page that paints
+  its own background keeps it.
 
 ### Send queue, notifications, copy, code blocks (renderer)
 
@@ -673,6 +854,15 @@ components set inline: `--fill` (notification slider %) and `--icon` / `--icon-d
 
 React 19 + `react-router-dom` v7 with `createHashRouter` (hash routing because `file://` loading rules out `BrowserRouter`). One route: `/` → `chat.page.tsx`, the tab shell (see Tabs). Streaming chat state lives in `useClaudeChat(tabId, callbacks)` (`src/renderer/hooks/useClaudeChat.ts`, one per `ChatTabView`); its IPC subscriptions go through `tab-events.ts`, are set up per message send and torn down on `chat:done`. UI uses antd + FontAwesome + SCSS modules (`*.module.scss`).
 
+**Streaming must stay cheap** — every tab stays mounted and several can stream at once. Text chunks are
+batched (`CHUNK_FLUSH_MS` = 50 ms in `useClaudeChat`; tools/compaction flush at once, `finish` flushes what is
+left), markdown is a memoized component (`Markdown` in `MessageItem`, `MarkdownView` in the instructions
+panel) so only the segment whose text changed is re-parsed, and `ToolDiff` memoizes its LCS. Before, every
+chunk re-parsed the whole reply twice (an effect re-synced the edit draft on each chunk) and each turn's
+start/end re-parsed every message of the conversation (the `isLoading`-dependent callbacks change every
+item's props, so `memo(MessageItem)` alone cannot skip them). `InstructionsPanel` is `memo`'d because the shell
+re-renders on any tab's state change.
+
 Hover tooltips are CSS-only (`data-tooltip` / `data-tooltip-dir="down"` → `::after` in
 `styles/index.css`), centered by default. `src/renderer/tooltip-guard.ts` (installed in
 `renderer/main.tsx`) measures the real `::after` box on `pointerover` and sets `data-tooltip-align`
@@ -686,6 +876,8 @@ acting on the first one sends the text and leaves the last syllable behind in th
 
 ## Conventions
 
+- Paths and file names in the UI: `MiddleName` (`MiddleName.tsx`) — the front shrinks with "…", the file name (or
+  the last 12 characters) always shows. Never end-ellipsis a path (the owner's rule: the file name is what matters).
 - TypeScript paths are bare relative imports — no path aliases configured.
 - Two ESLint configs exist (`.eslintrc` and `.eslintrc.json`); `.eslintrc.json` is the richer one (prettier + `simple-import-sort`). Don't add a third.
 - 4-space indentation in `.ts`/`.tsx` (matches existing files; not enforced by config).

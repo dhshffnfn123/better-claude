@@ -5,10 +5,10 @@ import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 import {
     faBars,
     faBolt,
+    faBookOpen,
     faCheck,
     faFolder,
     faFolderTree,
-    faGears,
     faHourglassHalf,
     faLayerGroup,
     faMagnifyingGlass,
@@ -27,8 +27,11 @@ import {onAnyTab} from "../../tab-events";
 import {NotificationSettings} from "./NotificationSettings";
 import {ThemeSettings} from "./ThemeSettings";
 import {AgentPanel} from "./AgentPanel";
-import {BackgroundTasksPanel} from "./BackgroundTasksPanel";
+import {BackgroundPanel} from "./BackgroundTasksPanel";
 import {FilesPanel} from "./FilesPanel";
+import {InstructionsPanel} from "./InstructionsPanel";
+import {PreviewPanel} from "./HtmlPreview";
+import type {PreviewRequest} from "../../tab-context";
 import {FILES_PANEL_MIN_WIDTH, readPref, writePref} from "./files-panel-prefs";
 import {isImeComposing, type PromptHooks} from "./ChatInput";
 import {ChatTabView, type TabLoadRequest, type TabViewApi} from "./ChatTabView";
@@ -252,8 +255,8 @@ const ChatPage = () => {
     const [mcpOpen, setMcpOpen] = useState(false);
     const [mcpRefreshing, setMcpRefreshing] = useState(false);
     const [models, setModels] = useState<ModelOption[]>(FALLBACK_MODELS);
-    // 백그라운드 작업 상세 패널: 열려 있으면 패널 위쪽 위치(px), 닫혀 있으면 null
-    const [bgPanelTop, setBgPanelTop] = useState<number | null>(null);
+    // 백그라운드 작업 패널 — 작업 파일 패널 자리. 연 탭에서만 보이고, taskId = 보고 있는 작업(null이면 첫 작업)
+    const [bgView, setBgView] = useState<{tabId: string; sessionId: string | null; taskId: string | null} | null>(null);
     // "에이전트가 한 일" 패널 — 어느 탭의 어느 대화에서 열었는지와 들어간 순서(에이전트가 부른 에이전트)
     const [agentView, setAgentView] = useState<{tabId: string; sessionId: string | null; stack: AgentRef[]} | null>(null);
     const [rateLimits, setRateLimits] = useState<RateLimitWindow[]>([]);
@@ -266,6 +269,12 @@ const ChatPage = () => {
         const saved = Number(readPref("filesPanel.width"));
         return saved >= FILES_PANEL_MIN_WIDTH ? saved : 380;
     });
+    // 지침 패널(지침 | 기억) — 작업 파일 패널 자리에 열린다. 작업 폴더 줄의 "지침 N"은 보고 있는 탭의 크기.
+    const [instrOpen, setInstrOpen] = useState(false);
+    const [instrSummary, setInstrSummary] = useState<{tabId: string; cwd: string; count: number; tokens: number} | null>(null);
+    const [instrNonce, setInstrNonce] = useState(0);
+    // HTML·SVG 미리보기 크게 보기 — 연 탭에서만 보인다(같은 자리: 에이전트 > 백그라운드 > 미리보기 > 지침 > 작업 파일)
+    const [previewView, setPreviewView] = useState<{tabId: string; req: PreviewRequest} | null>(null);
 
     // 콜백·IPC 핸들러에서 최신 값을 읽으려고
     const tabsRef = useRef(tabs);
@@ -400,6 +409,8 @@ const ChatPage = () => {
             if (!s.found) setClaudeMissing(true);
         });
         void refreshSessions();
+        // main이 스스로 지운 세션(첫 메시지 재생성 성공 뒤 옛 대화) — 턴 끝의 목록 갱신보다 늦게 지워질 수 있다
+        offs.push(window.electronAPI.onSessionsChanged(() => void refreshSessions()));
         return () => offs.forEach((off) => off());
     }, [patchTab, refreshSessions]);
 
@@ -476,9 +487,8 @@ const ChatPage = () => {
         patchTab(activeId, {unseen: false});
     }, [ready, activeId, openNonce, ensureOpened, patchTab]);
 
-    // 탭을 바꾸면 이전 탭의 팝업은 닫는다
+    // 탭을 바꾸면 이전 탭의 팝업은 닫는다 (백그라운드 패널은 연 탭에서만 보이므로 그대로 둔다)
     useEffect(() => {
-        setBgPanelTop(null);
         setMcpOpen(false);
     }, [activeId]);
 
@@ -622,7 +632,37 @@ const ChatPage = () => {
     const openAgent = useCallback((tabId: string, ref: AgentRef) => {
         const sessionId = tabsRef.current.find((t) => t.id === tabId)?.sessionId ?? null;
         setAgentView({tabId, sessionId, stack: [ref]});
+        setInstrOpen(false);
+        setPreviewView(null);
+        setBgView(null);
     }, []);
+    const openPreview = useCallback((tabId: string, req: PreviewRequest) => {
+        setPreviewView({tabId, req});
+        setAgentView(null);
+        setInstrOpen(false);
+        setBgView(null);
+    }, []);
+    // 입력창 위 작업 줄의 카드·답변 속 실행 줄 → 오른쪽 백그라운드 패널
+    const openBackground = useCallback((tabId: string, taskId: string | null) => {
+        const sessionId = tabsRef.current.find((t) => t.id === tabId)?.sessionId ?? null;
+        setBgView({tabId, sessionId, taskId});
+        setAgentView(null);
+        setInstrOpen(false);
+        setPreviewView(null);
+    }, []);
+    const closeBackground = useCallback(() => setBgView(null), []);
+    const selectBackgroundTask = useCallback((taskId: string) => setBgView((cur) => (cur ? {...cur, taskId} : cur)), []);
+    // 그 탭이 없어지거나 다른 대화가 되면 닫는다
+    useEffect(() => {
+        if (!bgView) return;
+        const t = tabs.find((x) => x.id === bgView.tabId);
+        if (!t || (bgView.sessionId && t.sessionId !== bgView.sessionId)) setBgView(null);
+    }, [tabs, bgView]);
+    const closePreview = useCallback(() => setPreviewView(null), []);
+    // 그 탭을 닫으면 미리보기도 닫는다
+    useEffect(() => {
+        if (previewView && !tabs.some((t) => t.id === previewView.tabId)) setPreviewView(null);
+    }, [tabs, previewView]);
     const openNestedAgent = useCallback((ref: AgentRef) => {
         setAgentView((cur) => (cur ? {...cur, stack: [...cur.stack, ref]} : cur));
     }, []);
@@ -896,27 +936,52 @@ const ChatPage = () => {
         }
     };
 
-    const toggleBackgroundPanel = (e: React.MouseEvent | React.KeyboardEvent) => {
-        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-        setBgPanelTop((cur) => (cur === null ? Math.round(rect.bottom + 6) : null));
-    };
-
-    const closeBackgroundPanel = useCallback(() => setBgPanelTop(null), []);
-
     const bg = active?.background ?? EMPTY_BACKGROUND;
-    const backgroundTasks = bg.running;
-    // 실행 중인 것도 끝난 기록도 없으면 패널을 닫는다
-    const hasBackgroundInfo = bg.running.length > 0 || bg.finished.length > 0;
-    useEffect(() => {
-        if (!hasBackgroundInfo) setBgPanelTop(null);
-    }, [hasBackgroundInfo]);
-    const failedCount = bg.finished.filter((f) => f.status === "failed").length;
 
     const toggleFilesPanel = () => {
+        // 지침·미리보기·백그라운드 패널이 그 자리를 덮고 있으면 걷어서 작업 파일 패널을 보여 준다
+        if (instrOpen || (previewView && previewView.tabId === active?.id) || (bgView && bgView.tabId === active?.id)) {
+            setInstrOpen(false);
+            setPreviewView(null);
+            setBgView(null);
+            if (filesOpen) return;
+        }
         const next = !filesOpen;
         setFilesOpen(next);
         writePref("filesPanel.open", next ? "1" : "0");
     };
+
+    const toggleInstructions = () => {
+        // 미리보기·백그라운드 패널이 그 자리를 덮고 있으면 지침 패널을 보여 준다(닫지 않는다)
+        const covered = (!!previewView && previewView.tabId === active?.id) || (!!bgView && bgView.tabId === active?.id);
+        setInstrOpen((v) => (covered ? true : !v));
+        setAgentView(null);
+        setPreviewView(null);
+        setBgView(null);
+    };
+    const closeInstructions = useCallback(() => setInstrOpen(false), []);
+
+    // 작업 폴더 줄의 "지침 N" — main이 이 탭을 연 뒤에 묻는다(그 전에는 main이 홈 폴더 기준이다).
+    // 응답이 끝날 때마다·지침 파일이 바뀔 때마다 다시 묻는다(main이 캐시하므로 보통 CLI를 띄우지 않는다).
+    const instrTabId = active?.opened ? active.id : null;
+    const instrCwd = active?.cwd ?? "";
+    const instrModel = active?.model ?? "";
+    const instrTurn = active?.turnSeq ?? 0;
+    useEffect(() => {
+        if (!instrTabId) return;
+        let alive = true;
+        window.electronAPI
+            .getInstructionsSummary(instrTabId)
+            .then((s) => {
+                if (alive) setInstrSummary(s ? {tabId: instrTabId, cwd: instrCwd, ...s} : null);
+            })
+            .catch(() => undefined);
+        return () => {
+            alive = false;
+        };
+    }, [instrTabId, instrCwd, instrModel, instrTurn, instrNonce]);
+    useEffect(() => onAnyTab("instructions", () => setInstrNonce((n) => n + 1)), []);
+    const instrShown = instrSummary && active && instrSummary.tabId === active.id && instrSummary.cwd === active.cwd ? instrSummary : null;
 
     const closeFilesPanel = useCallback(() => {
         setFilesOpen(false);
@@ -1162,6 +1227,28 @@ const ChatPage = () => {
                         {/* 앞쪽을 줄이려고 rtl로 그리는데, 그러면 맨 앞 "/"가 끝으로 밀려 보인다(Users/…/app/).
                             앞에 LRM(‎)을 두면 "/"가 왼쪽→오른쪽 글자 사이에 놓여 제자리에 그려진다. */}
                         <span className={cx("cwdPath")}>{active.cwd ? "‎" + active.cwd : "..."}</span>
+                        {/* 이 대화에 들어가는 지침(CLAUDE.md 등)의 크기 — 누르면 지침 패널. title=""은 폴더 바꾸기 안내가 겹쳐 뜨지 않게 */}
+                        {active.opened && (
+                            <button
+                                className={cx("instrChip", {instrChipActive: instrOpen})}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    toggleInstructions();
+                                }}
+                                title=""
+                                data-tooltip={
+                                    instrShown
+                                        ? instrShown.count > 0
+                                            ? `Claude가 대화마다 읽는 지침 ${instrShown.count}개 · ${instrShown.tokens.toLocaleString()} 토큰 — 눌러서 보기·고치기`
+                                            : "이 폴더에서 읽는 지침 파일이 없습니다 — 눌러서 만들기"
+                                        : "지침과 기억 보기"
+                                }
+                                data-tooltip-dir="down"
+                            >
+                                <FontAwesomeIcon icon={faBookOpen} />
+                                {instrShown ? (instrShown.count > 0 ? `지침 ${formatTokens(instrShown.tokens)}` : "지침 없음") : "지침"}
+                            </button>
+                        )}
                     </div>
                     {active.settingHint && (
                         <span
@@ -1259,61 +1346,6 @@ const ChatPage = () => {
                             )}
                         </span>
                     )}
-                    {hasBackgroundInfo && (
-                        <span
-                            className={cx("sessionStat", "backgroundStat", {
-                                backgroundStatOpen: bgPanelTop !== null,
-                                backgroundStatIdle: backgroundTasks.length === 0,
-                                sessionStatDanger: failedCount > 0,
-                            })}
-                            role="button"
-                            tabIndex={0}
-                            onClick={toggleBackgroundPanel}
-                            onKeyDown={(e) => {
-                                if (e.key === "Enter" || e.key === " ") {
-                                    e.preventDefault();
-                                    toggleBackgroundPanel(e);
-                                }
-                            }}
-                            title="눌러서 백그라운드 작업 자세히 보기"
-                        >
-                            <FontAwesomeIcon icon={faGears} />
-                            {backgroundTasks.length > 0 ? `백그라운드 ${backgroundTasks.length}` : `끝난 작업 ${bg.finished.length}`}
-                            {failedCount > 0 && ` · 실패 ${failedCount}`}
-                            {backgroundTasks.length > 0 && !active.isLoading && (
-                                <button
-                                    className={cx("backgroundStop")}
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        apiRef.current.get(active.id)?.stop();
-                                    }}
-                                    title="백그라운드 작업 모두 중지"
-                                >
-                                    <FontAwesomeIcon icon={faXmark} />
-                                </button>
-                            )}
-                        </span>
-                    )}
-                    {bgPanelTop !== null && hasBackgroundInfo && (
-                        <BackgroundTasksPanel
-                            tabId={active.id}
-                            tasks={backgroundTasks}
-                            finished={bg.finished}
-                            top={bgPanelTop}
-                            canStopAll={!active.isLoading}
-                            onStopTask={(id) => void window.electronAPI.stopBackgroundTask(active.id, id)}
-                            onStopAll={() => {
-                                setBgPanelTop(null);
-                                apiRef.current.get(active.id)?.stop();
-                            }}
-                            onClearFinished={() => void window.electronAPI.clearFinishedBackground(active.id)}
-                            onOpenAgent={(ref) => {
-                                setBgPanelTop(null);
-                                openAgent(active.id, ref);
-                            }}
-                            onClose={closeBackgroundPanel}
-                        />
-                    )}
                     {rateLimits
                         .filter((w) => typeof w.utilization === "number")
                         .map((w) => {
@@ -1368,7 +1400,11 @@ const ChatPage = () => {
                             tabId={t.id}
                             active={t.id === active?.id}
                             cwd={t.cwd}
-                            backgroundRunning={t.background.running.length}
+                            background={t.background}
+                            bgPanelOpen={bgView?.tabId === t.id}
+                            bgPanelTaskId={bgView?.tabId === t.id ? bgView.taskId : null}
+                            onOpenBackground={openBackground}
+                            onCloseBackground={closeBackground}
                             load={t.load}
                             resetToken={t.resetToken}
                             callbacks={callbacksFor(t.id)}
@@ -1376,6 +1412,7 @@ const ChatPage = () => {
                             promptHooks={promptHooks}
                             onFork={openFork}
                             onOpenAgent={openAgent}
+                            onOpenPreview={openPreview}
                         />
                     ))}
                 </div>
@@ -1388,6 +1425,41 @@ const ChatPage = () => {
                         onClose={closeAgent}
                         onOpenNested={openNestedAgent}
                         onBack={agentBack}
+                    />
+                ) : active && bgView?.tabId === active.id ? (
+                    <BackgroundPanel
+                        tabId={active.id}
+                        state={bg}
+                        selectedId={bgView.taskId}
+                        onSelect={selectBackgroundTask}
+                        canStopAll={!active.isLoading}
+                        onStopTask={(id) => void window.electronAPI.stopBackgroundTask(active.id, id)}
+                        onStopAll={() => apiRef.current.get(active.id)?.stop()}
+                        onClearFinished={() => void window.electronAPI.clearFinishedBackground(active.id)}
+                        onOpenAgent={(ref) => openAgent(active.id, ref)}
+                        width={filesWidth}
+                        onResize={setFilesWidth}
+                        onClose={closeBackground}
+                    />
+                ) : active && previewView?.tabId === active.id ? (
+                    <PreviewPanel
+                        key={`${active.id}:${previewView.req.title}:${previewView.req.file ?? ""}:${(previewView.req.html ?? previewView.req.svg ?? "").length}`}
+                        tabId={active.id}
+                        req={previewView.req}
+                        width={filesWidth}
+                        onResize={setFilesWidth}
+                        onClose={closePreview}
+                    />
+                ) : instrOpen && active ? (
+                    <InstructionsPanel
+                        key={active.id}
+                        tabId={active.id}
+                        cwd={active.cwd}
+                        opened={active.opened}
+                        refreshKey={active.turnSeq}
+                        width={filesWidth}
+                        onResize={setFilesWidth}
+                        onClose={closeInstructions}
                     />
                 ) : filesOpen && active && (
                     <FilesPanel

@@ -1,13 +1,14 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, Notification, shell } from "electron";
 import { createMainWindow, windowBackground } from "./main/windows/create-main-window";
 import { installAppMenu } from "./main/menu";
-import * as api from "./main/services/api-client";
 import {resetCache as resetClaudePathCache, resolveClaudePath, validateClaudeBinary} from "./main/services/claude-path";
 import * as settings from "./main/services/settings";
 import {readJsonFile, writeJsonFile} from "./main/services/json-store";
 import {expandPathForChildProcesses} from "./main/services/path-expander";
 import {loadSdk} from "./main/services/claude-sdk";
-import {getGitDiff, getGitStatus} from "./main/services/git-changes";
+import {getGitDiff, getGitStatus, isGitIgnored} from "./main/services/git-changes";
+import * as instr from "./main/services/instructions";
+import {installPreviewProtocol, MAX_PREVIEW_HTML, PREVIEW_SCHEME, registerDir, registerHtml, registerPreviewScheme} from "./main/services/previews";
 import {imageDataUrl, imageFile, imageThumbnail, sniffImage, toolResultImages} from "./main/services/images";
 import {openInIde, pickIde} from "./main/services/jetbrains";
 import type {GitChange, GitStatusResult} from "./main/services/git-changes";
@@ -28,6 +29,8 @@ import type {
 
 // 앱 import 직후 즉시 호출 — 모든 자식 프로세스 spawn 전에 PATH가 확장돼야 함
 expandPathForChildProcesses();
+// HTML 미리보기 주소(bc-preview://) — app ready 전에 등록해야 한다
+registerPreviewScheme();
 import os from "os";
 import fs from "fs";
 import path from "path";
@@ -37,6 +40,8 @@ import {randomUUID} from "crypto";
 // 탭에서 설정을 바꿀 때마다 그 값으로 바뀌고 settings.json에 저장된다(loadChatSettings가 앱 시작 때 읽는다).
 const defaults = {model: "claude-opus-5-5", effort: "xhigh", ultracode: false, fastMode: false};
 let systemPrompts: string[] = [];
+// 다음 요청 추천 (설정에서 끌 수 있다) — 새로 띄우는 CLI부터 적용된다
+let promptSuggestionsOn = true;
 
 function loadChatSettings() {
     const saved = settings.load();
@@ -48,6 +53,7 @@ function loadChatSettings() {
         systemPrompts = saved.systemPrompts.filter((p): p is string => typeof p === "string");
     }
     nativeTheme.themeSource = isThemeSource(saved.theme) ? saved.theme : "system";
+    if (typeof saved.promptSuggestions === "boolean") promptSuggestionsOn = saved.promptSuggestions;
 }
 
 type ThemeSource = "system" | "light" | "dark";
@@ -56,6 +62,16 @@ type ThemeSource = "system" | "light" | "dark";
 // 탭 하나 = 대화 하나. 세션·작업 폴더·채팅 설정·권한 모드·CLI 프로세스·파일 패널과 백그라운드 기록을 탭마다 따로 둔다.
 // 탭 id는 렌더러가 정해서(tabs:open) 모든 요청에 싣고, main이 보내는 이벤트에는 첫 인자로 탭 id를 붙인다(send).
 // 응답 중인 탭마다 CLI 프로세스가 하나씩 돈다. 쉬는 탭은 프로세스가 없다(응답이 끝나면 닫는다 — LiveSession 참고).
+// 첫 메시지 재생성·편집으로 버리는 옛 세션 (ChatTab.replaceFirst)
+interface ReplaceFirst {
+    oldSid: string;
+    // 교체를 시작할 때 옛 세션의 마지막 기록. 지우기 전에 다시 보고, 달라졌으면(그사이 다른 탭·터미널에서 이어 썼으면) 남긴다.
+    lastUuid: string;
+    newSid?: string;
+    // 실패한 재생성 뒤 새 세션의 첫 메시지를 또 바꿨다 — 그 앞의 교체. 성공하면 원래 대화까지 함께 지운다.
+    prev?: ReplaceFirst;
+}
+
 interface ChatTab {
     id: string;
     sender: Electron.WebContents;
@@ -67,7 +83,6 @@ interface ChatTab {
     fastMode: boolean;
     // 방패: 기본 "전체 허용", "확인 모드"는 이 대화에서만 쓰는 임시 모드
     skipPermissions: boolean;
-    lastUserMessage: string;
     // 세션 ID가 아직 없는 새 대화에서 "항상 허용"한 것 — ID가 정해지면 grantsBySession으로 옮긴다
     unsavedGrants: SessionGrants;
     live: LiveSession | null;
@@ -76,8 +91,9 @@ interface ChatTab {
     // 중지 버튼이 눌린 횟수. sendTurn이 CLI를 띄우는 도중(await 사이)에 중지되면 이 값이 바뀐 걸 보고 턴을 시작하지 않는다.
     stopEpoch: number;
     // 첫 메시지를 재생성·편집하면 앞에 이어갈 지점이 없어 새 세션으로 시작한다.
-    // 새 세션이 실제로 생기면 옛 세션을 지우고(handleSdkMessage), 생기지 못하고 끝나면 되돌린다.
-    replaceFirst: {oldSid: string} | null;
+    // 옛 세션은 새 세션의 답이 성공했을 때 지운다(commitReplaceFirst). 새 세션이 생기지 못하고 끝나면 되돌린다.
+    // newSid = 새 세션이 생겼다 — 그 답이 실패해도(한도·오프라인) 옛 대화는 지우지 않고 남긴다.
+    replaceFirst: ReplaceFirst | null;
     // 스트리밍으로 이미 렌더러에 보낸 assistant 메시지 id. 턴마다 비운다.
     streamedMessageIds: Set<string>;
     // 작업 파일 패널: Claude가 이 대화에서 고친 파일
@@ -101,6 +117,11 @@ interface ChatTab {
     // 끝난 작업의 상태 (task_notification) — 백그라운드가 아닌 것도. "에이전트가 한 일" 패널의 완료/실패 표시용
     // (finishedTasks는 백그라운드로 돈 작업만 남긴다). 대화를 바꾸면 비운다.
     taskStatuses: Map<string, FinishedTask["status"]>;
+    // 지침 패널이 읽고 고칠 수 있는 파일 — 마지막 instructions:list 결과(지침 파일, 대화 중 불려 온 지침, 만들 수 있는 자리)와
+    // 기억 폴더의 .md 파일. 렌더러가 넘긴 아무 경로나 쓰지 않으려고 둔다. readOnly = 관리 지침(회사 정책 파일).
+    instructionPaths: Set<string>;
+    instructionReadOnly: Set<string>;
+    memoryDir: string | null;
 }
 
 const tabs = new Map<string, ChatTab>();
@@ -113,7 +134,6 @@ function createTab(id: string, sender: Electron.WebContents): ChatTab {
         sessionId: null,
         ...defaults,
         skipPermissions: true,
-        lastUserMessage: "",
         unsavedGrants: emptyGrants(),
         live: null,
         sending: 0,
@@ -131,6 +151,9 @@ function createTab(id: string, sender: Electron.WebContents): ChatTab {
         gitInFlight: null,
         imagePaths: new Set(),
         taskStatuses: new Map(),
+        instructionPaths: new Set(),
+        instructionReadOnly: new Set(),
+        memoryDir: null,
     };
 }
 
@@ -156,33 +179,6 @@ function send(tab: ChatTab, channel: string, payload?: unknown) {
 
 function isThemeSource(v: unknown): v is ThemeSource {
     return v === "system" || v === "light" || v === "dark";
-}
-
-// DB 기록용 세션별 상태
-const ensuredSessions = new Set<string>();
-const nextMessageIndex = new Map<string, number>();
-
-async function recordTokenUsage(tab: ChatTab, sid: string, inputTokens: number, outputTokens: number) {
-    try {
-        if (!ensuredSessions.has(sid)) {
-            const title = tab.lastUserMessage.slice(0, 60) || "새 대화";
-            await api.createConversation({ sessionId: sid, title, cwd: tab.cwd });
-            const existing = await api.getTokenUsages(sid);
-            nextMessageIndex.set(sid, existing.length);
-            ensuredSessions.add(sid);
-        }
-        const idx = nextMessageIndex.get(sid) ?? 0;
-        const saved = await api.postTokenUsage(sid, {
-            messageIndex: idx,
-            model: tab.model,
-            effort: effectiveEffort(tab),
-            inputTokens,
-            outputTokens,
-        });
-        if (saved) nextMessageIndex.set(sid, idx + 1);
-    } catch (e) {
-        console.error("[api] token usage 기록 실패", e);
-    }
 }
 
 // ultracode는 xhigh 고정 모드라(CLI의 /effort 메뉴 설명 그대로 "xhigh + dynamic
@@ -271,6 +267,90 @@ async function loadModels(cwd: string = os.homedir()): Promise<ModelInfo[] | nul
     const init = await probeFolder(cwd).init;
     if (init?.models?.length) modelCache = init.models;
     return modelCache;
+}
+
+// ── 지침 패널: 이 폴더에서 Claude가 대화를 시작할 때 읽는 지침 파일 ──
+// CLI에게 묻는다 — 턴을 시작하지 않는 query의 getContextUsage().memoryFiles = {path, type, tokens}. 실측: 작업 폴더부터
+// 위로 올라가며 찾은 CLAUDE.md, 그 안의 @import, paths 없는 .claude/rules, CLAUDE.local.md(Local), 사용자 공통(User),
+// 자동 메모리 목록 MEMORY.md(AutoMem). "full"은 토큰 세기 API로 정확히 센다(0.5초 남짓, 대화 비용 없음).
+// 폴더·모델마다 캐시하고, 앱에서 저장했거나 Claude가 지침 파일을 고치면 비운다(invalidateInstructions).
+interface InstructionMeasure {
+    files: {path: string; type: string; tokens: number}[];
+    startTotal: number; // 새 대화를 시작하면 바로 쓰는 컨텍스트 (시스템 프롬프트·도구·지침)
+    maxTokens: number;
+    at: number;
+}
+
+const instructionCache = new Map<string, Promise<InstructionMeasure | null>>();
+
+function measureInstructions(tab: ChatTab, refresh = false): Promise<InstructionMeasure | null> {
+    // 시스템 프롬프트도 키에 넣는다 — 새 대화 시작 컨텍스트(startTotal)에 들어가서, 바꾸면 다시 세야 한다
+    const key = `${tab.cwd}\u0000${tab.model}\u0000${systemPrompts.join("\u0001")}`;
+    const cached = instructionCache.get(key);
+    if (cached && !refresh) return cached;
+    const claudePath = resolveClaudePath();
+    if (!claudePath) return Promise.resolve(null);
+    const {cwd, model} = tab;
+    const p = (async (): Promise<InstructionMeasure | null> => {
+        const idle = await openIdleQuery({
+            pathToClaudeCodeExecutable: claudePath,
+            cwd,
+            model,
+            // 실제 대화와 같은 시스템 프롬프트 — "새 대화 시작 컨텍스트"를 대화와 같게 세려고
+            systemPrompt: {
+                type: "preset",
+                preset: "claude_code",
+                append: systemPrompts.length > 0 ? systemPrompts.join("\n\n") : undefined,
+                snapshot: false,
+            },
+        });
+        try {
+            const usage = await withTimeout(idle.q.getContextUsage({detail: "full"}), 15_000).catch(() =>
+                withTimeout(idle.q.getContextUsage({detail: "summary"}), 10_000)
+            );
+            return {
+                files: usage.memoryFiles.map((f) => ({path: f.path, type: f.type, tokens: f.tokens})),
+                startTotal: usage.totalTokens,
+                maxTokens: usage.maxTokens,
+                at: Date.now(),
+            };
+        } finally {
+            idle.close();
+        }
+    })().catch((e) => {
+        console.error("[instructions] 지침 파일 확인 실패", e);
+        return null;
+    });
+    instructionCache.set(key, p);
+    // 실패는 캐시하지 않는다 — 다음에 다시 묻는다
+    void p.then((r) => {
+        if (!r && instructionCache.get(key) === p) instructionCache.delete(key);
+    });
+    return p;
+}
+
+// 지침·기억 파일이 바뀌었다(앱에서 저장·삭제, Claude가 Write/Edit로 고침) — 다시 세고 모든 탭에 알린다.
+// 사용자 공통 지침은 모든 탭에 들어가고, 같은 저장소를 연 탭도 여럿일 수 있다.
+let instructionsNotifyTimer: ReturnType<typeof setTimeout> | null = null;
+function invalidateInstructions() {
+    instructionCache.clear();
+    notifyInstructions();
+}
+
+// 패널 목록만 새로 읽게 알린다(다시 세지는 않는다)
+function notifyInstructions() {
+    if (instructionsNotifyTimer) clearTimeout(instructionsNotifyTimer);
+    instructionsNotifyTimer = setTimeout(() => {
+        instructionsNotifyTimer = null;
+        for (const tab of tabs.values()) send(tab, "chat:instructions", {});
+    }, 300);
+}
+
+function noteInstructionEdit(p: string) {
+    if (!instr.isInstructionLike(p)) return;
+    // 기억 파일 하나는 대화 시작 때 읽는 파일이 아니다 — CLI를 다시 띄워 셀 필요 없이 목록만 새로 (목록 MEMORY.md는 다시 센다)
+    if (instr.isMemoryTopicFile(p)) notifyInstructions();
+    else invalidateInstructions();
 }
 
 interface AppSlashCommand {
@@ -739,6 +819,11 @@ interface LiveSession {
     toolInputs: Map<string, unknown>; // tool_use id → 입력 (셸 작업의 명령을 찾으려고)
     outputFiles: Map<string, string>; // 셸 작업 id → CLI가 출력을 쓰는 파일
     idleTimer: ReturnType<typeof setTimeout> | null;
+    // 이 프로세스가 다음 요청 추천을 낸다 (띄울 때의 설정) — 응답이 끝나도 추천이 올 때까지 입력을 열어 둔다
+    suggestions: boolean;
+    // 지금 입력을 열어 둔 이유가 추천 기다리기다 (idleTimer = 그 대기 시간). 백그라운드 작업이 끝나 후속 턴을
+    // 기다리는 idleTimer와 구분한다 — 그때 온 추천이 그 대기까지 끊으면 안 된다.
+    waitingSuggestion: boolean;
     errorSent: boolean;
     stderrTail: string;
     stopped: boolean;
@@ -830,7 +915,13 @@ function editOf(tab: ChatTab, name: string, input: unknown): {path: string; hunk
 // 메시지에서 파일 수정을 찾는다: 도구 호출을 기억해 두었다가 결과가 성공이면 반영. 바뀌었으면 true.
 // 세션 기록(SessionMessage)도 같은 모양(type/message/parent_tool_use_id)이라 그대로 넣어도 된다.
 // at: 수정 시각. 실시간이면 지금, 세션 기록에서 다시 계산할 때는 그 항목의 시각(entryTime).
-function trackFileEdits(tab: ChatTab, msg: {type: string; message?: unknown}, at = Date.now()): boolean {
+// onEdited: 성공한 수정마다 그 경로로 부른다(실시간만 — 지침 파일을 고쳤으면 지침 패널을 새로 계산하려고).
+function trackFileEdits(
+    tab: ChatTab,
+    msg: {type: string; message?: unknown},
+    at = Date.now(),
+    onEdited?: (path: string) => void
+): boolean {
     const content = (msg.message as {content?: unknown} | undefined)?.content;
     if (!Array.isArray(content)) return false;
     let changed = false;
@@ -853,6 +944,7 @@ function trackFileEdits(tab: ChatTab, msg: {type: string; message?: unknown}, at
             f.hunks = [...f.hunks, ...p.hunks.map((h) => ({...h, at}))].slice(-MAX_HUNKS_PER_FILE);
             tab.changedFiles.set(p.path, f);
             changed = true;
+            onEdited?.(p.path);
         }
     }
     return changed;
@@ -1177,6 +1269,8 @@ interface FinishedTask {
     hasOutput: boolean;
     recentTools?: ToolStep[];
     launchedByAgent?: boolean;
+    toolUseId?: string; // 이 작업을 띄운 도구 호출 — 답변 속 그 줄에 상태를 보인다
+    parentTaskId?: string; // 에이전트가 띄운 작업이면 그 에이전트(작업 id)
 }
 
 const MAX_FINISHED = 10;
@@ -1300,6 +1394,8 @@ function sendBackground(s: LiveSession) {
                 lastToolName: d?.lastToolName,
                 recentTools: d?.recentTools,
                 launchedByAgent: !!m.parentTaskId,
+                toolUseId: d?.toolUseId,
+                parentTaskId: m.parentTaskId,
             };
         });
     send(s.tab, "chat:background", {running: list, finished: s.tab.finishedTasks});
@@ -1344,6 +1440,8 @@ function recordFinishedTask(s: LiveSession, msg: SDKMessage) {
         hasOutput: !!outputFile,
         recentTools: d?.recentTools,
         launchedByAgent: !!m.parentTaskId,
+        toolUseId: d?.toolUseId,
+        parentTaskId: m.parentTaskId,
     };
     s.tab.finishedTasks = [record, ...s.tab.finishedTasks.filter((f) => f.id !== record.id)].slice(0, MAX_FINISHED);
 }
@@ -1373,14 +1471,63 @@ const IDLE_END_MS = 60_000;
 
 // 첫 메시지 재생성·편집이 새 세션을 만들지 못하고 끝났을 때 원래 세션으로 되돌린다
 function restoreReplaceFirst(tab: ChatTab) {
-    if (!tab.replaceFirst) return;
-    const old = tab.replaceFirst.oldSid;
-    tab.replaceFirst = null;
-    // 옮겨 둔 허용 규칙도 원래 세션으로 되돌린다
+    const r = tab.replaceFirst;
+    if (!r) return;
+    // 새 세션이 이미 생겼으면 되돌리지 않는다 — 화면은 새 대화다. 옛 대화는 남아 있고, 이 탭에서 답이 성공하면 그때 지운다.
+    if (r.newSid) return;
+    // 실패한 재생성 뒤 다시 한 것이었으면 그 앞의 교체(원래 대화를 지울 일)로 돌아간다
+    tab.replaceFirst = r.prev ?? null;
+    // 새 세션에 주려던 허용 규칙도 원래 세션으로 되돌린다
     const g = tab.unsavedGrants;
-    if (g.tools.length > 0 || g.directories.length > 0 || g.acceptEdits) grantsBySession.set(old, g);
+    if (g.tools.length > 0 || g.directories.length > 0 || g.acceptEdits) grantsBySession.set(r.oldSid, g);
     tab.unsavedGrants = emptyGrants();
-    tab.sessionId = old;
+    tab.sessionId = r.oldSid;
+}
+
+// 지운 세션에 앱이 따로 붙여 둔 기록(허용 규칙, 갈래 표시)을 정리한다
+function forgetSession(sid: string) {
+    grantsBySession.delete(sid);
+    if (forkPoints()[sid]) {
+        const rest = {...forkPoints()};
+        delete rest[sid];
+        saveForkPoints(rest);
+    }
+}
+
+// 세션이 지워졌다 — 사이드바가 목록을 다시 받게 한다
+function notifySessionsChanged() {
+    for (const w of BrowserWindow.getAllWindows()) {
+        if (!w.isDestroyed()) w.webContents.send("sessions:changed");
+    }
+}
+
+// 첫 메시지 재생성·편집이 새 세션에서 성공했다 — 이제 버린 옛 세션을 지운다(같은 대화가 두 개 남지 않게).
+// 모델 호출이 있었던 성공만 센다: /cost 같은 로컬 명령도 success(num_turns 0)를 낸다.
+// 실패한 동안 옛 대화는 사이드바에 남아 있다. 그걸 다른 탭에서 열어 두었거나 이어 썼으면 지우지 않는다 — 예전에는
+// 이어 쓴 내용까지 통째로 지워졌다(검토에서 찾음).
+function commitReplaceFirst(tab: ChatTab, msg: {subtype?: string; is_error?: boolean; num_turns?: number}) {
+    const r = tab.replaceFirst;
+    if (!r?.newSid || tab.sessionId !== r.newSid) return;
+    if (msg.subtype !== "success" || msg.is_error || !(msg.num_turns && msg.num_turns > 0)) return;
+    tab.replaceFirst = null;
+    const olds: ReplaceFirst[] = [];
+    for (let n: ReplaceFirst | undefined = r; n; n = n.prev) olds.push(n);
+    const openElsewhere = (sid: string) => [...tabs.values()].some((t) => t.sessionId === sid);
+    void (async () => {
+        const {getSessionMessages, deleteSession} = await loadSdk();
+        let deleted = false;
+        for (const n of olds) {
+            if (openElsewhere(n.oldSid)) continue;
+            const entries = await getSessionMessages(n.oldSid).catch(() => null);
+            // 못 읽었거나 이미 없거나, 교체를 시작한 뒤 기록이 늘었다(이어 썼다) — 남긴다
+            if (!entries || entries.length === 0 || entries[entries.length - 1].uuid !== n.lastUuid) continue;
+            if (openElsewhere(n.oldSid)) continue; // 읽는 사이에 열었을 수 있다
+            forgetSession(n.oldSid);
+            await deleteSession(n.oldSid);
+            deleted = true;
+        }
+        if (deleted) notifySessionsChanged();
+    })().catch((e) => console.error("[sessions] 옛 세션 삭제 실패", e));
 }
 
 // 재생성·편집: 버릴 사용자 메시지(replaceUuid) 직전 항목의 uuid를 돌려준다. 세션을 그 지점까지만
@@ -1403,10 +1550,13 @@ async function prepareReplace(tab: ChatTab, replaceUuid: string): Promise<string
     for (let i = idx - 1; i >= 0; i--) {
         if (!entries[i].parent_tool_use_id) return entries[i].uuid;
     }
-    // 첫 메시지 — 새 세션으로. 이 대화에서 허용한 규칙은 새 세션으로 옮긴다.
-    tab.replaceFirst = {oldSid: sid};
-    tab.unsavedGrants = grantsBySession.get(sid) ?? emptyGrants();
-    grantsBySession.delete(sid);
+    // 첫 메시지 — 새 세션으로. 실패한 재생성 뒤 또 바꾸는 경우(이 세션이 대기 중인 교체의 새 세션) 그 교체를 이어 둔다:
+    // 예전에는 원래 대화를 잊어서, 성공해도 원래 대화와 새 대화가 둘 다 남았다.
+    const pending = tab.replaceFirst?.newSid === sid ? tab.replaceFirst : undefined;
+    tab.replaceFirst = {oldSid: sid, lastUuid: entries[entries.length - 1]?.uuid ?? "", prev: pending};
+    // 이 대화에서 허용한 규칙은 새 세션에도 준다. 옛 대화는 성공 전까지 남으니 옮기지 않고 복사한다.
+    const g = grantsBySession.get(sid);
+    tab.unsavedGrants = g ? {tools: [...g.tools], directories: [...g.directories], acceptEdits: g.acceptEdits} : emptyGrants();
     tab.sessionId = null;
     return undefined;
 }
@@ -1426,6 +1576,7 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 function endInput(s: LiveSession) {
     if (s.idleTimer) clearTimeout(s.idleTimer);
     s.idleTimer = null;
+    s.waitingSuggestion = false;
     s.inputEnded = true;
     s.input.end();
 }
@@ -1458,6 +1609,7 @@ function beginTurn(s: LiveSession, resolve: (() => void) | null, uuid: string | 
     if (s.tab.changedFiles.size > 0) sendChangedFiles(s.tab);
     if (s.idleTimer) clearTimeout(s.idleTimer);
     s.idleTimer = null;
+    s.waitingSuggestion = false;
     s.turnActive = true;
     s.turnResolve = resolve;
     s.turnUuid = uuid;
@@ -1476,9 +1628,27 @@ function finishTurn(s: LiveSession) {
     s.turnResolve?.();
     s.turnResolve = null;
     s.turnUuid = null;
-    // 백그라운드 작업이 없으면 입력을 닫는다 — 닫지 않으면 for await가 다음 메시지를 영원히 기다린다
-    if (s.backgroundTasks === 0) endInput(s);
+    // 백그라운드 작업이 없으면 입력을 닫는다 — 닫지 않으면 for await가 다음 메시지를 영원히 기다린다.
+    // 다음 요청 추천을 켰으면 추천이 올 때까지(최대 SUGGESTION_WAIT_MS) 열어 둔다. 바로 닫아도 추천은 오지만
+    // 그동안 프로세스가 살아 있어서, 그 사이 보낸 메시지가 이 프로세스가 끝나길 2~3초 기다렸다. 열어 두면
+    // 그 메시지는 이 프로세스로 곧장 들어간다(백그라운드 작업 때와 같은 길).
+    if (s.backgroundTasks === 0) {
+        if (s.suggestions && !s.stopped && !s.inputEnded) {
+            if (s.idleTimer) clearTimeout(s.idleTimer);
+            s.waitingSuggestion = true;
+            s.idleTimer = setTimeout(() => {
+                s.idleTimer = null;
+                s.waitingSuggestion = false;
+                if (!s.turnActive && s.backgroundTasks === 0) endInput(s);
+            }, SUGGESTION_WAIT_MS);
+        } else {
+            endInput(s);
+        }
+    }
 }
+
+// 추천은 보통 result 뒤 2~3초에 온다(실측). 안 오는 턴도 있어(할 말이 없을 때, 한도 근처, 계획 모드) 이만큼만 기다린다.
+const SUGGESTION_WAIT_MS = 8_000;
 
 async function reportContextUsage(s: LiveSession) {
     try {
@@ -1523,6 +1693,9 @@ async function startLive(tab: ChatTab, claudePath: string, resumeAt?: string): P
             // 재생성·편집일 때만: 이 지점까지만 이어간다(그 뒤는 모델 기록에서 빠진다)
             resumeSessionAt: tab.sessionId && resumeAt ? resumeAt : undefined,
             permissionMode: tab.skipPermissions ? "bypassPermissions" : grants.acceptEdits ? "acceptEdits" : "default",
+            // 답변이 끝나면 "다음 요청" 하나를 추천받는다 (prompt_suggestion, result 뒤 2~3초) — 부모의 프롬프트
+            // 캐시를 써서 거의 공짜(SDK 문서). 메시지마다 프로세스를 새로 띄우는 앱 방식에서도 온다(확인함).
+            promptSuggestions: promptSuggestionsOn,
             allowedTools: grants.tools.length > 0 ? [...grants.tools] : undefined,
             additionalDirectories: grants.directories.length > 0 ? [...grants.directories] : undefined,
             // 글자 단위 스트리밍(stream_event). 완성된 assistant 메시지도 따로 온다 — handleSdkMessage 참고
@@ -1568,6 +1741,8 @@ async function startLive(tab: ChatTab, claudePath: string, resumeAt?: string): P
         toolInputs: new Map(),
         outputFiles: new Map(),
         idleTimer: null,
+        suggestions: promptSuggestionsOn,
+        waitingSuggestion: false,
         errorSent: false,
         stderrTail: "",
         stopped: false,
@@ -1606,7 +1781,7 @@ async function pump(s: LiveSession, claudePath: string) {
             // 백그라운드 작업 상세용 재료(셸 명령, 출력 파일, 에이전트 도구) — 서브에이전트 메시지를 버리기 전에 모은다
             if (recordTaskArtifacts(s, msg) && s.bgMembers.size > 0) sendBackground(s);
             // 작업 파일 패널: Claude(서브에이전트 포함)가 고친 파일
-            if (trackFileEdits(s.tab, msg)) sendChangedFiles(s.tab);
+            if (trackFileEdits(s.tab, msg, Date.now(), noteInstructionEdit)) sendChangedFiles(s.tab);
 
             // 백그라운드 작업이 끝났다 — 결과를 남긴다 (목록에서 빠지는 건 뒤따르는 background_tasks_changed)
             if (msg.type === "system" && msg.subtype === "task_notification") {
@@ -1635,10 +1810,23 @@ async function pump(s: LiveSession, claudePath: string) {
             const fromSubagent = !!(msg as {parent_tool_use_id?: string | null}).parent_tool_use_id;
             if (!s.turnActive && fromSubagent) continue;
 
+            // 다음 요청 추천 — 응답이 끝난 뒤에 온다. 그새 다음 메시지를 보냈으면(같은 프로세스의 새 턴) 버린다.
+            if (msg.type === "prompt_suggestion") {
+                if (!s.turnActive && s.suggestions) {
+                    const text = (msg as {suggestion?: unknown}).suggestion;
+                    if (typeof text === "string" && text.trim()) send(s.tab, "chat:suggestion", {text: text.trim()});
+                    // 기다리던 추천이 왔다 — 입력을 닫아 프로세스를 끝낸다
+                    if (s.waitingSuggestion && s.backgroundTasks === 0) endInput(s);
+                }
+                continue;
+            }
+
             // 백그라운드 작업 완료 알림으로 CLI가 스스로 시작한 턴
+            let autoTurnMessageId: string | undefined;
             if (!s.turnActive && msg.type === "assistant") {
                 beginTurn(s, null, null);
                 send(s.tab, "chat:turn_start");
+                autoTurnMessageId = (msg as {message?: {id?: string}}).message?.id;
             }
 
             if (msg.type === "system" && msg.subtype === "background_tasks_changed") {
@@ -1670,6 +1858,7 @@ async function pump(s: LiveSession, claudePath: string) {
                 // 보통은 곧바로 후속 턴이 시작된다. 안 시작되면 일정 시간 뒤 정리한다.
                 if (tasks.length === 0 && !s.turnActive && !s.inputEnded) {
                     if (s.idleTimer) clearTimeout(s.idleTimer);
+                    s.waitingSuggestion = false;
                     s.idleTimer = setTimeout(() => {
                         if (!s.turnActive) endInput(s);
                     }, IDLE_END_MS);
@@ -1683,8 +1872,13 @@ async function pump(s: LiveSession, claudePath: string) {
             if (msg.type === "result" && !resultBelongsToTurn(s, msg)) continue;
 
             handleSdkMessage(s.tab, msg, notify, () => s.stderrTail);
+            // 그 턴의 첫 블록은 글자 조각이 렌더러가 턴을 열기 전에 와서 버려졌으므로 위에서 통째로 보냈다. 같은 응답의
+            // 다음 블록들은 이제 조각으로 가므로 완성본에서 다시 보내지 않게 표시한다 — 안 하면 글이 두 번 찍혔다
+            // (beginTurn이 이 응답의 id를 지운 탓. 생각 블록으로 시작하는 답에서 늘 생겼다).
+            if (autoTurnMessageId) s.tab.streamedMessageIds.add(autoTurnMessageId);
 
             if (msg.type === "result") {
+                commitReplaceFirst(s.tab, msg as {subtype?: string; is_error?: boolean; num_turns?: number});
                 // 컨텍스트 사용량은 query가 살아 있을 때만 물을 수 있어서 턴을 닫기 직전에 조회한다
                 await Promise.all([reportContextUsage(s), reportMcpStatus(s)]);
                 if (s.stopped) continue;
@@ -2033,15 +2227,9 @@ function handleSdkMessage(tab: ChatTab, msg: SDKMessage, notify: (n: ChatNotice)
         adoptUnsavedGrants(tab, sid);
         // 렌더러가 탭에 세션을 적어 둔다 — 탭 복원, "이미 열린 대화면 그 탭으로"
         send(tab, "chat:session", {sessionId: sid});
-        // 첫 메시지 재생성·편집으로 새 세션이 생겼다 — 버린 옛 세션을 지운다(같은 대화가 두 개 남지 않게)
-        if (tab.replaceFirst && tab.replaceFirst.oldSid !== sid) {
-            const old = tab.replaceFirst.oldSid;
-            tab.replaceFirst = null;
-            grantsBySession.delete(old);
-            void loadSdk()
-                .then(({deleteSession}) => deleteSession(old))
-                .catch((e) => console.error("[sessions] 옛 세션 삭제 실패", e));
-        }
+        // 첫 메시지 재생성·편집으로 새 세션이 생겼다. 옛 세션은 아직 지우지 않는다 — 예전에는 여기서 바로 지워서,
+        // 답이 실패하면(한도 초과·오프라인) 원래 대화가 이미 사라져 있었다. 성공한 답이 오면 지운다(commitReplaceFirst).
+        if (tab.replaceFirst && tab.replaceFirst.oldSid !== sid) tab.replaceFirst = {...tab.replaceFirst, newSid: sid};
     }
     // 서브에이전트(Agent 도구)가 만든 메시지. 본문에는 넣지 않고 도구 진행만 알린다.
     const parentToolUseId = (msg as {parent_tool_use_id?: string | null}).parent_tool_use_id ?? undefined;
@@ -2146,7 +2334,6 @@ function handleSdkMessage(tab: ChatTab, msg: SDKMessage, notify: (n: ChatNotice)
             send(tab, "chat:cost", {totalCostUsd: msg.total_cost_usd});
             if (tab.sessionId) saveSessionStats(tab.sessionId, {cost: msg.total_cost_usd});
         }
-        if (tab.sessionId) void recordTokenUsage(tab, tab.sessionId, inputTokens, outputTokens);
         if (msg.is_error) {
             // 에러 결과(SDKResultError)에는 result가 없고, 성공 subtype인데 is_error인 경우에만 있다
             const result = (msg as {result?: unknown}).result;
@@ -2321,7 +2508,6 @@ function refusalDetail(category?: string | null, explanation?: string | null): s
 // replaceUuid: 재생성·편집일 때 대신할 사용자 메시지의 uuid
 ipcMain.handle("chat:send", async (event, tabId: string, message: string, images: ImageData[] = [], replaceUuid?: string) => {
     const tab = tabFor(event, tabId);
-    tab.lastUserMessage = message;
     tab.sending++;
     try {
         await sendTurn(tab, message, images, replaceUuid);
@@ -2367,10 +2553,12 @@ ipcMain.handle("chat:stop", (event, tabId: string) => {
 });
 
 // 상단 "백그라운드 N" 패널: 셸 작업의 최근 출력. 렌더러는 작업 id만 넘기고, 경로는 CLI가 알려준 것만 쓴다.
-ipcMain.handle("background:output", (event, tabId: string, taskId: string) => {
+// maxBytes: 끝에서 얼마나 읽을지 — 작업 줄의 마지막 한 줄은 조금, 패널의 큰 로그는 많이
+ipcMain.handle("background:output", (event, tabId: string, taskId: string, maxBytes?: number) => {
     const tab = tabFor(event, tabId);
     const file = tab.live?.outputFiles.get(taskId) ?? tab.finishedOutputFiles.get(taskId);
-    return file ? readOutputTail(file) : null;
+    const bytes = typeof maxBytes === "number" && Number.isFinite(maxBytes) ? Math.min(Math.max(Math.round(maxBytes), 1000), 200_000) : 6000;
+    return file ? readOutputTail(file, bytes) : null;
 });
 
 // ── 작업 파일 패널 (보고 있는 탭의 작업 폴더·고친 파일) ──
@@ -2387,6 +2575,152 @@ ipcMain.handle("files:clear_changed", (event, tabId: string) => {
 });
 ipcMain.handle("files:list_dir", (event, tabId: string, dir: string) => listDir(tabFor(event, tabId), dir));
 ipcMain.handle("files:read", (event, tabId: string, p: string) => readFileForView(tabFor(event, tabId), p));
+
+// ── HTML 미리보기 ──
+// 코드 블록: 렌더러가 글을 넘기면 id를 준다(같은 글이면 같은 id). 파일: Claude가 만든 .html — 작업 파일 패널과 같은
+// 범위(작업 폴더 안, 이 대화에서 Claude가 고친 파일)만 열고, 그 파일의 폴더를 정적 웹 파일만 내보내는 미리보기로 등록한다.
+ipcMain.handle("previews:html", (_event, html: unknown) => {
+    if (typeof html !== "string" || !html.trim() || html.length > MAX_PREVIEW_HTML) return null;
+    return `${PREVIEW_SCHEME}://${registerHtml(html)}/`;
+});
+
+ipcMain.handle("previews:file", async (event, tabId: string, p: unknown) => {
+    const tab = tabFor(event, tabId);
+    if (typeof p !== "string" || !/\.html?$/i.test(p)) return {ok: false, error: "HTML 파일이 아닙니다"};
+    const abs = path.isAbsolute(p) ? p : path.resolve(tab.cwd, p);
+    if (!canViewPath(tab, abs)) return {ok: false, error: "이 대화의 작업 폴더 밖 파일은 미리 볼 수 없습니다"};
+    try {
+        const real = await fs.promises.realpath(abs);
+        const st = await fs.promises.stat(real);
+        if (!st.isFile()) return {ok: false, error: "파일이 아닙니다"};
+        // 같은 폴더의 웹 파일(css·js·그림)도 함께 내보내되 파일 패널과 같은 범위만 — 작업 폴더 안이거나 Claude가 이 대화에서
+        // 고친 파일. 폴더 밖 .html(바탕화면·/tmp)을 열면 그 폴더 아래 다른 파일까지 미리보기가 읽을 수 있었다(검토에서 찾음).
+        // 고친 파일 목록은 앱이 쓰는 경로(/tmp)로 적혀 있어 실제 경로(/private/tmp)가 아니라 연 경로 기준으로 묻는다.
+        const appDir = path.dirname(abs);
+        const id = registerDir(path.dirname(real), tab.id, (rel) => canViewPath(tab, path.join(appDir, rel)));
+        const name = path.basename(real);
+        // 고친 뒤 다시 열면 새로 불러오게 수정 시각을 붙인다
+        return {ok: true, src: `${PREVIEW_SCHEME}://${id}/${encodeURIComponent(name)}?v=${Math.floor(st.mtimeMs)}`, name};
+    } catch {
+        return {ok: false, error: "파일을 찾을 수 없습니다 — 지워졌거나 옮겨졌습니다"};
+    }
+});
+
+// ── 지침 패널 (지침 | 기억) ──
+// 지침 = Claude가 대화마다 읽는 CLAUDE.md 같은 파일(사람이 씀), 기억 = Claude가 스스로 적어 둔 자동 메모리.
+// 파일 경로는 렌더러가 고르지 않는다: 마지막 목록(instructions:list)에 나온 파일과 기억 폴더의 .md만 읽고 쓴다.
+interface CreatableInstruction {
+    kind: "user" | "project" | "local";
+    path: string;
+    gitIgnored?: boolean | null;
+}
+
+function instructionAccess(tab: ChatTab, p: unknown): "rw" | "r" | null {
+    if (typeof p !== "string" || !path.isAbsolute(p) || p.includes("\0") || path.resolve(p) !== p) return null;
+    if (tab.instructionReadOnly.has(p)) return "r";
+    if (tab.instructionPaths.has(p)) return "rw";
+    if (tab.memoryDir && path.dirname(p) === tab.memoryDir && p.endsWith(".md")) return "rw";
+    return null;
+}
+
+// 작업 폴더 줄의 "지침 N" — 대화를 시작할 때 읽는 지침 파일의 토큰 합계
+ipcMain.handle("instructions:summary", async (event, tabId: string) => {
+    const m = await measureInstructions(tabFor(event, tabId));
+    if (!m) return null;
+    return {count: m.files.length, tokens: m.files.reduce((n, f) => n + f.tokens, 0)};
+});
+
+ipcMain.handle("instructions:list", async (event, tabId: string, refresh: unknown) => {
+    const tab = tabFor(event, tabId);
+    const cwd = tab.cwd;
+    const m = await measureInstructions(tab, refresh === true);
+    if (!m) return {ok: false, error: "지침 파일을 확인하지 못했습니다 — Claude CLI를 실행하지 못했습니다"};
+    const files = m.files;
+    const memoryFile = files.find((f) => f.type === "AutoMem");
+    const memoryDir = memoryFile ? path.dirname(memoryFile.path) : null;
+    const known = new Set(files.map((f) => f.path));
+    const [memories, nested] = await Promise.all([
+        memoryDir ? instr.listMemories(memoryDir) : Promise.resolve([]),
+        tab.sessionId ? instr.nestedFromTranscript(tab.sessionId).catch(() => []) : Promise.resolve([]),
+    ]);
+    const nestedNew = nested.filter((n) => !known.has(n.path));
+    // 아직 없는 지침 — 만들 자리를 알려 준다 (지워진 작업 폴더에는 만들지 않는다)
+    const creatable: CreatableInstruction[] = [];
+    if (!files.some((f) => f.type === "User")) creatable.push({kind: "user", path: path.join(instr.claudeConfigDir(), "CLAUDE.md")});
+    if (fs.existsSync(cwd)) {
+        if (!files.some((f) => f.type === "Project" && path.basename(f.path) === "CLAUDE.md")) {
+            creatable.push({kind: "project", path: path.join(cwd, "CLAUDE.md")});
+        }
+        if (!files.some((f) => f.type === "Local")) {
+            creatable.push({kind: "local", path: path.join(cwd, "CLAUDE.local.md"), gitIgnored: await isGitIgnored(cwd, "CLAUDE.local.md")});
+        }
+    }
+    tab.instructionPaths = new Set([...known, ...nestedNew.map((n) => n.path), ...memories.map((x) => x.path), ...creatable.map((c) => c.path)]);
+    tab.instructionReadOnly = new Set(files.filter((f) => f.type === "Managed").map((f) => f.path));
+    tab.memoryDir = memoryDir;
+    return {ok: true, cwd, files, startTotal: m.startTotal, maxTokens: m.maxTokens, measuredAt: m.at, nested: nestedNew, memoryDir, memories, creatable};
+});
+
+ipcMain.handle("instructions:read", async (event, tabId: string, p: unknown) => {
+    const tab = tabFor(event, tabId);
+    const access = instructionAccess(tab, p);
+    if (!access) return {ok: false, error: "지침 패널에서 열 수 있는 파일이 아닙니다"};
+    const file = p as string;
+    try {
+        const st = await fs.promises.stat(file);
+        if (!st.isFile()) return {ok: false, error: "파일이 아닙니다"};
+        if (st.size > instr.MAX_INSTRUCTION_BYTES) return {ok: false, error: "파일이 너무 큽니다 (2MB 넘음)"};
+        return {ok: true, exists: true, content: await fs.promises.readFile(file, "utf8"), mtimeMs: st.mtimeMs, readOnly: access === "r"};
+    } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === "ENOENT") return {ok: true, exists: false, content: "", mtimeMs: null, readOnly: access === "r"};
+        return {ok: false, error: (e as Error).message};
+    }
+});
+
+// 저장 — 연 뒤에 다른 곳(Claude·편집기)에서 바뀌었으면(수정 시각이 다르면) 덮어쓰지 않고 conflict로 알린다.
+// force = 그래도 덮어쓰기. 고친 내용은 다음 메시지부터 적용된다(CLI가 바뀐 지침 파일을 다음 요청에 다시 넣는다 — 실측).
+ipcMain.handle("instructions:write", async (event, tabId: string, p: unknown, content: unknown, baseMtime: unknown, force: unknown) => {
+    const tab = tabFor(event, tabId);
+    if (instructionAccess(tab, p) !== "rw") return {ok: false, error: "고칠 수 없는 파일입니다"};
+    if (typeof content !== "string" || Buffer.byteLength(content) > instr.MAX_INSTRUCTION_BYTES) {
+        return {ok: false, error: "내용이 너무 큽니다 (2MB 넘음)"};
+    }
+    const file = p as string;
+    let current: number | null = null;
+    try {
+        current = (await fs.promises.stat(file)).mtimeMs;
+    } catch {
+        current = null;
+    }
+    if (force !== true && current !== (typeof baseMtime === "number" ? baseMtime : null)) {
+        return {ok: false, conflict: true, exists: current !== null};
+    }
+    if (!fs.existsSync(path.dirname(file))) return {ok: false, error: "파일을 만들 폴더가 없습니다"};
+    try {
+        const mtimeMs = await instr.writeFileAtomic(file, content);
+        invalidateInstructions();
+        return {ok: true, mtimeMs};
+    } catch (e) {
+        return {ok: false, error: (e as Error).message};
+    }
+});
+
+// 기억 지우기 — 파일과 MEMORY.md 목록의 그 줄을 함께 지운다
+ipcMain.handle("instructions:delete_memory", async (event, tabId: string, p: unknown) => {
+    const tab = tabFor(event, tabId);
+    const dir = tab.memoryDir;
+    if (!dir || typeof p !== "string" || path.dirname(p) !== dir || !p.endsWith(".md") || path.basename(p) === "MEMORY.md") {
+        return {ok: false, error: "지울 수 있는 기억이 아닙니다"};
+    }
+    try {
+        await fs.promises.rm(p, {force: true});
+        await instr.removeFromIndex(dir, path.basename(p));
+        invalidateInstructions();
+        return {ok: true};
+    } catch (e) {
+        return {ok: false, error: (e as Error).message};
+    }
+});
 
 // ── 답변 속 그림 ──
 // 화면이 답변 글·도구 입출력에서 찾은 그림 경로를 확인해 썸네일을 준다. since가 있으면 그 뒤에 바뀐 파일만
@@ -2612,7 +2946,6 @@ function resetConversation(tab: ChatTab) {
     tab.unsavedGrants = emptyGrants();
     tab.sessionId = null;
     tab.skipPermissions = true; // 새 대화는 전체 허용으로 시작 — 렌더러도 같은 때 탭 상태를 되돌린다
-    tab.lastUserMessage = "";
 }
 
 // 채팅 설정은 탭마다 따로 있고, 바꾼 값은 다음 새 탭의 기본값이 된다(설정 파일에도 저장)
@@ -2631,6 +2964,26 @@ ipcMain.handle("chat:set_ultracode", (event, tabId: string, on: boolean) => {
     tabFor(event, tabId).ultracode = on;
     defaults.ultracode = on;
     settings.save({ultracode: on});
+});
+
+// 다음 요청 추천 켜기·끄기 — 새로 띄우는 CLI부터 적용된다
+ipcMain.handle("suggestions:get", () => promptSuggestionsOn);
+ipcMain.handle("suggestions:set", (_event, on: unknown) => {
+    promptSuggestionsOn = on === true;
+    settings.save({promptSuggestions: promptSuggestionsOn});
+    // 끄면 떠 있는 프로세스의 추천도 더는 화면에 보내지 않는다. 응답이 끝나고 추천을 기다리던 프로세스는
+    // 입력을 바로 닫는다 — 열어 두면 곧바로 보낸 메시지가 추천을 켜고 띄운 그 프로세스로 이어진다.
+    // CLI는 이미 만들고 있던 추천을 마치고(버려진다) 2~3초 뒤에 끝나고, 그사이 보낸 메시지는 그걸 기다렸다가
+    // 추천을 끈 새 프로세스로 간다(실측). 백그라운드 작업이 있는 프로세스는 그대로 두고 추천만 버린다.
+    if (!promptSuggestionsOn) {
+        for (const tab of tabs.values()) {
+            const s = tab.live;
+            if (!s || !s.suggestions) continue;
+            s.suggestions = false;
+            if (s.waitingSuggestion && !s.turnActive && s.backgroundTasks === 0) endInput(s);
+        }
+    }
+    return promptSuggestionsOn;
 });
 
 // 화면 테마. themeSource를 바꾸면 렌더러의 prefers-color-scheme이 바로 따라 바뀌고(styles/theme.css),
@@ -3078,12 +3431,7 @@ ipcMain.handle("chat:fork", async (event, tabId: string, replyUuid: unknown) => 
 });
 
 ipcMain.handle("sessions:delete", async (_event, sid: string, cwd?: string) => {
-    grantsBySession.delete(sid);
-    if (forkPoints()[sid]) {
-        const rest = {...forkPoints()};
-        delete rest[sid];
-        saveForkPoints(rest);
-    }
+    forgetSession(sid);
     // 이 대화를 열어 둔 탭은 새 대화로 비운다 (화면은 렌더러가 비운다)
     for (const tab of tabs.values()) {
         if (tab.sessionId === sid) resetConversation(tab);
@@ -3214,6 +3562,7 @@ app.whenReady().then(() => {
     loadChatSettings();
     loadSavedRateLimits();
     installAppMenu({confirmReload: (win) => confirmStopWork(win, "reload")});
+    installPreviewProtocol();
     const claudePath = resolveClaudePath();
     if (claudePath) {
         console.log(`[bootstrap] Claude CLI 감지: ${claudePath}`);

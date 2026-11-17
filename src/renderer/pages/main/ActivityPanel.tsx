@@ -1,4 +1,4 @@
-import {memo, useState} from "react";
+import {memo, useContext, useMemo, useState} from "react";
 import classNames from "classnames/bind";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 import {
@@ -11,6 +11,9 @@ import {
 import styles from "./chat.page.module.scss";
 import type {Compacting, RunningTokens, ToolActivity} from "../../hooks/useClaudeChat";
 import {isAnswered, QUESTION_TOOL, questionsOf} from "../../question-answers";
+import {BackgroundLinksContext} from "../../tab-context";
+import {launchedInBackground} from "./background-tasks";
+import {BackgroundBadge} from "./BackgroundDock";
 
 const cx = classNames.bind(styles);
 
@@ -157,15 +160,15 @@ const DIFF_MARKER: Record<DiffEntry["type"], string> = {
 };
 
 export function ToolDiff({name, input}: {name: string; input: unknown}) {
-    const pairs = extractEditPairs(name, input);
-    if (pairs.length === 0) return null;
+    // 줄 비교(LCS)는 무겁다 — 같은 도구 입력이면 다시 계산하지 않는다(답변·패널이 다시 그려질 때마다 돌았다)
+    const blocks = useMemo(() => extractEditPairs(name, input).map((p) => diffLines(p.oldStr, p.newStr)), [name, input]);
+    if (blocks.length === 0) return null;
     return (
         <div className={cx("toolDiff")}>
-            {pairs.map((p, idx) => {
-                const entries = diffLines(p.oldStr, p.newStr);
+            {blocks.map((entries, idx) => {
                 return (
                     <div key={idx} className={cx("toolDiffBlock")}>
-                        {pairs.length > 1 && (
+                        {blocks.length > 1 && (
                             <div className={cx("toolDiffHeader")}>변경 #{idx + 1}</div>
                         )}
                         {entries.map((e, i) => (
@@ -200,6 +203,10 @@ export function ToolRow({tool, defaultExpanded = false, onOpen}: {tool: ToolActi
     // Claude의 질문: JSON 대신 질문 내용을, 답했으면(결과가 deny로 와도) 완료로 보여 준다
     const isQuestion = tool.name === QUESTION_TOOL;
     const status = isQuestion && isAnswered(tool.resultPreview) ? "done" : tool.status;
+    // 이 줄이 띄운 백그라운드 작업 — 도구 호출은 바로 끝나도 작업은 계속 돈다
+    const bgLinks = useContext(BackgroundLinksContext);
+    const bgLink = bgLinks?.byToolUse.get(tool.id) ?? null;
+    const bgLaunched = status === "done" && (bgLink !== null || launchedInBackground(tool.name, tool.input));
     const rawInput = isQuestion
         ? questionsOf(tool.input)
               .map((q) => q.question)
@@ -207,16 +214,19 @@ export function ToolRow({tool, defaultExpanded = false, onOpen}: {tool: ToolActi
         : isAgent
           ? agentLabel(tool.input)
           : rawToolInput(tool.input);
+    const bgRunning = bgLaunched && !!bgLink?.running;
     const icon =
-        status === "running"
+        status === "running" || bgRunning
             ? faCircleNotch
-            : status === "error"
+            : status === "error" || (bgLaunched && bgLink?.status === "failed")
                 ? faTriangleExclamation
                 : faCheck;
     return (
         <div className={cx("toolRowGroup")}>
             <div
                 className={cx("toolRow", status, {
+                    toolRowBg: bgRunning,
+                    toolRowBgFailed: bgLaunched && bgLink?.status === "failed",
                     toolRowExpandable: expandable,
                     toolRowSub: !!tool.parentToolUseId,
                     toolRowOpenable: !expandable && !!onOpen,
@@ -233,13 +243,14 @@ export function ToolRow({tool, defaultExpanded = false, onOpen}: {tool: ToolActi
                 )}
                 <FontAwesomeIcon
                     icon={icon}
-                    spin={status === "running"}
+                    spin={status === "running" || bgRunning}
                     className={cx("toolIcon")}
                 />
                 <span className={cx("toolName")}>{isQuestion ? "질문" : isAgent ? "에이전트" : tool.name}</span>
                 <span className={cx("toolInput")} title={rawInput || undefined}>
                     {middleTruncate(rawInput)}
                 </span>
+                {bgLaunched && <BackgroundBadge link={bgLink} onOpen={bgLinks?.open} />}
                 {!expandable && onOpen && (
                     <span className={cx("toolOpenHint")}>
                         한 일 보기 <FontAwesomeIcon icon={faChevronRight} />

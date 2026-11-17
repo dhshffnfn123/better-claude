@@ -464,6 +464,7 @@
   }
 }
 
+// 창이 가장 좁을 때(480px) 이 칸은 0까지 줄어든다 — 넘친 "지침 N"이 옆의 모델 선택 위로 그려졌다. 넘치는 건 자른다.
 .cwdLeft {
   display: flex;
   flex: 1;
@@ -471,6 +472,7 @@
   align-items: center;
   min-width: 0;
   height: 100%;
+  overflow: hidden;
   cursor: pointer;
   transition: background-color 0.15s;
 
@@ -551,140 +553,376 @@
   }
 }
 
-.backgroundStat {
-  color: var(--c-task-text);
-  cursor: pointer;
-  border-radius: 4px;
-  outline: none;
-
-  &:hover,
-  &:focus-visible,
-  &.backgroundStatOpen {
-    color: var(--c-text);
-  }
-
-  // 실행 중인 건 없고 끝난 기록만 있을 때
-  &.backgroundStatIdle {
-    color: var(--c-text-faint);
-  }
-}
-
-// 상단 "백그라운드 N"을 누르면 뜨는 상세 패널 (BackgroundTasksPanel.tsx)
-.bgBackdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 20;
-}
-
-.bgPanel {
-  position: fixed;
-  right: 16px;
-  z-index: 21;
+// 백그라운드 작업 — 입력창 위 작업 줄(BackgroundDock.tsx), 답변 속 실행 줄의 상태, 오른쪽 패널(BackgroundTasksPanel.tsx)
+.bgSpin {
   box-sizing: border-box;
+  flex-shrink: 0;
+  width: 9px;
+  height: 9px;
+  border: 1.6px solid var(--c-task-text);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+// 입력창 바로 위 작업 줄 — 작업마다 카드(이름·경과 시간·마지막 출력 한 줄)
+.bgDock {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+  min-width: 0;
+  padding: 10px 24px 0;
+}
+
+.bgDockLabel {
   display: flex;
   flex-direction: column;
-  width: min(480px, calc(100vw - 32px));
-  max-height: 70vh;
-  padding: 12px;
-  overflow: hidden;
-  background-color: var(--c-elevated);
-  border-radius: 12px;
-  box-shadow: var(--sh-popover);
-}
-
-.bgPanelHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 4px;
-}
-
-.bgPanelTitle {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  font-size: 13px;
+  flex-shrink: 0;
+  gap: 1px;
+  justify-content: center;
+  padding-right: 2px;
+  font-size: 11px;
   font-weight: 700;
-  color: var(--c-text);
+  color: var(--c-task-text);
+  white-space: nowrap;
 }
 
-.bgStopAll {
-  display: flex;
-  gap: 5px;
-  align-items: center;
-  padding: 4px 10px;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--c-danger);
-  cursor: pointer;
-  background-color: var(--c-danger-soft);
-  border: none;
-  border-radius: 6px;
-
-  &:hover {
-    background-color: var(--c-danger-soft-hover);
-  }
+.bgDockCount {
+  font-size: 15px;
+  line-height: 1;
 }
 
-.bgPanelHint {
-  padding: 0 4px;
-  margin: 6px 0 10px;
-  font-size: 11px;
-  line-height: 1.5;
-  color: var(--c-text-muted);
-}
-
-.bgList {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-height: 0;
-  overflow-y: auto;
-}
-
-.bgTask {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  padding: 10px 12px;
-  background-color: var(--c-fill-subtle);
-  border-radius: 8px;
-}
-
-.bgTaskHead {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.bgTaskType {
+// 카드가 늘어나도 오른쪽 "패널로 보기"는 밀리지 않게 카드끼리 줄어든다
+.bgDockCards {
   display: flex;
   flex: 1;
+  gap: 8px;
+  min-width: 0;
+}
+
+.bgChip {
+  display: flex;
+  flex: 0 1 250px;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding: 6px 10px 6px 9px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  background-color: var(--c-elevated);
+  border: 1px solid var(--c-border);
+  border-radius: 10px;
+  transition: border-color 0.15s;
+
+  &:hover {
+    border-color: var(--c-task-text);
+  }
+}
+
+.bgChipSel {
+  border-color: var(--c-task-text);
+  box-shadow: inset 0 0 0 1px var(--c-task-text);
+}
+
+.bgChipFailed {
+  background-color: var(--c-error-soft);
+  border-color: var(--c-error-border);
+}
+
+.bgChipHead {
+  display: flex;
   gap: 6px;
   align-items: center;
   min-width: 0;
-  overflow: hidden;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
+  color: var(--c-text);
+  white-space: nowrap;
+}
+
+.bgChipKind {
+  flex-shrink: 0;
+  width: 11px;
+  font-size: 10px;
   color: var(--c-task-text);
+}
+
+.bgChipStatus {
+  flex-shrink: 0;
+  width: 9px;
+  font-size: 10px;
+  color: var(--c-ok);
+
+  &.failed {
+    color: var(--c-danger);
+  }
+
+  &.stopped {
+    color: var(--c-text-muted);
+  }
+}
+
+.bgChipName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bgChipTime {
+  flex-shrink: 0;
+  padding-left: 6px;
+  margin-left: auto;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--c-text-muted);
+}
+
+.bgChipLine {
+  overflow: hidden;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10.5px;
+  color: var(--c-text-faint);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.bgTaskElapsed {
+.bgDockMore {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  padding: 0 10px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--c-text-2);
+  cursor: pointer;
+  background-color: var(--c-elevated);
+  border: 1px dashed var(--c-border);
+  border-radius: 10px;
+
+  &:hover {
+    color: var(--c-text);
+  }
+}
+
+.bgDockOpen {
+  display: flex;
+  flex-shrink: 0;
+  gap: 6px;
+  align-items: center;
+  align-self: center;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--c-text-2);
+  white-space: nowrap;
+  cursor: pointer;
+  background: none;
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+
+  &:hover {
+    color: var(--c-text);
+    background-color: var(--c-hover);
+  }
+
+  svg {
+    font-size: 9px;
+  }
+}
+
+// 답변 속 실행 줄의 상태 — "백그라운드 · 실행 중 1:51" / "완료 · 3:02" / "실패 · 코드 1"
+.bgBadge {
+  flex-shrink: 0;
+  padding: 1px 8px;
+  margin: 0 4px;
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--c-text-muted);
+  white-space: nowrap;
+  background-color: var(--c-fill-subtle);
+  border: none;
+  border-radius: 999px;
+}
+
+.bgBadgeRunning {
+  color: var(--c-task-text);
+  cursor: pointer;
+  background-color: var(--c-task-bg);
+}
+
+.bgBadgeDone {
+  color: var(--c-success-text);
+  cursor: pointer;
+  background-color: var(--c-success-soft);
+}
+
+.bgBadgeFailed {
+  color: var(--c-danger);
+  cursor: pointer;
+  background-color: var(--c-danger-soft);
+}
+
+// 오른쪽 백그라운드 패널 — 위는 작업 목록, 아래는 고른 작업의 큰 로그
+.bgpTitleIcon {
+  font-size: 12px;
+  color: var(--c-task-text);
+}
+
+.bgpCount {
+  padding: 0 7px;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--c-task-text);
+  background-color: var(--c-task-bg);
+  border-radius: 999px;
+}
+
+.bgpBtn {
+  display: flex;
+  flex-shrink: 0;
+  gap: 5px;
+  align-items: center;
+  padding: 4px 9px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--c-text-2);
+  white-space: nowrap;
+  cursor: pointer;
+  background: none;
+  border: 1px solid var(--c-border);
+  border-radius: 6px;
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.5;
+  }
+
+  &:hover:not(:disabled) {
+    color: var(--c-text);
+    background-color: var(--c-hover);
+  }
+}
+
+.bgpBtnDanger {
+  color: var(--c-danger);
+  border-color: var(--c-error-border);
+
+  &:hover:not(:disabled) {
+    color: var(--c-danger);
+    background-color: var(--c-danger-soft);
+  }
+}
+
+.bgpList {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: 1px;
+  max-height: 42%;
+  padding: 8px;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--c-divider);
+}
+
+.bgpRow {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  min-width: 0;
+  padding: 6px 8px;
+  font-size: 12.5px;
+  color: var(--c-text);
+  cursor: pointer;
+  border-radius: 7px;
+  outline: none;
+
+  &:hover,
+  &:focus-visible {
+    background-color: var(--c-hover);
+  }
+}
+
+.bgpRowDone {
+  color: var(--c-text-2);
+}
+
+.bgpRowSel,
+.bgpRowSel:hover,
+.bgpRowSel:focus-visible {
+  background-color: var(--c-selected);
+}
+
+.bgpRowKind {
+  flex-shrink: 0;
+  width: 12px;
+  font-size: 10.5px;
+  color: var(--c-task-text);
+}
+
+.bgpRowStatus {
+  flex-shrink: 0;
+  width: 10px;
+  font-size: 10px;
+  color: var(--c-ok);
+
+  &.failed {
+    color: var(--c-danger);
+  }
+
+  &.stopped {
+    color: var(--c-text-muted);
+  }
+}
+
+.bgpRowName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bgpTag {
+  flex-shrink: 0;
+  padding: 0 6px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--c-text-2);
+  background-color: var(--c-fill-subtle);
+  border-radius: 999px;
+}
+
+.bgpRowResult {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--c-text-muted);
+
+  &.failed {
+    color: var(--c-danger);
+  }
+}
+
+.bgpRowTime {
+  flex-shrink: 0;
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 11px;
   color: var(--c-text-muted);
 }
 
-.bgTaskStop {
+.bgpRowStop {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   padding: 0;
-  font-size: 11px;
+  font-size: 10px;
   color: var(--c-text-faint);
   cursor: pointer;
   background: none;
@@ -697,99 +935,30 @@
   }
 }
 
-.bgTaskDesc {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--c-text);
-  word-break: break-word;
-}
-
-.bgTaskCommand {
-  box-sizing: border-box;
-  display: block;
-  width: 100%;
-  padding: 5px 8px;
-  overflow: hidden;
-  font-size: 11px;
-  color: var(--c-text-soft);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  background-color: var(--c-fill-neutral);
-  border-radius: 5px;
-}
-
-.bgTaskActivity {
-  font-size: 11px;
+.bgpHint {
+  margin: 4px 8px 2px;
+  font-size: 10.5px;
   line-height: 1.5;
-  color: var(--c-text-soft);
+  color: var(--c-text-faint);
 }
 
-.bgTaskMeta {
-  font-size: 11px;
-  color: var(--c-text-muted);
-}
-
-.bgTaskOpen {
-  align-self: flex-start;
-  padding: 2px 0;
-  font-size: 11px;
-  color: var(--c-accent-text);
-  cursor: pointer;
-  background: none;
-  border: none;
-
-  &:hover {
-    text-decoration: underline;
-  }
-}
-
-.bgTaskPrompt {
-  font-size: 11px;
-  color: var(--c-text-muted);
-
-  summary {
-    cursor: pointer;
-  }
-
-  p {
-    max-height: 120px;
-    margin: 4px 0 0;
-    overflow-y: auto;
-    line-height: 1.5;
-    color: var(--c-text-soft);
-    white-space: pre-wrap;
-  }
-}
-
-.bgOutput {
-  box-sizing: border-box;
-  max-height: 160px;
-  padding: 8px 10px;
-  margin: 2px 0 0;
-  overflow-y: auto;
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 11px;
-  line-height: 1.45;
-  color: var(--c-terminal-text);
-  word-break: break-all;
-  white-space: pre-wrap;
-  background-color: var(--c-terminal-bg);
-  border-radius: 6px;
-}
-
-.bgOutputCut {
-  color: var(--c-text-muted);
-}
-
-.bgFinishedHeader {
-  padding-top: 6px;
+.bgpSection {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 8px 4px;
   margin-top: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--c-text-muted);
   border-top: 1px solid var(--c-divider-alt);
 }
 
-.bgClear {
-  padding: 3px 8px;
-  font-size: 11px;
+.bgpClear {
+  padding: 2px 8px;
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 400;
   color: var(--c-text-muted);
   cursor: pointer;
   background: none;
@@ -802,44 +971,195 @@
   }
 }
 
-// 끝난 작업 카드 — 접혀 있고 눌러서 펼친다
-.bgTaskDone {
-  background-color: var(--c-fill-subtle-2);
-
-  summary {
-    list-style: none;
-    cursor: pointer;
-  }
-
-  summary::-webkit-details-marker {
-    display: none;
-  }
+.bgpDetail {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  padding: 12px 14px;
+  overflow-y: auto;
 }
 
-.bgStatus {
+.bgpDetailHead {
   display: flex;
-  flex-shrink: 0;
-  gap: 4px;
+  gap: 6px;
   align-items: center;
-  padding: 1px 6px;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
-  border-radius: 4px;
+  color: var(--c-task-text);
 
   &.completed {
     color: var(--c-success-text);
-    background-color: var(--c-success-soft);
   }
 
   &.failed {
     color: var(--c-danger);
-    background-color: var(--c-danger-soft);
   }
 
   &.stopped {
     color: var(--c-text-muted);
-    background-color: var(--c-fill-neutral);
   }
+}
+
+.bgpDetailTitle {
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.4;
+  color: var(--c-text);
+  word-break: break-word;
+}
+
+.bgpCommand {
+  display: block;
+  flex-shrink: 0;
+  max-height: 72px;
+  padding: 6px 9px;
+  overflow-y: auto;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--c-text-soft);
+  word-break: break-all;
+  white-space: pre-wrap;
+  background-color: var(--c-fill-neutral);
+  border-radius: 6px;
+}
+
+.bgpActivity {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--c-text-soft);
+}
+
+.bgpMeta {
+  font-size: 11px;
+  color: var(--c-text-muted);
+}
+
+.bgpLink {
+  align-self: flex-start;
+  padding: 0;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--c-accent-text);
+  cursor: pointer;
+  background: none;
+  border: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.bgpPrompt {
+  font-size: 11px;
+  color: var(--c-text-muted);
+
+  summary {
+    cursor: pointer;
+  }
+
+  p {
+    max-height: 140px;
+    margin: 4px 0 0;
+    overflow-y: auto;
+    line-height: 1.5;
+    color: var(--c-text-soft);
+    white-space: pre-wrap;
+  }
+}
+
+.bgpLogWrap {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 140px;
+}
+
+.bgpLog {
+  flex: 1;
+  min-height: 0;
+  padding: 10px 12px;
+  margin: 0;
+  overflow: auto;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--c-terminal-text);
+  word-break: break-all;
+  white-space: pre-wrap;
+  background-color: var(--c-terminal-bg);
+  border-radius: 8px;
+}
+
+.bgpLogCut {
+  color: var(--c-text-muted);
+}
+
+.bgpLogEmpty {
+  display: flex;
+  flex: 1;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+  font-size: 11.5px;
+  color: var(--c-text-faint);
+  background-color: var(--c-fill-subtle);
+  border-radius: 8px;
+}
+
+.bgpToBottom {
+  position: absolute;
+  right: 12px;
+  bottom: 10px;
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--c-text);
+  cursor: pointer;
+  background-color: var(--c-elevated);
+  border: 1px solid var(--c-border);
+  border-radius: 999px;
+  box-shadow: var(--sh-popover);
+}
+
+.bgpFoot {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--c-text-muted);
+}
+
+.bgpFootSpacer {
+  flex: 1;
+}
+
+.bgpLive {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.bgpLiveDot {
+  width: 7px;
+  height: 7px;
+  background-color: var(--c-ok);
+  border-radius: 50%;
+}
+
+.bgpEmpty {
+  padding: 24px 18px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--c-text-muted);
+  text-align: center;
 }
 
 // 에이전트가 최근에 쓴 도구
@@ -889,28 +1209,6 @@
   color: var(--c-text-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.bgOutputEmpty {
-  padding: 6px 2px 0;
-  font-size: 11px;
-  color: var(--c-text-faint);
-}
-
-.backgroundStop {
-  display: flex;
-  align-items: center;
-  padding: 0 2px;
-  font-size: 10px;
-  color: inherit;
-  cursor: pointer;
-  background: none;
-  border: none;
-  border-radius: 4px;
-
-  &:hover {
-    color: var(--c-danger);
-  }
 }
 
 .mcpWrap {
@@ -2088,6 +2386,15 @@
   font-size: 11px;
 }
 
+// 이 줄이 띄운 백그라운드 작업이 아직 돈다 / 실패했다 — .toolRow.done 보다 뒤에 둬야 이긴다
+.toolRow.toolRowBg .toolIcon {
+  color: var(--c-task-text);
+}
+
+.toolRow.toolRowBgFailed .toolIcon {
+  color: var(--c-danger);
+}
+
 .toolName {
   flex-shrink: 0;
   font-weight: 600;
@@ -3049,6 +3356,14 @@
   }
 }
 
+// 입력창 + 그 위에 겹쳐 그리는 다음 요청 추천(.suggestGhost)
+.textareaWrap {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+
 // 한 줄(21px) + 위아래 여백 + 테두리가 44px 안에 들어가야 빈 입력창에 스크롤바가 생기지 않는다
 .textarea {
   flex: 1;
@@ -3076,6 +3391,46 @@
   &:focus {
     border-color: var(--c-accent);
   }
+}
+
+// 빈 입력창에 흐리게 보이는 다음 요청 추천. 안내문(placeholder)은 투명하게 두고(읽기 프로그램용)
+// .suggestGhost가 같은 자리에 그린다 — 길면 …으로 줄이고 Tab 표시는 늘 보이게.
+.textarea.textareaSuggest::placeholder {
+  color: transparent;
+}
+
+// 입력창 글자 자리에 맞춘다: 테두리 1px + 위 여백 10px, 좌우 여백 16px, 한 줄 높이 21px
+.suggestGhost {
+  position: absolute;
+  top: 11px;
+  right: 17px;
+  left: 17px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  height: 21px;
+  font-size: 14px;
+  pointer-events: none;
+}
+
+.suggestText {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--c-accent-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.75;
+}
+
+.suggestKey {
+  flex: none;
+  padding: 0 5px;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--c-text-faint);
+  border: 1px solid var(--c-border);
+  border-radius: 4px;
 }
 
 .stopButton {
@@ -4891,15 +5246,29 @@
   border-radius: 50%;
 }
 
-// 백그라운드 작업(dev 서버 등)이 도는 탭 — 톱니 + 개수. 색은 탭 글자색을 따른다.
+// 백그라운드 작업(dev 서버 등)이 도는 탭 — 도는 표시 + 개수를 색 있는 알약으로(예전 회색 톱니는 눈에 띄지 않았다)
 .tabBg {
   display: flex;
   flex-shrink: 0;
-  gap: 3px;
+  gap: 4px;
   align-items: center;
-  font-size: 10px;
+  padding: 1px 7px 1px 5px;
+  font-size: 10.5px;
+  font-weight: 800;
   font-variant-numeric: tabular-nums;
-  opacity: 0.75;
+  color: var(--c-on-task);
+  background-color: var(--c-task-text);
+  border-radius: 999px;
+}
+
+.tabBgSpin {
+  box-sizing: border-box;
+  width: 7px;
+  height: 7px;
+  border: 1.5px solid var(--c-on-task);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
 }
 
 // 탭이 넘쳐 가려진 쪽 가장자리를 흐리게 한다 — 스크롤바를 숨겨 두어 더 있는지 안 보이므로.
@@ -4960,4 +5329,848 @@
   color: var(--c-accent);
   border: 1px solid var(--c-accent);
   border-radius: 6px;
+}
+
+// ── 지침 패널 (InstructionsPanel) — 틀은 작업 파일 패널(.filesPanel/.filesHeader/.filesViews)을 같이 쓴다 ──
+
+// 작업 폴더 줄의 "지침 N" (경로 바로 뒤)
+.instrChip {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 5px;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--c-text-2);
+  white-space: nowrap;
+  cursor: pointer;
+  background-color: var(--c-chip-bg);
+  border: 1px solid transparent;
+  border-radius: 10px;
+  transition: border-color 0.15s, background-color 0.15s;
+
+  &:hover {
+    border-color: var(--c-border-strong);
+  }
+}
+
+.instrChipActive {
+  color: var(--c-accent-soft-text);
+  background-color: var(--c-accent-soft);
+  border-color: var(--c-accent);
+}
+
+.instrTitleIcon {
+  margin-right: 2px;
+  color: var(--c-accent-text);
+}
+
+.instrBody {
+  flex: 1;
+  min-height: 0;
+  padding: 12px 12px 18px;
+  overflow-y: auto;
+}
+
+// 맨 위 요약: 지침 합계, 새 대화 컨텍스트 중 비율
+.instrSummary {
+  padding: 12px 12px 11px;
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: 10px;
+}
+
+.instrSummaryHead {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--c-text);
+
+  b {
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.instrBar {
+  display: flex;
+  height: 8px;
+  margin: 10px 0 7px;
+  overflow: hidden;
+  background-color: var(--c-fill-muted);
+  border-radius: 4px;
+}
+
+.instrBarRules {
+  background-color: var(--c-accent);
+}
+
+.instrBarMemory {
+  background-color: var(--c-ultra);
+}
+
+.instrLegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 11px;
+  color: var(--c-text-muted);
+}
+
+.instrDot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 5px;
+  background-color: var(--c-fill-muted);
+  border-radius: 2px;
+}
+
+.instrDotRules {
+  background-color: var(--c-accent);
+}
+
+.instrDotMemory {
+  background-color: var(--c-ultra);
+}
+
+.instrSummaryText {
+  margin-top: 9px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--c-text-2);
+}
+
+.instrNote {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--c-text-faint);
+
+  svg {
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+}
+
+.instrNoteMemory {
+  margin-top: 12px;
+}
+
+.instrSectionTitle {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin: 18px 2px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--c-text-faint);
+  letter-spacing: 0.02em;
+}
+
+.instrEmpty {
+  padding: 10px 4px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--c-text-muted);
+}
+
+// 지침 파일 한 장
+.instrCard {
+  display: block;
+  width: 100%;
+  padding: 9px 11px;
+  margin-bottom: 6px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-border-soft);
+  border-radius: 9px;
+  transition: border-color 0.15s;
+
+  &:hover {
+    border-color: var(--c-border-strong);
+  }
+}
+
+.instrCardNested {
+  border-style: dashed;
+}
+
+.instrCardHead {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  min-width: 0;
+}
+
+.instrBadge {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--c-text-2);
+  white-space: nowrap;
+  background-color: var(--c-fill-subtle);
+  border-radius: 999px;
+}
+
+.instrBadgeProject {
+  color: var(--c-accent-soft-text);
+  background-color: var(--c-accent-soft);
+}
+
+.instrBadgeMemory {
+  color: var(--c-memory-badge-text);
+  background-color: var(--c-ultra-bg);
+}
+
+.instrBadgeMuted {
+  color: var(--c-text-muted);
+}
+
+.instrBadgeWarn {
+  color: var(--c-warning-text);
+  background-color: var(--c-warning-soft);
+}
+
+.instrName {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--c-text);
+  white-space: nowrap;
+}
+
+.instrDraftDot {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  background-color: var(--c-accent);
+  border-radius: 50%;
+}
+
+.instrBig {
+  flex-shrink: 0;
+  padding: 0 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--c-warning-text);
+  background-color: var(--c-warning-soft);
+  border: 1px solid var(--c-warning-border);
+  border-radius: 5px;
+}
+
+.instrTokens {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--c-text-muted);
+  white-space: nowrap;
+}
+
+.instrPath {
+  display: block;
+  margin-top: 4px;
+  overflow: hidden;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10.5px;
+  color: var(--c-text-faint);
+  white-space: nowrap;
+}
+
+.instrTrigger {
+  display: block;
+  margin-top: 5px;
+  font-size: 11.5px;
+  color: var(--c-text-muted);
+}
+
+.instrTriggerFile {
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+}
+
+// 아직 없는 지침 만들기
+.instrAdd {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  width: 100%;
+  padding: 8px 11px;
+  margin-bottom: 6px;
+  font: inherit;
+  color: var(--c-text-2);
+  text-align: left;
+  cursor: pointer;
+  background: none;
+  border: 1px dashed var(--c-border-strong);
+  border-radius: 9px;
+
+  &:hover {
+    background-color: var(--c-hover);
+  }
+}
+
+.instrAddIcon {
+  flex-shrink: 0;
+  color: var(--c-accent-text);
+}
+
+.instrAddText {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.instrAddTitle {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--c-text);
+}
+
+.instrAddNote {
+  font-size: 11px;
+  color: var(--c-text-faint);
+}
+
+.instrAddWarn {
+  color: var(--c-warning-text);
+}
+
+.instrAddPath {
+  flex-shrink: 0;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10.5px;
+  color: var(--c-text-faint);
+}
+
+// 기억 목록
+.memList {
+  padding: 2px 11px;
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-border-soft);
+  border-radius: 9px;
+}
+
+
+.memMain {
+  flex: 1;
+  min-width: 0;
+}
+
+.memTitleRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.memTitle {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--c-text);
+}
+
+.memHook {
+  margin-top: 2px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--c-text-muted);
+}
+
+.memRow {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  padding: 8px 0;
+  cursor: pointer;
+  border-bottom: 1px solid var(--c-divider-soft);
+  outline: none;
+
+  &:last-child {
+    border-bottom: none;
+  }
+
+  &:hover .memTitle,
+  &:focus-visible .memTitle {
+    color: var(--c-accent-text);
+  }
+}
+
+.memActions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 2px;
+}
+
+.memActionBtn {
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  font-size: 11.5px;
+  color: var(--c-text-faint);
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-radius: 5px;
+
+  &:hover {
+    color: var(--c-text-2);
+    background-color: var(--c-hover);
+  }
+}
+
+.memActionDanger:hover {
+  color: var(--c-danger);
+}
+
+.instrLink {
+  padding: 0;
+  font: inherit;
+  color: var(--c-link);
+  text-decoration: underline;
+  cursor: pointer;
+  background: none;
+  border: none;
+}
+
+// 파일 하나 보기·편집
+.instrCrumb {
+  font-weight: 500;
+  color: var(--c-text-faint);
+}
+
+.instrMeta {
+  display: flex;
+  flex-shrink: 0;
+  gap: 7px;
+  align-items: center;
+  padding: 9px 12px 8px;
+  border-bottom: 1px solid var(--c-divider);
+}
+
+.instrMetaPath {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10.5px;
+  color: var(--c-text-faint);
+  white-space: nowrap;
+}
+
+.instrHint {
+  flex-shrink: 0;
+  padding: 8px 10px;
+  margin: 10px 12px 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--c-text-2);
+  background-color: var(--c-fill-subtle);
+  border-radius: 8px;
+}
+
+.instrWarn {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+  padding: 9px 11px;
+  margin: 10px 12px 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--c-warning-text);
+  background-color: var(--c-warning-soft);
+  border: 1px solid var(--c-warning-border);
+  border-radius: 9px;
+}
+
+.instrWarnIcon {
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+
+.instrEditorWrap {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  padding: 10px 12px 0;
+}
+
+.instrEditor {
+  flex: 1;
+  min-height: 0;
+  padding: 10px 12px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--c-text);
+  white-space: pre-wrap;
+  resize: none;
+  background-color: var(--c-input-bg);
+  border: 1px solid var(--c-border);
+  border-radius: 9px;
+  outline: none;
+
+  &:focus {
+    border-color: var(--c-accent);
+  }
+}
+
+.instrViewBody {
+  flex: 1;
+  min-height: 0;
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.memHead {
+  margin: 2px 2px 12px;
+}
+
+.memHeadTitle {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--c-text);
+}
+
+.memHeadHook {
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--c-text-muted);
+}
+
+.memHeadDate {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--c-text-faint);
+}
+
+// 마크다운 보기 — 답변 말풍선(.bubble.markdown)의 마크다운 모양을 쓰고 틀만 바꾼다.
+// 줄바꿈은 마크다운대로(pre-wrap이면 CLAUDE.md처럼 줄을 접어 쓴 문단이 줄마다 끊긴다).
+.instrMarkdown {
+  font-size: 13px;
+  color: var(--c-text);
+  white-space: normal;
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-border-soft);
+  border-radius: 10px;
+}
+
+.instrConflict {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: 8px;
+  padding: 9px 11px;
+  margin: 10px 12px 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--c-warning-text);
+  background-color: var(--c-warning-soft);
+  border: 1px solid var(--c-warning-border);
+  border-radius: 9px;
+}
+
+.instrConflictMsg {
+  display: flex;
+  gap: 8px;
+}
+
+.instrConflictActions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.instrFooter {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 12px 12px;
+}
+
+.instrStatus {
+  display: flex;
+  flex: 1;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11.5px;
+  color: var(--c-text-muted);
+  white-space: nowrap;
+}
+
+.instrStatusError {
+  color: var(--c-danger);
+}
+
+.instrBtn {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 5px;
+  align-items: center;
+  height: 28px;
+  padding: 0 11px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--c-text-2);
+  white-space: nowrap;
+  cursor: pointer;
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.5;
+  }
+
+  &:hover:not(:disabled) {
+    background-color: var(--c-hover);
+  }
+}
+
+.instrBtnPrimary {
+  font-weight: 700;
+  color: var(--c-on-primary);
+  background-color: var(--c-primary);
+  border-color: transparent;
+
+  &:disabled {
+    color: var(--c-on-primary-disabled);
+    background-color: var(--c-primary-disabled);
+    opacity: 1;
+  }
+
+  &:hover:not(:disabled) {
+    background-color: var(--c-primary-hover);
+  }
+}
+
+.instrBtnDanger {
+  color: var(--c-danger);
+  border-color: var(--c-danger-soft);
+}
+
+.instrKbd {
+  font-weight: 500;
+  opacity: 0.75;
+}
+
+// ── HTML 미리보기 (HtmlPreview.tsx) — 코드 블록의 미리보기 | 코드, 크게 보기 패널, HTML 파일 카드 ──
+.codeBlockTabs {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: 10px;
+}
+
+.codeBlockTab {
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--c-code-copy);
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-radius: 5px;
+
+  &:hover {
+    color: var(--c-code-copy-hover);
+  }
+}
+
+.codeBlockTabActive {
+  color: var(--c-code-copy-hover);
+  background-color: var(--c-code-hover-bg);
+}
+
+.codeBlockSpacer {
+  flex: 1;
+}
+
+.codeBlockTool {
+  padding: 3px 7px;
+  font-size: 11px;
+  color: var(--c-code-copy);
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-radius: 5px;
+
+  &:hover {
+    color: var(--c-code-copy-hover);
+    background-color: var(--c-code-hover-bg);
+  }
+}
+
+// 미리보기 바탕 — HTML은 흰 바탕을 전제로 만든 것이 많아 "밝게"는 테마와 상관없이 흰색이다
+.previewBox {
+  position: relative;
+  overflow: hidden;
+}
+
+// 답변 말풍선은 내용 폭에 맞춰 줄어든다 — iframe은 기본 폭이 300px이라 말풍선이 좁아져 페이지가 잘렸다.
+// 넓은 폭을 원하게 해서 말풍선이 최대 폭까지 펴지게 한다(max-width로 말풍선 안에 머문다).
+.previewBoxInline {
+  width: 2000px;
+  max-width: 100%;
+  transition: height 0.12s ease;
+}
+
+.previewBg-light {
+  background-color: var(--c-preview-light);
+}
+
+.previewBg-dark {
+  background-color: var(--c-preview-dark);
+}
+
+.previewBg-check {
+  background-color: var(--c-img-check-a);
+  background-image: conic-gradient(var(--c-img-check-b) 25%, transparent 0 50%, var(--c-img-check-b) 0 75%, transparent 0);
+  background-size: 14px 14px;
+}
+
+.previewFrame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  border: none;
+}
+
+.previewSvgBox {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 96px;
+  padding: 16px;
+}
+
+.previewSvg {
+  min-width: 48px;
+  max-width: 100%;
+  min-height: 48px;
+  max-height: 320px;
+  object-fit: contain;
+}
+
+.previewSvgLarge {
+  height: 100%;
+
+  .previewSvg {
+    width: 80%;
+    max-height: 90%;
+  }
+}
+
+.previewNotice {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--c-code-copy);
+}
+
+.previewPanelBody {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+
+  .previewBox {
+    flex: 1;
+    min-height: 0;
+  }
+}
+
+.previewTitleIcon {
+  margin-right: 2px;
+  color: var(--c-accent-text);
+}
+
+// Claude가 만든 .html 파일 — 그 도구 줄 아래(그림 썸네일과 같은 자리)
+.htmlFileCard {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  max-width: calc(100% - 22px);
+  padding: 6px 10px;
+  margin: 2px 0 4px 22px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--c-text-2);
+  cursor: pointer;
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+
+  &:hover {
+    border-color: var(--c-border-strong);
+  }
+}
+
+.htmlFileCardIcon {
+  flex-shrink: 0;
+  color: var(--c-accent-text);
+}
+
+.htmlFileCardName {
+  min-width: 0;
+  overflow: hidden;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.htmlFileCardAction {
+  flex-shrink: 0;
+  font-weight: 600;
+  color: var(--c-accent-text);
+}
+
+// 가운데 생략 이름(MiddleName.tsx) — 앞쪽만 줄어들고 끝(파일 이름)은 늘 보인다. 감싼 쪽 너비를 꽉 채운다.
+.midName {
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+  white-space: pre;
+}
+
+.midNameHead {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.midNameTail {
+  flex-shrink: 0;
+}
+
+// 패널 제목 줄에 이름을 넣을 때 — 앞 글자(아이콘·"지침 ›"·"미리보기 ·")는 그대로, 이름만 가운데가 줄어든다
+.filesTitleRow {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+
+// 지침 패널의 "규칙"·"가져옴" 배지 — 테두리만 (채운 배지인 프로젝트·기억과 구분)
+.instrBadgeRule {
+  background-color: transparent;
+  box-shadow: inset 0 0 0 1px var(--c-border);
 }

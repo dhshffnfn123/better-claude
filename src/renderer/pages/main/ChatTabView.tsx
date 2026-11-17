@@ -17,7 +17,16 @@ import {useClaudeChat} from "../../hooks/useClaudeChat";
 import {MessageItem} from "./MessageItem";
 import {ChatInput, type PromptHooks} from "./ChatInput";
 import {FindBar} from "./FindBar";
-import {ImageViewerContext, TabIdContext} from "../../tab-context";
+import {
+    type BackgroundLink,
+    type BackgroundLinks,
+    BackgroundLinksContext,
+    ImageViewerContext,
+    PreviewOpenContext,
+    type PreviewRequest,
+    TabIdContext,
+} from "../../tab-context";
+import {BackgroundDock} from "./BackgroundDock";
 import {ActivityPanel, middleTruncate} from "./ActivityPanel";
 import {QuestionModal} from "./QuestionModal";
 
@@ -59,8 +68,14 @@ interface Props {
     // 보고 있는 탭만 보인다. 나머지는 숨긴 채 계속 응답을 받는다(입력·스크롤 위치도 그대로).
     active: boolean;
     cwd: string;
-    // 실행 중인 백그라운드 작업 수 — 재생성·편집하면 CLI를 새로 띄워 작업이 끝나서 먼저 묻는다
-    backgroundRunning: number;
+    // 이 탭의 백그라운드 작업(실행 중 + 최근 끝난 것) — 입력창 위 작업 줄, 답변 속 실행 줄의 상태.
+    // 실행 중인 게 있으면 재생성·편집 전에 묻는다(CLI를 새로 띄워 작업이 끝난다).
+    background: BackgroundState;
+    // 오른쪽 백그라운드 패널이 이 탭으로 열려 있나, 열려 있으면 어느 작업을 보고 있나 (패널은 셸이 그린다)
+    bgPanelOpen: boolean;
+    bgPanelTaskId: string | null;
+    onOpenBackground: (tabId: string, taskId: string | null) => void;
+    onCloseBackground: () => void;
     load: TabLoadRequest | null;
     // 바뀌면 화면을 새 대화로 비운다 (main 쪽은 이미 비웠다 — 폴더 변경, 대화 삭제)
     resetToken: number;
@@ -72,6 +87,8 @@ interface Props {
     onFork: (fromTabId: string, sessionId: string, title: string, cwd: string) => void;
     // 에이전트 줄을 누르면 오른쪽 "에이전트가 한 일" 패널 (패널은 셸이 그린다)
     onOpenAgent: (tabId: string, ref: AgentRef) => void;
+    // HTML·SVG 미리보기를 오른쪽 패널에 크게 (패널은 셸이 그린다)
+    onOpenPreview: (tabId: string, req: PreviewRequest) => void;
 }
 
 // 탭 하나의 대화 화면: 메시지·알림·진행 패널·입력창, 그리고 이 탭의 모달(권한·질문·되돌리기·이미지)
@@ -79,7 +96,11 @@ function ChatTabViewBase({
     tabId,
     active,
     cwd,
-    backgroundRunning,
+    background,
+    bgPanelOpen,
+    bgPanelTaskId,
+    onOpenBackground,
+    onCloseBackground,
     load,
     resetToken,
     callbacks,
@@ -87,12 +108,15 @@ function ChatTabViewBase({
     promptHooks,
     onFork,
     onOpenAgent,
+    onOpenPreview,
 }: Props) {
     const {
         messages,
         isLoading,
         isThinking,
         compacting,
+        suggestion,
+        clearSuggestion,
         permissionRequest,
         questionRequest,
         thinkingText,
@@ -327,6 +351,29 @@ function ChatTabViewBase({
         },
         [onOpenAgent, tabId]
     );
+    const openPreview = useCallback((req: PreviewRequest) => onOpenPreview(tabId, req), [onOpenPreview, tabId]);
+    const backgroundRunning = background.running.length;
+    const openBackground = useCallback((taskId: string | null) => onOpenBackground(tabId, taskId), [onOpenBackground, tabId]);
+    // 답변 속 도구 줄 → 그 줄이 띄운 작업. 끝난 기록을 먼저 넣는다 — 끝나는 순간엔 실행 중 목록에도 잠깐 남아 있다.
+    const bgLinks = useMemo<BackgroundLinks>(() => {
+        const byToolUse = new Map<string, BackgroundLink>();
+        for (const f of background.finished) {
+            if (f.toolUseId) {
+                byToolUse.set(f.toolUseId, {
+                    taskId: f.id,
+                    running: false,
+                    startedAt: f.startedAt,
+                    endedAt: f.endedAt,
+                    status: f.status,
+                    exitCode: f.exitCode,
+                });
+            }
+        }
+        for (const t of background.running) {
+            if (t.toolUseId && !byToolUse.has(t.toolUseId)) byToolUse.set(t.toolUseId, {taskId: t.id, running: true, startedAt: t.startedAt});
+        }
+        return {byToolUse, open: (id) => openBackground(id)};
+    }, [background, openBackground]);
     // 고치는 중인 메시지 — 그 아래 메시지를 흐리게 그려 무엇이 버려지는지 보여 준다
     const [editingId, setEditingId] = useState<number | null>(null);
     const handleEditingChange = useCallback((msgId: number, editing: boolean) => {
@@ -405,6 +452,7 @@ function ChatTabViewBase({
     const editingIdx = editingId === null ? -1 : messages.findIndex((m) => m.id === editingId);
 
     return (
+        <BackgroundLinksContext.Provider value={bgLinks}>
         <div className={cx("tabView", {tabViewHidden: !active})} aria-hidden={!active} ref={rootRef} {...dragHandlers}>
             {dragging && (
                 <div className={cx("dragOverlay")}>
@@ -416,6 +464,7 @@ function ChatTabViewBase({
             <div className={cx("messageListWrap")}>
                 <TabIdContext.Provider value={tabId}>
                 <ImageViewerContext.Provider value={setLightboxSrc}>
+                <PreviewOpenContext.Provider value={openPreview}>
                     <div
                         className={cx("messageList")}
                         ref={messageListRef}
@@ -466,6 +515,7 @@ function ChatTabViewBase({
                             </div>
                         )}
                     </div>
+                </PreviewOpenContext.Provider>
                 </ImageViewerContext.Provider>
                 </TabIdContext.Provider>
                 {findOpen && (
@@ -523,6 +573,19 @@ function ChatTabViewBase({
                 resetSignal={conversationSeq}
                 promptHooks={promptHooks}
                 onRegisterAddFiles={registerAddFiles}
+                suggestion={suggestion}
+                onSuggestionUsed={clearSuggestion}
+                top={
+                    <BackgroundDock
+                        tabId={tabId}
+                        active={active}
+                        state={background}
+                        panelOpen={bgPanelOpen}
+                        panelTaskId={bgPanelTaskId}
+                        onOpen={openBackground}
+                        onClosePanel={onCloseBackground}
+                    />
+                }
             />
 
             {/* 이미지 라이트박스 */}
@@ -653,6 +716,7 @@ function ChatTabViewBase({
                 </>
             )}
         </div>
+        </BackgroundLinksContext.Provider>
     );
 }
 

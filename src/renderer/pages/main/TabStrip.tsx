@@ -1,7 +1,7 @@
 import {type RefObject, useEffect, useRef, useState} from "react";
 import classNames from "classnames/bind";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
-import {faCircleExclamation, faCircleNotch, faGears, faPlus, faXmark} from "@fortawesome/free-solid-svg-icons";
+import {faCircleExclamation, faCircleNotch, faPlus, faXmark} from "@fortawesome/free-solid-svg-icons";
 import styles from "./chat.page.module.scss";
 import type {Attention} from "../../hooks/useClaudeChat";
 
@@ -142,10 +142,11 @@ export function TabStrip({tabs, activeId, onSelect, onClose, onNew}: Props) {
                             ) : null}
                             {t.folder && <FolderName name={t.folder} />}
                             <span className={cx("tabTitle")}>{t.title}</span>
-                            {/* 백그라운드 작업(dev 서버 등)이 도는 탭 — 다른 탭을 보고 있어도 보이게 */}
+                            {/* 백그라운드 작업(dev 서버 등)이 도는 탭 — 다른 탭을 보고 있어도 보이게. 예전 회색 "⚙ 3"은
+                                10px에 반투명이라 눈에 띄지 않았다 — 색 있는 알약 + 도는 표시 */}
                             {t.background > 0 && (
                                 <span className={cx("tabBg")} aria-label={`백그라운드 작업 ${t.background}개`}>
-                                    <FontAwesomeIcon icon={faGears} />
+                                    <span className={cx("tabBgSpin")} />
                                     {t.background}
                                 </span>
                             )}

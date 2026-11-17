@@ -1,4 +1,4 @@
-import type {ComponentProps} from "react";
+import type {ComponentProps, ReactNode} from "react";
 import {useCallback, useEffect, useMemo, useRef, useState} from "react";
 import classNames from "classnames/bind";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
@@ -37,6 +37,7 @@ import styles from "./chat.page.module.scss";
 import type {ImagePayload, TurnEnd} from "../../hooks/useClaudeChat";
 import {readFileAsImagePayload} from "../../hooks/useClaudeChat";
 import {onTab} from "../../tab-events";
+import {useSuggestionsEnabled} from "../../suggestion-setting";
 
 const cx = classNames.bind(styles);
 
@@ -203,6 +204,11 @@ interface Props {
     promptHooks?: PromptHooks;
     // 탭 화면에 끌어다 놓은 파일을 붙이는 함수를 넘긴다 (빠질 때 null)
     onRegisterAddFiles?: (add: ((files: File[]) => void) | null) => void;
+    // 답변이 끝난 뒤 CLI가 짐작한 다음 요청 — 입력창이 비어 있으면 흐리게 보이고 Tab으로 채운다
+    suggestion?: string | null;
+    onSuggestionUsed?: () => void;
+    // 입력창 바로 위에 붙일 것 — 백그라운드 작업 줄
+    top?: ReactNode;
 }
 
 // 시스템 프롬프트 추가·삭제 전후에 셸이 할 일: confirm = 계속할지(백그라운드 작업이 꺼질 수 있다), changed = 탭마다 안내
@@ -211,7 +217,21 @@ export interface PromptHooks {
     changed: () => void;
 }
 
-export function ChatInput({tabId, active, isLoading, onSend, onStop, turnEnd, resetSignal, promptHooks, onRegisterAddFiles}: Props) {
+export function ChatInput({
+    tabId,
+    active,
+    isLoading,
+    onSend,
+    onStop,
+    turnEnd,
+    resetSignal,
+    promptHooks,
+    onRegisterAddFiles,
+    suggestion,
+    onSuggestionUsed,
+    top,
+}: Props) {
+    const [suggestOn] = useSuggestionsEnabled();
     const [input, setInput] = useState("");
     const [selectedImages, setSelectedImages] = useState<ImagePayload[]>([]);
     const [selectedFiles, setSelectedFiles] = useState<{name: string; path: string}[]>([]);
@@ -415,9 +435,22 @@ export function ChatInput({tabId, active, isLoading, onSend, onStop, turnEnd, re
         textareaRef.current?.focus();
     };
 
+    // 다음 요청 추천은 아무것도 안 쓴 입력창에서만 보인다 (첨부만 있어도 숨긴다)
+    const showSuggestion =
+        suggestOn && !!suggestion && !isLoading && input === "" && selectedImages.length === 0 && selectedFiles.length === 0;
+
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
         // 조합이 끝난 뒤 오는 진짜 키 입력에서 처리한다
         if (isImeComposing(e)) return;
+        // 흐리게 보이는 다음 요청 추천을 채운다 (보내지는 않는다 — 고쳐서 보낼 수 있게)
+        if (e.key === "Tab" && !e.shiftKey && showSuggestion && suggestion) {
+            e.preventDefault();
+            setInput(suggestion);
+            // 직접 친 글이 아니라 handleInput이 돌지 않는다 — 높이를 따로 맞춘다(긴 추천이 한 줄 칸에 갇혔다)
+            scheduleResize();
+            onSuggestionUsed?.();
+            return;
+        }
         if (mentionOpen && mentionFiles.length > 0) {
             if (e.key === "ArrowDown") {
                 e.preventDefault();
@@ -567,6 +600,7 @@ export function ChatInput({tabId, active, isLoading, onSend, onStop, turnEnd, re
 
     return (
         <div className={cx("inputArea")}>
+            {top}
             {promptInputOpen && (
                 <div className={cx("promptArea")}>
                     {prompts.length > 0 && (
@@ -780,22 +814,34 @@ export function ChatInput({tabId, active, isLoading, onSend, onStop, turnEnd, re
                         <span className={cx("promptBtnBadge")}>{prompts.length}</span>
                     )}
                 </button>
-                <textarea
-                    data-chat-input
-                    ref={textareaRef}
-                    className={cx("textarea")}
-                    placeholder={
-                        isLoading
-                            ? "응답 중에도 미리 써 둘 수 있어요 — Enter를 누르면 끝나는 대로 보냅니다"
-                            : "메시지를 입력하세요... (Shift+Enter로 줄바꿈)"
-                    }
-                    value={input}
-                    onChange={handleInput}
-                    onKeyDown={handleKeyDown}
-                    onPaste={handlePaste}
-                    onBlur={() => window.setTimeout(() => setMentionOpen(false), 120)}
-                    rows={1}
-                />
+                <div className={cx("textareaWrap")}>
+                    <textarea
+                        data-chat-input
+                        ref={textareaRef}
+                        className={cx("textarea", {textareaSuggest: showSuggestion})}
+                        placeholder={
+                            showSuggestion
+                                ? suggestion
+                                : isLoading
+                                  ? "응답 중에도 미리 써 둘 수 있어요 — Enter를 누르면 끝나는 대로 보냅니다"
+                                  : "메시지를 입력하세요... (Shift+Enter로 줄바꿈)"
+                        }
+                        value={input}
+                        onChange={handleInput}
+                        onKeyDown={handleKeyDown}
+                        onPaste={handlePaste}
+                        onBlur={() => window.setTimeout(() => setMentionOpen(false), 120)}
+                        rows={1}
+                    />
+                    {/* 추천은 안내문(투명, 읽기 프로그램용) 대신 이 층이 그린다 — 크롬은 textarea 안내문에 …을 그리지
+                        않아 긴 추천이 말없이 잘리고 Tab 안내까지 가려졌다 */}
+                    {showSuggestion && (
+                        <div className={cx("suggestGhost")} aria-hidden>
+                            <span className={cx("suggestText")}>{suggestion}</span>
+                            <kbd className={cx("suggestKey")}>Tab</kbd>
+                        </div>
+                    )}
+                </div>
                 {isLoading ? (
                     <>
                         {canSend && (

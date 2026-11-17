@@ -239,6 +239,16 @@ function parseNumstat(out: string): Map<string, {added?: number; deleted?: numbe
     return map;
 }
 
+// 이 경로를 git이 무시하는지 (.gitignore 등). 저장소가 아니거나 git을 못 쓰면 null.
+// 지침 패널이 "내 Mac 전용 지침(CLAUDE.local.md)"을 만들기 전에 git에 올라갈 파일인지 알려 주려고 쓴다.
+export async function isGitIgnored(cwd: string, rel: string): Promise<boolean | null> {
+    if (!fs.existsSync(cwd) || !insideRepo(cwd)) return null;
+    const git = findGit();
+    if (!git) return null;
+    const r = await runGit(git, cwd, ["check-ignore", "-q", "--", rel], 64 * 1024);
+    return r.code === 0 ? true : r.code === 1 ? false : null;
+}
+
 // cwd(작업 폴더) 아래의 변경만 본다 — 패널의 트리와 같은 범위이고, main이 열어 주는 파일 범위와도 같다.
 // mapPath: git이 주는 실제 경로를 앱의 작업 폴더 표기로 바꾼다 (심볼릭 링크로 연 폴더).
 export async function getGitStatus(cwd: string, mapPath: (abs: string) => string): Promise<GitStatusResult> {

@@ -23,10 +23,11 @@ import {copyText} from "../../clipboard";
 import {highlightLanguage} from "../../highlight";
 import {editorHint, looksLikeFilePath, openFileRef, resolveFileRef} from "../../file-links";
 import {imageRefKey, imageRefsInText, isImagePath, resolveImageRefs} from "../../image-refs";
-import {ImageViewerContext, TabIdContext} from "../../tab-context";
+import {ImageViewerContext, ReplyLiveContext, TabIdContext} from "../../tab-context";
 import {QUESTION_TOOL} from "../../question-answers";
 import {isAgentTool, middleTruncate, ToolRow} from "./ActivityPanel";
 import {QuestionCard} from "./QuestionCard";
+import {BgToggle, CodePreview, HtmlFileCard, htmlFileOf, OpenLargeButton, type PreviewBg, previewKindOf} from "./HtmlPreview";
 import {isImeComposing} from "./ChatInput";
 
 const cx = classNames.bind(styles);
@@ -60,21 +61,52 @@ function textOf(node: ReactNode): string {
 
 // 코드 블록(```): 언어 표시 + 복사 버튼 + 문법 색상. 답이 흘러 들어오는 동안에는 글자가 바뀐 블록만 다시 칠한다.
 function CodeBlock({lang, code}: {lang?: string; code: string}) {
-    const html = useMemo(() => highlightLanguage(code, lang), [code, lang]);
+    // HTML·SVG 블록은 그려진 모습으로 볼 수 있다(HtmlPreview). 답이 끝나면 미리보기가 기본 — 받는 중에는 블록이
+    // 덜 쓰였을 수 있어 코드로 둔다. 사용자가 고른 쪽은 그대로 둔다.
+    const kind = useMemo(() => previewKindOf(lang, code), [lang, code]);
+    const live = useContext(ReplyLiveContext);
+    const [chosen, setChosen] = useState<"preview" | "code" | null>(null);
+    const mode = kind ? (chosen ?? (live ? "code" : "preview")) : "code";
+    // 배경도 고른 쪽이 없으면 종류에 따라 — 언어 표시 없는 블록은 받는 중에 svg로 바뀔 수 있다
+    const [bgChoice, setBg] = useState<PreviewBg | null>(null);
+    const bg = bgChoice ?? (kind === "svg" ? "check" : "light");
+    const html = useMemo(() => (mode === "code" ? highlightLanguage(code, lang) : ""), [code, lang, mode]);
     const [copied, copy] = useCopied();
     return (
         <div className={cx("codeBlock")}>
             <div className={cx("codeBlockHead")}>
                 <span className={cx("codeBlockLang")}>{lang ?? ""}</span>
+                {kind && (
+                    <span className={cx("codeBlockTabs")}>
+                        <button className={cx("codeBlockTab", {codeBlockTabActive: mode === "preview"})} onClick={() => setChosen("preview")}>
+                            미리보기
+                        </button>
+                        <button className={cx("codeBlockTab", {codeBlockTabActive: mode === "code"})} onClick={() => setChosen("code")}>
+                            코드
+                        </button>
+                    </span>
+                )}
+                <span className={cx("codeBlockSpacer")} />
+                {kind && mode === "preview" && <BgToggle bg={bg} onChange={setBg} className={cx("codeBlockTool")} />}
+                {kind && (
+                    <OpenLargeButton
+                        req={kind === "svg" ? {title: "SVG", svg: code} : {title: "HTML", html: code}}
+                        className={cx("codeBlockTool")}
+                    />
+                )}
                 <button className={cx("codeBlockCopy")} onClick={() => copy(code)} aria-label="코드 복사">
                     <FontAwesomeIcon icon={copied ? faCheck : faCopy} />
                     {copied ? "복사됨" : "복사"}
                 </button>
             </div>
-            {/* highlight.js가 글자를 이스케이프해 만든 HTML이다 */}
-            <pre className={cx("codeBlockPre")}>
-                <code dangerouslySetInnerHTML={{__html: html}} />
-            </pre>
+            {kind && mode === "preview" ? (
+                <CodePreview kind={kind} code={code} bg={bg} live={live} />
+            ) : (
+                // highlight.js가 글자를 이스케이프해 만든 HTML이다
+                <pre className={cx("codeBlockPre")}>
+                    <code dangerouslySetInnerHTML={{__html: html}} />
+                </pre>
+            )}
         </div>
     );
 }
@@ -427,6 +459,16 @@ type EditMode = "edit" | "rewrite" | null;
 // "여기서 다시"를 열면 이 메시지 직전으로 되돌릴 파일이 있는지 미리 본다 (main이 CLI에 dryRun으로 물음)
 type RewindPreview = {state: "checking"} | {state: "none"} | {state: "ready"; count: number};
 
+// 마크다운 한 덩어리 — 글이 그대로면 다시 파싱하지 않는다. 스트리밍 중에는 마지막 덩어리만 바뀌고, 응답 시작·끝에
+// 모든 메시지가 다시 그려질 때도 파싱은 건너뛴다(예전에는 조각마다 답변 전체를, 턴마다 대화 전체를 다시 파싱했다).
+export const Markdown = memo(function Markdown({text}: {text: string}) {
+    return (
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
+            {text}
+        </ReactMarkdown>
+    );
+});
+
 function MessageItemBase({
     msg,
     isStreaming,
@@ -451,10 +493,6 @@ function MessageItemBase({
     const [draft, setDraft] = useState(msg.content);
     const [rewindPreview, setRewindPreview] = useState<RewindPreview>({state: "none"});
     const [withFiles, setWithFiles] = useState(false); // 기본은 끔 — 파일은 직접 고를 때만 되돌린다
-
-    useEffect(() => {
-        if (!editing) setDraft(msg.content);
-    }, [msg.content, editing]);
 
     useEffect(() => {
         onEditingChange?.(msg.id, editing !== null);
@@ -504,6 +542,7 @@ function MessageItemBase({
     return (
         // data-msg-id·data-role: 탭 화면이 "지금 읽는 답변"을 찾는 데 쓴다 (답변 처음으로 버튼)
         // dimmed: 위 메시지를 고치는 중 — 보내면 버려질 메시지
+        <ReplyLiveContext.Provider value={isLive}>
         <div className={cx("messageWrapper", msg.role, {messageDimmed: dimmed})} data-msg-id={msg.id} data-role={msg.role}>
             {/* 구분선이 든 답변은 폭을 끝까지 쓴다 — 내용 폭에 맞춰 줄면 구분선이 짧게 끊긴다 */}
             <div className={cx("messageInner", {messageInnerWide: hasCompact})}>
@@ -609,12 +648,11 @@ function MessageItemBase({
                                     ) : seg.text.trim() ? (
                                         <div className={cx("bubble", "markdown")}>
                                             {markReport && i === lastTextIdx && <div className={cx("agentReportLabel")}>최종 보고</div>}
-                                            <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
-                                                {seg.text}
-                                            </ReactMarkdown>
+                                            <Markdown text={seg.text} />
                                         </div>
                                     ) : null}
                                     {images && <ImageStrip {...images} indent={seg.kind === "tool"} onOpen={onImageClick} />}
+                                    {seg.kind === "tool" && htmlFileOf(seg.tool) && <HtmlFileCard path={htmlFileOf(seg.tool) as string} />}
                                 </Fragment>
                             );
                         })}
@@ -638,9 +676,7 @@ function MessageItemBase({
                                 <span />
                             </span>
                         ) : (
-                            <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
-                                {msg.content}
-                            </ReactMarkdown>
+                            <Markdown text={msg.content} />
                         )}
                     </div>
                 )}
@@ -697,6 +733,7 @@ function MessageItemBase({
                 )}
             </div>
         </div>
+        </ReplyLiveContext.Provider>
     );
 }
 

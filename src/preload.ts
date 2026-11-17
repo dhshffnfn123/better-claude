@@ -24,6 +24,8 @@ const TAB_EVENTS = {
     session: "chat:session",
     compact: "chat:compact",
     replyUuid: "chat:reply_uuid",
+    suggestion: "chat:suggestion",
+    instructions: "chat:instructions",
 } as const;
 
 contextBridge.exposeInMainWorld("electronAPI", {
@@ -55,6 +57,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
     rewindFiles: (tabId: string, uuid: string, dryRun: boolean) => ipcRenderer.invoke("chat:rewind_files", tabId, uuid, dryRun),
     // 이 답변까지를 새 대화로 복사한다 (원래 대화는 그대로) — 렌더러가 새 탭으로 연다
     forkConversation: (tabId: string, replyUuid: string) => ipcRenderer.invoke("chat:fork", tabId, replyUuid),
+    // 다음 요청 추천 켜기·끄기 (settings.json) — 새로 띄우는 CLI부터 적용
+    getPromptSuggestions: () => ipcRenderer.invoke("suggestions:get"),
+    setPromptSuggestions: (on: boolean) => ipcRenderer.invoke("suggestions:set", on),
     // 에이전트가 한 일 — 대화 속 Agent 호출(toolUseId) 또는 에이전트 id로 그 에이전트의 기록을 읽는다
     getAgentView: (tabId: string, ref: object) => ipcRenderer.invoke("agents:get", tabId, ref),
     setPermissions: (tabId: string, allow: boolean) => ipcRenderer.invoke("chat:set_permissions", tabId, allow),
@@ -80,6 +85,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
     openInEditor: (tabId: string, raw: string) => ipcRenderer.invoke("editor:open", tabId, raw),
     listDir: (tabId: string, dir: string) => ipcRenderer.invoke("files:list_dir", tabId, dir),
     readFileForView: (tabId: string, path: string) => ipcRenderer.invoke("files:read", tabId, path),
+    // HTML 미리보기 — 코드 블록의 글을 등록해 미리보기 주소를 받는다 / Claude가 만든 .html 파일의 미리보기 주소
+    registerHtmlPreview: (html: string) => ipcRenderer.invoke("previews:html", html),
+    previewFile: (tabId: string, path: string) => ipcRenderer.invoke("previews:file", tabId, path),
+    // 지침 패널 (지침 | 기억) — 경로는 main이 마지막 목록으로 검사한다
+    getInstructionsSummary: (tabId: string) => ipcRenderer.invoke("instructions:summary", tabId),
+    listInstructions: (tabId: string, refresh?: boolean) => ipcRenderer.invoke("instructions:list", tabId, refresh === true),
+    readInstruction: (tabId: string, path: string) => ipcRenderer.invoke("instructions:read", tabId, path),
+    writeInstruction: (tabId: string, path: string, content: string, baseMtime: number | null, force?: boolean) =>
+        ipcRenderer.invoke("instructions:write", tabId, path, content, baseMtime, force === true),
+    deleteMemory: (tabId: string, path: string) => ipcRenderer.invoke("instructions:delete_memory", tabId, path),
     // 답변 속 그림: 경로 확인 + 썸네일, 원본 (main: images:resolve / images:read)
     resolveImages: (tabId: string, refs: object[]) => ipcRenderer.invoke("images:resolve", tabId, refs),
     readImage: (tabId: string, path: string) => ipcRenderer.invoke("images:read", tabId, path),
@@ -91,7 +106,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     getMcpStatus: (tabId: string, refresh?: boolean) => ipcRenderer.invoke("mcp:status", tabId, refresh ?? false),
 
     // ── 백그라운드 작업 패널 (탭별): 셸 작업의 최근 출력, 작업 하나만 중지 ──
-    getBackgroundOutput: (tabId: string, taskId: string) => ipcRenderer.invoke("background:output", tabId, taskId),
+    getBackgroundOutput: (tabId: string, taskId: string, maxBytes?: number) =>
+        ipcRenderer.invoke("background:output", tabId, taskId, maxBytes),
     stopBackgroundTask: (tabId: string, taskId: string) => ipcRenderer.invoke("background:stop", tabId, taskId),
     clearFinishedBackground: (tabId: string) => ipcRenderer.invoke("background:clear_finished", tabId),
 
@@ -124,6 +140,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
     listSessions: () => ipcRenderer.invoke("sessions:list"),
     loadSessionMessages: (sessionId: string, cwd?: string) => ipcRenderer.invoke("sessions:messages", sessionId, cwd),
     deleteSession: (sessionId: string, cwd?: string) => ipcRenderer.invoke("sessions:delete", sessionId, cwd),
+    // main이 스스로 세션을 지웠다(첫 메시지 재생성이 성공해 옛 대화를 지움) — 사이드바 목록을 다시 받는다
+    onSessionsChanged: (callback: () => void) => {
+        const handler = () => callback();
+        ipcRenderer.on("sessions:changed", handler);
+        return () => ipcRenderer.removeListener("sessions:changed", handler);
+    },
     getClaudeStatus: () => ipcRenderer.invoke("claude:get_status"),
     locateClaude: () => ipcRenderer.invoke("claude:locate"),
     openClaudeInstallGuide: () => ipcRenderer.invoke("claude:open_install_guide"),

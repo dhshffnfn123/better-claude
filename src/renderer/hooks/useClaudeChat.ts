@@ -148,6 +148,9 @@ const INITIAL_MESSAGE: Message = {
 };
 
 // 탭 하나의 대화. 이벤트는 이 탭 것만 받고(tab-events), main에 보내는 요청에는 탭 id를 싣는다.
+// 스트리밍 중 글자 조각을 화면에 반영하는 간격 (초당 20번)
+const CHUNK_FLUSH_MS = 50;
+
 export function useClaudeChat(tabId: string, callbacks: ChatCallbacks = {}) {
     const [messages, setMessages] = useState<Message[]>([INITIAL_MESSAGE]);
     const [isLoading, setIsLoading] = useState(false);
@@ -161,6 +164,10 @@ export function useClaudeChat(tabId: string, callbacks: ChatCallbacks = {}) {
     const [notice, setNotice] = useState<ChatNotice | null>(null);
     const [turnEnd, setTurnEnd] = useState<TurnEnd>({seq: 0, stopped: false, failed: false});
     const [compacting, setCompacting] = useState<Compacting>(null);
+    // 답변이 끝난 뒤 CLI가 짐작한 다음 요청 (입력창에 흐리게) — 새 메시지·다른 대화면 지운다
+    const [suggestion, setSuggestion] = useState<string | null>(null);
+    const loadingRef = useRef(false);
+    loadingRef.current = isLoading;
     const idCounter = useRef(2);
     const turnSeqRef = useRef(0);
     const startedAtRef = useRef<number | null>(null);
@@ -197,6 +204,16 @@ export function useClaudeChat(tabId: string, callbacks: ChatCallbacks = {}) {
         callbacksRef.current.onLoadingChange?.(isLoading);
     }, [isLoading]);
 
+    // 추천은 턴이 끝난 뒤(2~3초)에 와서 턴마다 거는 구독 밖에서 받는다. 그새 다음 메시지를 보냈으면 버린다.
+    useEffect(
+        () =>
+            onTab("suggestion", tabId, ({text}) => {
+                if (!loadingRef.current) setSuggestion(text);
+            }),
+        [tabId]
+    );
+    const clearSuggestion = useCallback(() => setSuggestion(null), []);
+
     useEffect(() => {
         if (!isLoading) return;
         const id = window.setInterval(() => {
@@ -221,6 +238,7 @@ export function useClaudeChat(tabId: string, callbacks: ChatCallbacks = {}) {
         setRunningTokens({input: 0, output: 0});
         setNotice(null);
         setCompacting(null);
+        setSuggestion(null);
 
         setIsLoading(true);
         setIsThinking(true);
@@ -228,7 +246,14 @@ export function useClaudeChat(tabId: string, callbacks: ChatCallbacks = {}) {
 
         // 텍스트/도구를 발생 순서대로 보관 → 도구 호출 전후 멘트가 한 말풍선에 뒤섞이지 않게 분리.
         const segs: MessageSegment[] = [];
+        // 글자 조각은 모아서 그린다(CHUNK_FLUSH_MS) — 조각마다 그리면 긴 답변에서 화면이 무거워졌다(여러 탭이 동시에
+        // 답하면 입력이 끊길 만큼). 도구·압축처럼 드문 일은 바로 그리고, 끝날 때 남은 것을 바로 그린다(finish).
+        let flushTimer: number | null = null;
         const flush = () => {
+            if (flushTimer !== null) {
+                window.clearTimeout(flushTimer);
+                flushTimer = null;
+            }
             const content = segs
                 .filter((s): s is { kind: "text"; text: string } => s.kind === "text")
                 .map((s) => s.text)
@@ -239,13 +264,16 @@ export function useClaudeChat(tabId: string, callbacks: ChatCallbacks = {}) {
                 prev.map((m) => (m.id === assistantId ? { ...m, content, segments: snapshot } : m))
             );
         };
+        const flushSoon = () => {
+            if (flushTimer === null) flushTimer = window.setTimeout(flush, CHUNK_FLUSH_MS);
+        };
 
         const removeChunk = onTab("chunk", tabId, (text) => {
             setIsThinking(false);
             const last = segs[segs.length - 1];
             if (last && last.kind === "text") last.text += text;
             else segs.push({ kind: "text", text });
-            flush();
+            flushSoon();
         });
 
         const removeUsage = onTab("usage", tabId, (usage) => {
@@ -339,6 +367,7 @@ export function useClaudeChat(tabId: string, callbacks: ChatCallbacks = {}) {
             if (finished) return;
             finished = true;
             if (finishRef.current === finish) finishRef.current = null;
+            if (flushTimer !== null) flush();
             removeChunk();
             removeUsage();
             removeError();
@@ -527,6 +556,7 @@ export function useClaudeChat(tabId: string, callbacks: ChatCallbacks = {}) {
 
     // 화면만 새 대화로 비운다 — main 쪽은 이미 비웠을 때(폴더 변경, 대화 삭제, 다른 대화 열기 전)
     const resetLocal = useCallback(() => {
+        setSuggestion(null);
         setMessages([{ ...INITIAL_MESSAGE, id: nextId() }]);
         setPermissionRequest(null);
         setQuestionRequest(null);
@@ -538,6 +568,7 @@ export function useClaudeChat(tabId: string, callbacks: ChatCallbacks = {}) {
 
     // CLI 세션 기록에서 복원한 메시지로 화면을 채운다
     const loadSession = useCallback((loaded: LoadedMessage[]) => {
+        setSuggestion(null);
         lastSentRef.current = null;
         toolsRef.current = [];
         setTools([]);
@@ -551,6 +582,8 @@ export function useClaudeChat(tabId: string, callbacks: ChatCallbacks = {}) {
         isLoading,
         isThinking,
         compacting,
+        suggestion,
+        clearSuggestion,
         permissionRequest,
         questionRequest,
         setPermissionRequest,

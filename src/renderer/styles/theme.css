@@ -77,6 +77,16 @@
   --c-img-check-b: #ebe9e2;
   --c-accent-soft: #f3ead0;
   --c-accent-ink: #3a3d35;
+
+  /* HTML 미리보기 바탕 — 테마와 상관없이 같다(HTML은 흰 바탕을 전제로 만든 것이 많다) */
+  --c-preview-light: #fff;
+  --c-preview-dark: #1e1f1b;
+
+  /* 연한 금색 바탕(--c-accent-soft) 위 글자 — 지침 패널의 배지·작업 폴더 줄의 "지침" 표시 */
+  --c-accent-soft-text: #785e16;
+
+  /* 지침 패널 "기억" 배지 글자(--c-ultra-bg 바탕 위). 머리줄의 --c-ultra는 밝은 패널에서 2:1로 흐려 따로 둔다 — 5.8:1 */
+  --c-memory-badge-text: #6a4a9c;
   --c-on-accent: #fff;
   --c-changed-text: #7a5f12;
   --c-resize-hover: rgba(201, 168, 76, 0.35);
@@ -146,6 +156,10 @@
   --c-tool-done: #5a8a5a;
   --c-copied-text: #6b8f4e;
   --c-task-text: #6f7d5f;
+
+  /* 백그라운드 작업 — 연한 바탕(답변 속 "실행 중", 패널의 개수)과 탭 알약 위 글자 */
+  --c-task-bg: rgba(111, 125, 95, 0.14);
+  --c-on-task: #fff;
   --c-tag-text: #8b6330;
   --c-tag-bg: #f5ecd9;
   --c-option-active-bg: #faf3e2;
@@ -335,6 +349,8 @@
     --c-img-check-b: #c6c4bb;
     --c-accent-soft: #3d3720;
     --c-accent-ink: #1b1d18;
+    --c-accent-soft-text: #dcbf6a;
+    --c-memory-badge-text: #b79ae0;
     --c-on-accent: #1b1d18;
     --c-changed-text: #e2c46c;
     --c-user-bubble-bg: #6e5c27;
@@ -381,6 +397,8 @@
     --c-tool-done: #7fb07a;
     --c-copied-text: #93bd78;
     --c-task-text: #a3b192;
+    --c-task-bg: rgba(163, 177, 146, 0.16);
+    --c-on-task: #1b1d18;
     --c-tag-text: #e0b26e;
     --c-tag-bg: #3b3424;
     --c-option-active-bg: #403822;
