@@ -56,6 +56,16 @@ main via `--inspect`):
   Fast Refresh remount, the window navigated away and back) can run in the home folder — `tabFor` creates
   an unknown tab with `os.homedir()`; a test conversation and its auto memory landed in
   `~/.claude/projects/-Users-<you>/` (reproduced). Reload fully and check the cwd bar before sending.
+  The cwd bar is the renderer's copy: after a hot reload (an edit of a component + `chat.page.module.scss` while the app ran)
+  it kept showing the test folder while main's tab was in the home folder, and it happened again — check main's
+  `cwd` (`electronAPI.listInstructions(tabId)` returns it; for a tab main doesn't know yet that call creates it in the home
+  folder too, which `tabs:open` later resets). A test project inside this repo (`node_modules/.harness-…`) must be its own git
+  repo (`git init`) — auto memory is per repository, so otherwise it would share this repo's memories (the owner's). Verify
+  with `listInstructions(tabId, true)` after putting an empty `MEMORY.md` in the expected folder: the AutoMem path. A test window
+  kept on top: `W.setFocusable(false)` so it can't take the owner's keystrokes, and turn its sound / macOS notifications off
+  (`better-claude:notification-sound` / `better-claude:os-notifications` = `off`). localStorage belongs to the dev renderer's
+  origin `http://localhost:<vite port>`, and the port moves when other dev servers hold 5173…: after a restart on another
+  port every localStorage setting (sound, notifications, 답변 처음으로, 기억 알림) was back to its default.
 - **Background tasks in tests**: the CLI keeps their output under `/private/tmp/claude-<uid>/<project path>/` — delete
   the test project's folder there too. A `pkill -f <pattern>` that Claude runs also matches *your* monitoring shell if
   its command line contains the pattern (it was killed, exit 144) — keep such strings out of your own commands.
@@ -881,6 +891,40 @@ it closes the others, the files toggle closes it). The cwd-bar chip shows the in
   `baseDir` = the file's folder so relative links and images resolve next to the file; `ImageViewer` around the
   bubble makes its images open in the lightbox.
 
+### Memory toast — "클로드는 이것을 기억할 것입니다" (`MemoryToast.tsx`, `memory-toast-setting.ts`)
+
+When Claude saves something to its auto memory, a card fades in at the middle of the window with what it remembered.
+
+- **Detection (main, `noteMemorySaved`)**: `trackFileEdits`' `onEdited`, which only the live `pump` passes — the transcript
+  recompute (`loadChangedFilesFromSession`) passes none, so reopening a conversation never toasts (verified). A successful
+  Write/Edit/MultiEdit of a memory *topic* file (`isMemoryTopicFile`), subagents included; an edit of only the MEMORY.md index
+  toasts nothing (Claude edits the index after every save — verified: an index-only Edit, no event). What it remembered = the
+  frontmatter `description` (else `name`; the renderer falls back to the file name) — from the Write's input, or read from disk
+  after an Edit. `updated` = Edit/MultiEdit, or a Write onto an existing file: the structured result on the SDK user message
+  (`tool_use_result` = FileWriteOutput, `type: "update"` — measured, one result per message) is trusted when the message holds
+  that one result; otherwise the result text ("File created successfully at…" / "The file … has been updated"). `staged` writes
+  (held for review, file unchanged) are skipped. Event `chat:memory_saved {path, name?, description?, updated}` (`memorySaved`
+  in `TAB_EVENTS`); main always sends — the switch lives in the renderer.
+- **Toast** (`MemoryToasts`, rendered once by the shell): one at a time from per-tab queues (newest 3 kept; the same path is
+  merged — text from the newer, "고침" only if the earlier one was an update too). Only the visible tab's queue is shown, and
+  only while `document.visibilityState` is visible (a minimized window keeps them, and a shown one waits); switching tabs
+  closes the other tab's toast at once. 0.2 s fade + scale in, 3 s hold, 0.6 s fade with an 18 px upward drift, 150 ms gap
+  (the times in the component and the SCSS must match); `prefers-reduced-motion` → opacity only (checked with CDP
+  emulation). Hover pauses it (1.5 s more after the pointer leaves). The layer is `pointer-events: none`, only the card is
+  clickable; z-index 25 = above the sidebar, below the modal scrim (a permission modal is never covered). Backticks in the
+  description render as code; "고침" marks an update.
+- **Click** → the shell's `openMemoryFromToast`: that tab, instructions panel, 기억 view with that memory open
+  (`focusMemory` prop; the panel takes it once and clears it via `onFocusDone`, so coming back to the tab doesn't reopen it).
+  A memory that isn't listed yet (a repo's first memory: the 기억 list needs MEMORY.md) is opened when the list next arrives
+  (`chat:instructions` after the index write — verified by adding the file and its index line after the click); switching
+  to 지침 or opening another file cancels the wait (verified).
+- **Switch**: 설정 → "기억 알림" (default on; `localStorage` `better-claude:memory-toast` = `on` | `off`), applies to every
+  tab at once; switching off closes the visible toast and drops the queues.
+- Verified in the dev app (Haiku): a new memory, two memories in one reply (queued), Edit and Write-over-existing (고침), an
+  index-only edit (nothing), a memory saved in a hidden tab (shown on switching back), off → nothing / on → shown, kept after a
+  reload, click → the memory opens, light and dark; a memory saved while the window was covered by another app's full-screen
+  window was held and shown once the page became visible.
+
 ### HTML preview (`HtmlPreview.tsx`, `src/main/services/previews.ts`)
 
 HTML/SVG in replies is shown drawn, like Claude.ai's artifacts. Code blocks whose language is `html`/`htm`/`svg`
@@ -946,7 +990,8 @@ previewed (they need a build).
 
 Sidebar "사용 가이드" (under 새 대화; the three sidebar items have icons — 새 대화, 사용 가이드, 설정) opens a modal over
 the tab view — chats keep running underneath. **설정** (below it, `SettingsDialog.tsx`, same header as the guide) holds
-general settings that have no header button of their own — for now the 답변 처음으로 target. Left: contents
+general settings that have no header button of their own — for now the 답변 처음으로 target and the 기억 알림 switch
+(the switch component is `Switch` from `NotificationSettings.tsx`). Left: contents
 (sections with item counts, follows scrolling); right: one card per feature (설명 + 쓰는 방법 lines); top: search over
 title/body/how lines. Text markup: `[[⌘T]]` = keycap, `{i:shield}` = the app's own icon (`ICONS` in `UserGuide.tsx`),
 backticks = code. `since: "v5"` shows a version badge. Esc clears the search first, then closes. **The guide is

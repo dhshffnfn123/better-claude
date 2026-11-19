@@ -5,6 +5,7 @@ import type {IconDefinition} from "@fortawesome/fontawesome-svg-core";
 import {
     faBars,
     faBolt,
+    faBrain,
     faChartSimple,
     faBookOpen,
     faCircleHalfStroke,
@@ -66,6 +67,7 @@ const ICONS: Record<string, IconDefinition> = {
     chart: faChartSimple,
     gear: faGear,
     plug: faPlug,
+    brain: faBrain,
 };
 
 // [[키]] → 키 모양, {i:이름} → 아이콘, `코드` → 코드 글씨

@@ -35,6 +35,7 @@ import {UsageMeter} from "./UsageMeter";
 import {McpStatus} from "./McpStatus";
 import {FilesPanel} from "./FilesPanel";
 import {InstructionsPanel} from "./InstructionsPanel";
+import {MemoryToasts} from "./MemoryToast";
 import {PreviewPanel} from "./HtmlPreview";
 import type {PreviewRequest} from "../../tab-context";
 import {FILES_PANEL_MIN_WIDTH, readPref, writePref} from "./files-panel-prefs";
@@ -307,6 +308,8 @@ const ChatPage = () => {
     const [instrOpen, setInstrOpen] = useState(false);
     const [instrSummary, setInstrSummary] = useState<{tabId: string; cwd: string; count: number; tokens: number} | null>(null);
     const [instrNonce, setInstrNonce] = useState(0);
+    // 기억 알림을 눌렀다 — 그 탭의 지침 패널이 기억 탭에서 이 기억을 연다 (패널이 받으면 지운다)
+    const [instrFocus, setInstrFocus] = useState<{tabId: string; path: string} | null>(null);
     // HTML·SVG 미리보기 크게 보기 — 연 탭에서만 보인다(같은 자리: 에이전트 > 백그라운드 > 미리보기 > 지침 > 작업 파일)
     const [previewView, setPreviewView] = useState<{tabId: string; req: PreviewRequest} | null>(null);
 
@@ -1021,6 +1024,18 @@ const ChatPage = () => {
     };
     const closeInstructions = useCallback(() => setInstrOpen(false), []);
 
+    // 기억 알림("클로드는 이것을 기억할 것입니다")을 누르면 → 그 탭의 지침 패널, 기억 탭에서 그 기억 (같은 자리의 다른 패널은 닫는다)
+    const openMemoryFromToast = useCallback((tabId: string, memoryPath: string) => {
+        if (!tabsRef.current.some((t) => t.id === tabId)) return;
+        setActiveId(tabId);
+        setInstrOpen(true);
+        setAgentView(null);
+        setPreviewView(null);
+        setBgView(null);
+        setInstrFocus({tabId, path: memoryPath});
+    }, []);
+    const clearInstrFocus = useCallback(() => setInstrFocus(null), []);
+
     // 작업 폴더 줄의 "지침 N" — main이 이 탭을 연 뒤에 묻는다(그 전에는 main이 홈 폴더 기준이다).
     // 응답이 끝날 때마다·지침 파일이 바뀔 때마다 다시 묻는다(main이 캐시하므로 보통 CLI를 띄우지 않는다).
     const instrTabId = active?.opened ? active.id : null;
@@ -1644,6 +1659,8 @@ const ChatPage = () => {
                         width={filesWidth}
                         onResize={setFilesWidth}
                         onClose={closeInstructions}
+                        focusMemory={instrFocus?.tabId === active.id ? instrFocus : null}
+                        onFocusDone={clearInstrFocus}
                     />
                 ) : filesOpen && active && (
                     <FilesPanel
@@ -1658,6 +1675,9 @@ const ChatPage = () => {
                     />
                 )}
             </div>
+
+            {/* 기억 알림 — Claude가 기억을 저장하면 창 가운데에 잠깐 (보고 있는 탭의 것만, 다른 탭 것은 그 탭으로 갈 때) */}
+            <MemoryToasts activeTabId={active?.id ?? null} tabIds={tabs.map((t) => t.id)} onOpen={openMemoryFromToast} />
 
             {guideOpen && <UserGuide onClose={closeGuide} />}
             {settingsOpen && <SettingsDialog onClose={closeSettings} />}

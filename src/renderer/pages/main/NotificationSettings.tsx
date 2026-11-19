@@ -9,7 +9,8 @@ import {useSuggestionsEnabled} from "../../suggestion-setting";
 
 const cx = classNames.bind(styles);
 
-function Switch({checked, onChange, label}: {checked: boolean; onChange: (next: boolean) => void; label: string}) {
+// 켜기/끄기 스위치 — 설정 창(SettingsDialog)도 같이 쓴다
+export function Switch({checked, onChange, label}: {checked: boolean; onChange: (next: boolean) => void; label: string}) {
     return (
         <button
             type="button"

@@ -7198,3 +7198,200 @@
   font-size: 11.5px;
   color: var(--c-text-muted);
 }
+
+// 켜고 끄는 설정 한 줄 (이름·설명 + 스위치) — 앞 설정과 사이를 둔다
+.settingsSwitchRow {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-top: 22px;
+
+  .settingsHint {
+    margin-bottom: 0;
+  }
+}
+
+.settingsSwitchText {
+  min-width: 0;
+}
+
+// ── 기억 알림 (MemoryToast — "클로드는 이것을 기억할 것입니다") ──
+// 창 가운데. 겹은 클릭을 그대로 통과시키고 카드만 눌린다. 사이드바(20) 위, 모달 가리개(30)·설정 창(40) 밑.
+.memToastLayer {
+  position: fixed;
+  inset: 0;
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  pointer-events: none;
+}
+
+// 나타나기 0.2초(살짝 커지며) → 머무르기 → 사라지기 0.6초(위로 스르륵). 시간은 MemoryToast.tsx와 같게.
+.memToast {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  width: min(420px, 100%);
+  padding: 12px 14px 12px 12px;
+  font: inherit;
+  color: var(--c-text);
+  text-align: left;
+  pointer-events: auto;
+  cursor: pointer;
+  background-color: var(--c-elevated);
+  border: 1px solid var(--c-border-neutral);
+  border-radius: 14px;
+  outline: none;
+  box-shadow: var(--sh-popover);
+  animation: mem-toast-in 0.2s ease-out both;
+
+  &:hover {
+    background-color: var(--c-float-hover);
+  }
+
+  &:focus-visible {
+    box-shadow: var(--sh-popover), var(--sh-focus-ring);
+  }
+}
+
+.memToastLeaving {
+  animation: mem-toast-out 0.6s cubic-bezier(0.4, 0, 0.7, 1) forwards;
+}
+
+// 눌러서 닫기 — 빨리 흐려진다. 사라지는 동안 다시 눌리지 않게.
+.memToastClosing {
+  pointer-events: none;
+  animation: mem-toast-fade-out 0.18s ease-in forwards;
+}
+
+.memToastIcon {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  font-size: 15px;
+  color: var(--c-memory-toast-accent);
+  background-color: var(--c-memory-toast-icon-bg);
+  border-radius: 10px;
+}
+
+.memToastText {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.memToastTitle {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--c-memory-toast-accent);
+}
+
+// 있던 기억을 고쳤다
+.memToastBadge {
+  padding: 0 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 16px;
+  color: var(--c-text-muted);
+  border: 1px solid var(--c-border-neutral);
+  border-radius: 999px;
+}
+
+// 무엇을 기억했는지 — 두 줄까지, 넘치면 …
+.memToastDesc {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--c-text);
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+}
+
+.memToastCode {
+  padding: 0 4px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.88em;
+  background-color: var(--c-tint);
+  border-radius: 4px;
+}
+
+.memToastGo {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--c-text-faint);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.memToast:hover .memToastGo,
+.memToast:focus-visible .memToastGo {
+  opacity: 1;
+}
+
+@keyframes mem-toast-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes mem-toast-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(-18px) scale(0.98);
+  }
+}
+
+@keyframes mem-toast-fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes mem-toast-fade-out {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
+// 움직임 줄이기(손쉬운 사용) — 커지거나 떠오르지 않고 흐려지기만
+@media (prefers-reduced-motion: reduce) {
+  .memToast {
+    animation-name: mem-toast-fade-in;
+  }
+
+  .memToastLeaving {
+    animation-name: mem-toast-fade-out;
+  }
+}

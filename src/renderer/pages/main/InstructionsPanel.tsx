@@ -143,6 +143,12 @@ interface OpenFile {
     edit?: boolean; // 처음부터 편집으로
 }
 
+// 기억 알림에서 온 경로가 목록의 그 기억인가 — 설정 폴더가 심볼릭 링크면 앞부분 표기가 다를 수 있어 끝(…/<저장소>/memory/<파일>)도 본다
+function sameMemory(a: string, b: string): boolean {
+    const tail = (p: string) => p.split("/").slice(-3).join("/");
+    return a === b || tail(a) === tail(b);
+}
+
 interface Props {
     tabId: string;
     cwd: string;
@@ -152,13 +158,26 @@ interface Props {
     width: number;
     onResize: (width: number) => void;
     onClose: () => void;
+    // 기억 알림을 눌러서 왔다 — 기억 탭에서 이 기억을 연다. 받으면 onFocusDone으로 셸에 알린다(다시 열려도 또 열지 않게).
+    focusMemory?: {path: string} | null;
+    onFocusDone?: () => void;
 }
 
 // 셸은 어느 탭이든 상태가 바뀔 때마다 다시 그려진다 — 이 패널은 받은 값이 같으면 건너뛴다
-export const InstructionsPanel = memo(function InstructionsPanel({tabId, cwd, opened, refreshKey, width, onResize, onClose}: Props) {
+export const InstructionsPanel = memo(function InstructionsPanel({
+    tabId,
+    cwd,
+    opened,
+    refreshKey,
+    width,
+    onResize,
+    onClose,
+    focusMemory,
+    onFocusDone,
+}: Props) {
     const [list, setList] = useState<InstructionsList | null>(null);
     const [loading, setLoading] = useState(false);
-    const [view, setView] = useState<"rules" | "memory">("rules");
+    const [view, setView] = useState<"rules" | "memory">(focusMemory ? "memory" : "rules");
     const [open, setOpen] = useState<OpenFile | null>(null);
     const seqRef = useRef(0);
 
@@ -183,6 +202,32 @@ export const InstructionsPanel = memo(function InstructionsPanel({tabId, cwd, op
     useEffect(() => setOpen(null), [cwd]);
     // 앱에서 저장했거나 Claude가 지침·기억 파일을 고쳤다
     useEffect(() => onTab("instructions", tabId, () => void load()), [tabId, load]);
+
+    // 기억 알림을 누르고 왔다 — 기억 탭에서 그 기억을 연다. 목록에 아직 없으면(처음 쓴 기억은 MEMORY.md가 생겨야 목록에
+    // 나온다) 목록이 다시 올 때까지 기다린다. 그사이 다른 탭(지침)이나 다른 파일을 열었으면 그만둔다.
+    const focusRef = useRef<string | null>(null);
+    const [focusSeq, setFocusSeq] = useState(0);
+    useEffect(() => {
+        if (!focusMemory) return;
+        focusRef.current = focusMemory.path;
+        setView("memory");
+        setOpen(null);
+        setFocusSeq((n) => n + 1);
+        onFocusDone?.();
+    }, [focusMemory, onFocusDone]);
+    useEffect(() => {
+        const want = focusRef.current;
+        if (!want) return;
+        if (view !== "memory" || open) {
+            focusRef.current = null;
+            return;
+        }
+        if (list?.ok !== true) return;
+        const m = list.memories.find((x) => sameMemory(x.path, want));
+        if (!m) return;
+        focusRef.current = null;
+        setOpen({path: m.path, name: m.file, badge: {label: "기억", cls: "instrBadgeMemory"}, memory: m});
+    }, [list, focusSeq, view, open]);
 
     // 왼쪽 가장자리를 끌어 너비 조절 — 작업 파일 패널과 같은 너비를 쓴다
     const startResize = (e: React.PointerEvent) => {

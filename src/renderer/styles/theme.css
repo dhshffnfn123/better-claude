@@ -87,6 +87,11 @@
 
   /* 지침 패널 "기억" 배지 글자(--c-ultra-bg 바탕 위). 머리줄의 --c-ultra는 밝은 패널에서 2:1로 흐려 따로 둔다 — 5.8:1 */
   --c-memory-badge-text: #6a4a9c;
+
+  /* 기억 알림 카드("클로드는 이것을 기억할 것입니다", --c-elevated 위) — 아이콘·제목 글자와 아이콘 칸 바탕. 기억 배지와 같은 보라 계열.
+     제목 글자 대비: 라이트 6.8:1, 다크 5.5:1 */
+  --c-memory-toast-accent: #6a4a9c;
+  --c-memory-toast-icon-bg: rgba(167, 139, 216, 0.18);
   --c-on-accent: #fff;
   --c-changed-text: #7a5f12;
   --c-resize-hover: rgba(201, 168, 76, 0.35);
@@ -351,6 +356,8 @@
     --c-accent-ink: #1b1d18;
     --c-accent-soft-text: #dcbf6a;
     --c-memory-badge-text: #b79ae0;
+    --c-memory-toast-accent: #c2a6ea;
+    --c-memory-toast-icon-bg: rgba(183, 154, 224, 0.2);
     --c-on-accent: #1b1d18;
     --c-changed-text: #e2c46c;
     --c-user-bubble-bg: #6e5c27;

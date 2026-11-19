@@ -102,7 +102,7 @@ interface ChatTab {
     // 작업 파일 패널: Claude가 이 대화에서 고친 파일
     changedFiles: Map<string, ChangedFileInfo>;
     // 결과가 오기 전의 수정 시도 (tool_use id → 내용). 성공 결과가 오면 changedFiles에 반영한다.
-    pendingEdits: Map<string, {path: string; hunks: Omit<FileHunk, "at">[]}>;
+    pendingEdits: Map<string, PendingEdit>;
     fileTurn: number;
     // 비울 때마다 올린다 — 세션 기록을 읽는 동안 다른 대화로 옮겼으면 그 결과를 버리기 위해
     changedFilesGen: number;
@@ -354,6 +354,32 @@ function noteInstructionEdit(p: string) {
     // 기억 파일 하나는 대화 시작 때 읽는 파일이 아니다 — CLI를 다시 띄워 셀 필요 없이 목록만 새로 (목록 MEMORY.md는 다시 센다)
     if (instr.isMemoryTopicFile(p)) notifyInstructions();
     else invalidateInstructions();
+}
+
+// ── 기억 알림 ("클로드는 이것을 기억할 것입니다") ──
+// Claude가 자동 메모리에 기억 하나를 저장했다(Write·Edit·MultiEdit 성공) → chat:memory_saved로 그 탭에 알린다.
+// 실시간 수정만 온다(trackFileEdits의 onEdited — 저장된 대화를 열 때 다시 계산하는 것은 부르지 않는다). 서브에이전트가 쓴 것도.
+// 기억 파일 하나만 — 목록 MEMORY.md만 고친 건 알리지 않는다(기억 하나를 쓰면 Claude가 목록 줄도 고친다).
+// 무엇을 기억했는지 = frontmatter의 description(없으면 name — 화면이 파일 이름까지 대신 쓴다): Write면 쓴 내용, Edit면 고친 뒤의 파일.
+// 켜고 끄기는 렌더러(설정 → 기억 알림)가 정한다 — main은 늘 보낸다.
+async function noteMemorySaved(tab: ChatTab, p: string, done: EditDone) {
+    if (!instr.isMemoryTopicFile(p) || done.staged) return;
+    let text = done.tool === "Write" ? done.content : undefined;
+    if (text === undefined) {
+        try {
+            text = (await fs.promises.readFile(p, "utf8")).slice(0, 64 * 1024);
+        } catch {
+            text = "";
+        }
+    }
+    const {fields} = instr.parseFrontmatter(text);
+    send(tab, "chat:memory_saved", {
+        path: p,
+        name: fields.name || undefined,
+        description: fields.description || undefined,
+        // 있던 기억을 고쳤다 — Edit·MultiEdit, 또는 이미 있던 파일 위에 Write(결과가 "update")
+        updated: done.tool !== "Write" || done.created === false,
+    });
 }
 
 interface AppSlashCommand {
@@ -1165,35 +1191,75 @@ function toCwdPath(cwd: string, abs: string): string {
     return abs;
 }
 
-function editOf(tab: ChatTab, name: string, input: unknown): {path: string; hunks: Omit<FileHunk, "at">[]} | null {
+// 결과를 기다리는 수정 (ChatTab.pendingEdits)
+interface PendingEdit {
+    path: string;
+    tool: string;
+    hunks: Omit<FileHunk, "at">[];
+}
+
+function editOf(tab: ChatTab, name: string, input: unknown): PendingEdit | null {
     if (!EDIT_TOOLS.has(name) || !input || typeof input !== "object") return null;
     const o = input as Record<string, unknown>;
     const p = typeof o.file_path === "string" ? o.file_path : typeof o.notebook_path === "string" ? o.notebook_path : "";
     if (!p) return null;
     const abs = toCwdPath(tab.cwd, path.resolve(tab.cwd, p));
-    if (name === "Edit") return {path: abs, hunks: [{tool: name, oldText: clipText(o.old_string), newText: clipText(o.new_string)}]};
-    if (name === "Write") return {path: abs, hunks: [{tool: name, oldText: "", newText: clipText(o.content)}]};
+    if (name === "Edit") {
+        return {path: abs, tool: name, hunks: [{tool: name, oldText: clipText(o.old_string), newText: clipText(o.new_string)}]};
+    }
+    if (name === "Write") return {path: abs, tool: name, hunks: [{tool: name, oldText: "", newText: clipText(o.content)}]};
     if (name === "MultiEdit") {
         const edits = Array.isArray(o.edits) ? (o.edits as Record<string, unknown>[]) : [];
-        return {path: abs, hunks: edits.map((e) => ({tool: name, oldText: clipText(e?.old_string), newText: clipText(e?.new_string)}))};
+        return {
+            path: abs,
+            tool: name,
+            hunks: edits.map((e) => ({tool: name, oldText: clipText(e?.old_string), newText: clipText(e?.new_string)})),
+        };
     }
-    return {path: abs, hunks: [{tool: name, oldText: "", newText: clipText(o.new_source)}]};
+    return {path: abs, tool: name, hunks: [{tool: name, oldText: "", newText: clipText(o.new_source)}]};
+}
+
+// 끝난 수정 하나 (onEdited에 넘긴다) — 도구 이름, Write면 쓴 내용(앞 200K), Write가 새 파일을 만들었는지(모르면 undefined),
+// 검토 대기로 실제로는 쓰지 않았는지(staged)
+interface EditDone {
+    tool: string;
+    content?: string;
+    created?: boolean;
+    staged: boolean;
+}
+
+// Write·Edit 결과의 구조화된 내용(SDK user 메시지의 tool_use_result — FileWriteOutput {type: "create" | "update", filePath,
+// staged?}). 그 메시지의 결과가 이것 하나일 때만 믿는다. 없으면 결과 글: 새 파일이면 "File created successfully at: …".
+function editOutcome(msg: unknown, b: {content?: unknown}, results: number, filePath: string): {created?: boolean; staged: boolean} {
+    const out = results === 1 ? (msg as {tool_use_result?: unknown}).tool_use_result : undefined;
+    if (out && typeof out === "object") {
+        const o = out as {type?: unknown; filePath?: unknown; staged?: unknown};
+        if (typeof o.filePath !== "string" || path.basename(o.filePath) === path.basename(filePath)) {
+            const created = o.type === "create" ? true : o.type === "update" ? false : undefined;
+            return {created, staged: o.staged === true};
+        }
+    }
+    const text = contentText(b.content).trimStart();
+    return {created: text.startsWith("File created") ? true : text.startsWith("The file ") ? false : undefined, staged: false};
 }
 
 // 메시지에서 파일 수정을 찾는다: 도구 호출을 기억해 두었다가 결과가 성공이면 반영. 바뀌었으면 true.
 // 세션 기록(SessionMessage)도 같은 모양(type/message/parent_tool_use_id)이라 그대로 넣어도 된다.
 // at: 수정 시각. 실시간이면 지금, 세션 기록에서 다시 계산할 때는 그 항목의 시각(entryTime).
-// onEdited: 성공한 수정마다 그 경로로 부른다(실시간만 — 지침 파일을 고쳤으면 지침 패널을 새로 계산하려고).
+// onEdited: 성공한 수정마다 그 경로로 부른다(실시간만 — 지침 파일을 고쳤으면 지침 패널을 새로 계산하려고, 기억이면 알림).
 function trackFileEdits(
     tab: ChatTab,
     msg: {type: string; message?: unknown},
     at = Date.now(),
-    onEdited?: (path: string) => void
+    onEdited?: (path: string, done: EditDone) => void
 ): boolean {
     const content = (msg.message as {content?: unknown} | undefined)?.content;
     if (!Array.isArray(content)) return false;
+    type Block = {type?: string; id?: string; name?: string; input?: unknown; tool_use_id?: string; is_error?: boolean; content?: unknown};
+    const blocks = content as Block[];
+    const results = blocks.filter((b) => b?.type === "tool_result").length;
     let changed = false;
-    for (const b of content as {type?: string; id?: string; name?: string; input?: unknown; tool_use_id?: string; is_error?: boolean}[]) {
+    for (const b of blocks) {
         if (msg.type === "assistant" && b.type === "tool_use" && b.id && b.name) {
             const e = editOf(tab, b.name, b.input);
             if (e) tab.pendingEdits.set(b.id, e);
@@ -1212,7 +1278,10 @@ function trackFileEdits(
             f.hunks = [...f.hunks, ...p.hunks.map((h) => ({...h, at}))].slice(-MAX_HUNKS_PER_FILE);
             tab.changedFiles.set(p.path, f);
             changed = true;
-            onEdited?.(p.path);
+            if (onEdited) {
+                const written = p.tool === "Write" ? p.hunks[0]?.newText : undefined;
+                onEdited(p.path, {tool: p.tool, content: written, ...editOutcome(msg, b, results, p.path)});
+            }
         }
     }
     return changed;
@@ -2190,8 +2259,12 @@ async function pump(s: LiveSession, claudePath: string) {
 
             // 백그라운드 작업 상세용 재료(셸 명령, 출력 파일, 에이전트 도구) — 서브에이전트 메시지를 버리기 전에 모은다
             if (recordTaskArtifacts(s, msg) && s.bgMembers.size > 0) sendBackground(s);
-            // 작업 파일 패널: Claude(서브에이전트 포함)가 고친 파일
-            if (trackFileEdits(s.tab, msg, Date.now(), noteInstructionEdit)) sendChangedFiles(s.tab);
+            // 작업 파일 패널: Claude(서브에이전트 포함)가 고친 파일. 지침·기억 파일이면 지침 패널을 새로, 기억이면 알림도.
+            const edited = trackFileEdits(s.tab, msg, Date.now(), (p, done) => {
+                noteInstructionEdit(p);
+                void noteMemorySaved(s.tab, p, done);
+            });
+            if (edited) sendChangedFiles(s.tab);
 
             // 백그라운드 작업이 끝났다 — 결과를 남긴다 (목록에서 빠지는 건 뒤따르는 background_tasks_changed)
             if (msg.type === "system" && msg.subtype === "task_notification") {

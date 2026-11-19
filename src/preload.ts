@@ -26,6 +26,7 @@ const TAB_EVENTS = {
     replyUuid: "chat:reply_uuid",
     suggestion: "chat:suggestion",
     instructions: "chat:instructions",
+    memorySaved: "chat:memory_saved",
 } as const;
 
 contextBridge.exposeInMainWorld("electronAPI", {

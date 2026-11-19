@@ -3,7 +3,9 @@ import classNames from "classnames/bind";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 import {faXmark} from "@fortawesome/free-solid-svg-icons";
 import styles from "./chat.page.module.scss";
+import {Switch} from "./NotificationSettings";
 import {type JumpMode, useJumpMode} from "../../jump-setting";
+import {useMemoryToastEnabled} from "../../memory-toast-setting";
 
 const cx = classNames.bind(styles);
 
@@ -25,6 +27,7 @@ const JUMP_CHOICES: {value: JumpMode; title: string; desc: string}[] = [
 
 export function SettingsDialog({onClose}: {onClose: () => void}) {
     const [jump, setJump] = useJumpMode();
+    const [memoryToast, setMemoryToast] = useMemoryToastEnabled();
 
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
@@ -71,6 +74,13 @@ export function SettingsDialog({onClose}: {onClose: () => void}) {
                                     </span>
                                 </button>
                             ))}
+                        </div>
+                        <div className={cx("settingsSwitchRow")}>
+                            <div className={cx("settingsSwitchText")}>
+                                <div className={cx("settingsLabel")}>기억 알림</div>
+                                <p className={cx("settingsHint")}>Claude가 무언가를 기억해 두면 창 가운데에 그 내용을 잠깐 띄웁니다.</p>
+                            </div>
+                            <Switch checked={memoryToast} onChange={setMemoryToast} label="기억 알림" />
                         </div>
                     </section>
                     <p className={cx("settingsNote")}>바꾸면 모든 탭에 바로 적용되고, 앱을 다시 켜도 그대로입니다.</p>

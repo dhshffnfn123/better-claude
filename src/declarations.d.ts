@@ -453,6 +453,14 @@ interface ChatNoticeData {
     detail?: string;
 }
 
+// Claude가 자동 메모리(기억)에 기억 하나를 저장했다 (Write·Edit 성공, 실시간만) — 기억 알림
+interface MemorySavedEvent {
+    path: string; // 기억 파일 (…/projects/<저장소>/memory/<이름>.md)
+    name?: string; // frontmatter name
+    description?: string; // frontmatter description — 무엇을 기억했는지
+    updated: boolean; // 있던 기억을 고쳤다 (Edit, 또는 있던 파일 위에 Write)
+}
+
 // main이 탭마다 보내는 이벤트와 그 내용 (preload의 TAB_EVENTS와 같은 이름)
 interface TabEventMap {
     chunk: string;
@@ -478,6 +486,7 @@ interface TabEventMap {
     replyUuid: {uuid: string}; // 지금 답변의 마지막 기록 항목 (답변·도구 결과마다 갱신)
     suggestion: {text: string}; // 답변이 끝난 뒤 CLI가 짐작한 다음 요청 하나 (prompt_suggestion)
     instructions: Record<string, never>; // 지침·기억 파일이 바뀌었다 (앱에서 저장, Claude가 고침) — 다시 읽을 것
+    memorySaved: MemorySavedEvent; // Claude가 기억 하나를 저장했다 — "클로드는 이것을 기억할 것입니다" 알림
 }
 
 type TabEventName = keyof TabEventMap;
