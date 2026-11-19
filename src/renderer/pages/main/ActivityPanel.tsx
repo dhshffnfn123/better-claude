@@ -2,6 +2,7 @@ import {memo, useContext, useMemo, useState} from "react";
 import classNames from "classnames/bind";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 import {
+    faBook,
     faCheck,
     faChevronDown,
     faChevronRight,
@@ -9,13 +10,16 @@ import {
     faTriangleExclamation,
 } from "@fortawesome/free-solid-svg-icons";
 import styles from "./chat.page.module.scss";
+import skillStyles from "./SkillRef.module.scss";
 import type {Compacting, RunningTokens, ToolActivity} from "../../hooks/useClaudeChat";
 import {isAnswered, QUESTION_TOOL, questionsOf} from "../../question-answers";
 import {BackgroundLinksContext} from "../../tab-context";
 import {launchedInBackground} from "./background-tasks";
 import {BackgroundBadge} from "./BackgroundDock";
+import {openExtensions} from "../../extensions-open";
 
 const cx = classNames.bind(styles);
+const sk = classNames.bind(skillStyles);
 
 interface Props {
     isThinking: boolean;
@@ -189,6 +193,16 @@ export function isAgentTool(name: string): boolean {
     return name === "Agent" || name === "Task";
 }
 
+// Claude가 스킬을 꺼내 썼다 — Skill 도구, 입력 {skill: "이름", args?: "…"} (기록에서 확인). 결과는 "Launching skill: 이름"이고
+// 스킬 본문은 그 뒤 메타 메시지로 들어간다. 줄을 누르면 확장 창의 스킬 탭에서 그 스킬을 연다.
+export function skillCallOf(tool: {name: string; input: unknown}): {name: string; args?: string} | null {
+    if (tool.name !== "Skill") return null;
+    const i = (tool.input ?? {}) as {skill?: unknown; args?: unknown};
+    if (typeof i.skill !== "string" || !i.skill.trim()) return null;
+    const args = typeof i.args === "string" ? i.args.replace(/\s+/g, " ").trim() : "";
+    return {name: i.skill.trim().replace(/^\//, ""), args: args || undefined};
+}
+
 // 에이전트 줄: "Explore · .ts 파일 정리" — 종류와 맡긴 일의 짧은 설명
 function agentLabel(input: unknown): string {
     const i = (input ?? {}) as {subagent_type?: unknown; description?: unknown};
@@ -200,6 +214,8 @@ export function ToolRow({tool, defaultExpanded = false, onOpen}: {tool: ToolActi
     const [expanded, setExpanded] = useState(defaultExpanded);
     const expandable = DIFF_TOOLS.has(tool.name) && extractEditPairs(tool.name, tool.input).length > 0;
     const isAgent = isAgentTool(tool.name);
+    const skill = skillCallOf(tool);
+    const open = onOpen ?? (skill ? () => openExtensions("skills", skill.name) : undefined);
     // Claude의 질문: JSON 대신 질문 내용을, 답했으면(결과가 deny로 와도) 완료로 보여 준다
     const isQuestion = tool.name === QUESTION_TOOL;
     const status = isQuestion && isAnswered(tool.resultPreview) ? "done" : tool.status;
@@ -213,7 +229,9 @@ export function ToolRow({tool, defaultExpanded = false, onOpen}: {tool: ToolActi
               .join(" · ")
         : isAgent
           ? agentLabel(tool.input)
-          : rawToolInput(tool.input);
+          : skill
+            ? [skill.name, skill.args].filter(Boolean).join(" · ")
+            : rawToolInput(tool.input);
     const bgRunning = bgLaunched && !!bgLink?.running;
     const icon =
         status === "running" || bgRunning
@@ -229,9 +247,9 @@ export function ToolRow({tool, defaultExpanded = false, onOpen}: {tool: ToolActi
                     toolRowBgFailed: bgLaunched && bgLink?.status === "failed",
                     toolRowExpandable: expandable,
                     toolRowSub: !!tool.parentToolUseId,
-                    toolRowOpenable: !expandable && !!onOpen,
+                    toolRowOpenable: !expandable && !!open,
                 })}
-                onClick={expandable ? () => setExpanded((v) => !v) : onOpen}
+                onClick={expandable ? () => setExpanded((v) => !v) : open}
             >
                 {expandable ? (
                     <FontAwesomeIcon
@@ -246,14 +264,24 @@ export function ToolRow({tool, defaultExpanded = false, onOpen}: {tool: ToolActi
                     spin={status === "running" || bgRunning}
                     className={cx("toolIcon")}
                 />
-                <span className={cx("toolName")}>{isQuestion ? "질문" : isAgent ? "에이전트" : tool.name}</span>
+                <span className={cx("toolName")}>
+                    {skill && <FontAwesomeIcon icon={faBook} className={sk("skillToolIcon")} />}
+                    {isQuestion ? "질문" : isAgent ? "에이전트" : skill ? "스킬" : tool.name}
+                </span>
                 <span className={cx("toolInput")} title={rawInput || undefined}>
-                    {middleTruncate(rawInput)}
+                    {skill ? (
+                        <>
+                            <span className={sk("skillToolName")}>{skill.name}</span>
+                            {skill.args && <span className={sk("skillToolArgs")}>{middleTruncate(skill.args, 70)}</span>}
+                        </>
+                    ) : (
+                        middleTruncate(rawInput)
+                    )}
                 </span>
                 {bgLaunched && <BackgroundBadge link={bgLink} onOpen={bgLinks?.open} />}
-                {!expandable && onOpen && (
+                {!expandable && open && (
                     <span className={cx("toolOpenHint")}>
-                        한 일 보기 <FontAwesomeIcon icon={faChevronRight} />
+                        {skill ? "보기" : "한 일 보기"} <FontAwesomeIcon icon={faChevronRight} />
                     </span>
                 )}
             </div>

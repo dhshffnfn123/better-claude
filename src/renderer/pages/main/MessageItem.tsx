@@ -33,6 +33,7 @@ import {fileBase, iconForFile, iconVars, isImeComposing} from "./ChatInput";
 import {Collapsible} from "./Collapsible";
 import {MiddleName} from "./MiddleName";
 import {type AttachmentParts, parseAttachments, tildePath} from "../../attachments";
+import {SkillChip} from "./SkillRef";
 
 const cx = classNames.bind(styles);
 
@@ -772,7 +773,11 @@ function MessageItemBase({
                             </div>
                         </div>
                     ) : (
-                        <UserContent content={msg.content} />
+                        <>
+                            {/* /스킬이름으로 부른 메시지 — 그 스킬을 확장 창에서 보는 표시 (글은 그대로) */}
+                            <SkillChip content={msg.content} />
+                            <UserContent content={msg.content} />
+                        </>
                     )
                 ) : msg.segments && msg.segments.length > 0 ? (
                     // 어시스턴트: 텍스트 말풍선과 도구를 발생 순서대로 분리 렌더

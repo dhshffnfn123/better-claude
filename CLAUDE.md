@@ -1133,6 +1133,25 @@ Measured with CLI 2.1.325 / SDK 0.3.319:
 - `focus` (`openExtensions("skills", name)`) selects and scrolls to the row; it waits for the first fresh list (the cached one
   may predate the skill) and then says "찾지 못했습니다" if the folder has no such skill.
 
+**Skills in replies** (`ToolRow` in `ActivityPanel.tsx`, `SkillRef.tsx`, `src/renderer/skill-names.ts`):
+
+- **What the transcript holds** (measured, CLI 2.1.325): Claude's call = tool_use `Skill` with input `{skill: "name", args?}`
+  (plugin skills `plugin:skill`), result text `Launching skill: name`, then a user entry with `isMeta: true` and
+  `sourceToolUseID` whose text starts "Base directory for this skill: …" (the skill body). A skill I type (`/name args`) is the
+  entry `<command-message>name</command-message><command-name>/name</command-name><command-args>args</command-args>` (shown as
+  "/name args" by `describeCommandEntry`) followed by the same kind of `isMeta` body entry. `getSessionMessages` does not return
+  the `isMeta` entries, so reopened conversations show no stray body bubble (verified).
+- **Tool row**: `skillCallOf` → "📖 스킬 · name · args" (args collapsed to one line, middle-truncated), the whole row opens
+  `openExtensions("skills", name)` with a "보기 ›" hint (agent rows keep "한 일 보기"). The activity panel, the reply and the agent
+  panel all draw `ToolRow`, live and reopened alike.
+- **Chip on my message** (`SkillChip`, above the bubble like attachment cards): the message starts with `/name` and `name` is one
+  of the tab's custom commands — `skill-names.ts` keeps one subscription per tab to the "/" menu's list (`commands:list` +
+  `chat:commands`; built-ins and MCP prompts `mcp__…` excluded), dropped 30 s after the last chip unmounts. The `subscribe` given
+  to `useSyncExternalStore` must be stable (`useCallback`): a new function each render made React resubscribe, the store dropped
+  and re-fetched the list on every render and the renderer locked up (happened in testing). The text sent is unchanged.
+- Verified in the dev app with a real Haiku turn (`/start-banana` → Claude calls `Skill({skill: "banana-word"})`): chip at
+  send time, activity-panel row during the turn, reply row, both again after an app restart; 보기 on each opens that skill.
+
 **대화 시작 비용 tab** (`CostTab.tsx`, main `extensions:start_cost`): how many tokens a fresh conversation in this folder uses
 before anything is said, and from what. It is the 지침 panel's measurement (`measureInstructions`, same cache key cwd + model +
 system prompts), which now keeps the whole `getContextUsage({detail: "full"})` answer: `categories` (`id`/`kind` — classify
