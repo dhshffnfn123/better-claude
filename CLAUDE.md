@@ -186,7 +186,7 @@ Things that are load-bearing:
   except a stopped session: "모두 중지" then the panel's 지우기 re-sent the dying task as running until the process
   exited, so `sendBackground` sends no running tasks for a `stopped` session. A card opens **the panel**
   (`BackgroundPanel` in `BackgroundTasksPanel.tsx`, the files panel's slot, state `bgView` in the shell — agent >
-  background > preview > instructions > files): task list (agent-launched ones nested under their agent, finished
+  background > 화면 대조 > preview > instructions > files): task list (agent-launched ones nested under their agent, finished
   ones below with 지우기) + the selected task's detail — a big log (60 KB tail, re-read every 1.5 s while running)
   that follows new output unless scrolled up ("맨 아래로"), 로그 복사, 이 작업 중지; agents show activity, recent tools,
   received prompt, 한 일 전체 보기. **Launch rows** (`ToolRow` + `BackgroundBadge`, via `BackgroundLinksContext` from
@@ -862,7 +862,7 @@ Open/width/"바뀐 파일만" live in `localStorage` (`filesPanel.*`). Under 760
 ### Instructions panel (`InstructionsPanel.tsx`, "지침 N" in the cwd bar)
 
 지침 = files Claude reads in every conversation (CLAUDE.md …, written by people); 기억 = auto memory Claude
-writes itself. Two tabs in one panel, in the files panel's slot (agent > background > preview > this > files; opening
+writes itself. Two tabs in one panel, in the files panel's slot (agent > background > 화면 대조 > preview > this > files; opening
 it closes the others, the files toggle closes it). The cwd-bar chip shows the instruction tokens.
 
 - **Which files: ask the CLI.** An idle query in the tab's cwd/model with the chat's system prompt →
@@ -949,8 +949,8 @@ HTML/SVG in replies is shown drawn, like Claude.ai's artifacts. Code blocks whos
 (or `xml` / none starting with `<svg`, or none starting with `<!doctype html`/`<html`) get **미리보기 | 코드** tabs:
 code while the reply streams (`ReplyLiveContext` from `MessageItem` — the block may be unfinished), preview once it
 is done, unless the user picked a tab. A `.html` file written by Write/Edit/MultiEdit gets a card under its tool row
-(`HtmlFileCard`). "크게 보기" / the card open `PreviewPanel` in the files panel's slot (agent > background > preview >
-instructions > files; `PreviewOpenContext` from `ChatTabView`, state `previewView` in the shell). JSX/React components are not
+(`HtmlFileCard`). "크게 보기" / the card open `PreviewPanel` in the files panel's slot (agent > background > 화면 대조 >
+preview > instructions > files; `PreviewOpenContext` from `ChatTabView`, state `previewView` in the shell). JSX/React components are not
 previewed (they need a build).
 
 - **Isolation**: HTML is served from `bc-preview://<id>/` (scheme registered as privileged/standard before `ready`,
@@ -1049,6 +1049,38 @@ logged in, no seat) — everything below was verified with fake transcripts and 
   429 / rate limit / too many requests / quota; non-error result: only explicit phrases, so a variable named
   `rate-limit` does not trip it) sends a warning notice to that tab ("Figma 호출 한도에 걸렸습니다 — …", `source:
   "figma"`, hidden by the switch).
+
+- **화면 대조 — design ↔ implementation** (`ScreenComparePanel.tsx`, `src/renderer/screen-compare.ts`, main
+  `src/main/services/screen-capture.ts`, IPC `screen:capture`). A panel in the files panel's slot (agent > background >
+  compare > preview > instructions > files; opening any of them closes the others; shown only in its tab, state `compareView`
+  in the shell, closed when its tab closes or the Figma switch goes off). Opened from "구현과 비교" next to a Figma tool's
+  image in a reply (`CompareOpenContext`, `figmaDesignOf`), from "화면 찍기" next to a running shell task's dock card and in
+  that task's background-panel detail (`useTaskUrl`: the task's output through `terminalText` — Vite puts colour codes *inside*
+  the URL, and OSC 8 links wrap it twice — searched for loopback URLs, `0.0.0.0` → localhost, last one wins, polled every 3 s only until found — at most ~2 min,
+  a test watcher never prints one — and only in the visible tab). Design: the request's image, else the conversation's latest Figma image (`TabViewApi.listImages` →
+  `conversationImages`; names use the file name from a Figma link the user sent with the same node id, "Shop App · 노드
+  12:34"), "바꾸기" lists the conversation's images, an image file can be dropped or pasted onto the panel. Implementation:
+  URL (prefilled from a running dev server), viewport from the design's size — `designViewport` divides by 2 or 3 when only
+  that gives a common screen width (2880 → 1440), a design taller than 1400 px opens at 900 and turns on 전체 페이지 — and
+  the page's `prefers-color-scheme` from the design's average brightness (the app may be dark while the design is light).
+  Capture in main: loopback http(s) only (`localhost`, `127.0.0.1`, `[::1]`, `*.localhost`); a hidden `BrowserWindow`
+  (`show: false`, sandbox, contextIsolation, no preload, its own in-memory session `bc-screen-capture` that denies
+  permissions and downloads); main-frame requests, `will-navigate` and `will-redirect` off loopback are cancelled and
+  `window.open` denied (verified: a page that `window.open`s and sets `location.href` to example.com stayed put, one window);
+  self-signed certificates are accepted for loopback only; load → `document.fonts.ready` (≤ 4 s) → 700 ms settle → full page:
+  the window grows to the page's scrollHeight (≤ 12,000) → `capturePage(undefined, {stayHidden: true})` → PNG data URL;
+  the window is destroyed in `finally`; 20 s timeout. **`Emulation.setEmulatedMedia` through `webContents.debugger` hung
+  on a window with no document** (no reply, measured) — the window loads `about:blank` first; set once, the emulation
+  survives navigation. Verified: 720×450 capture in ~0.8 s, full page 600×2400, connection refused → Korean error. Views:
+  나란히 (both at the column width, scrolling together), 겹쳐 보기 (CSS grid stack, opacity slider), 차이 (top image
+  `mix-blend-mode: difference` over a black canvas `--c-diff-canvas` — identical pixels go black). "차이 고쳐 달라고 하기"
+  only fills the tab's input (`TabViewApi.fillInput` → `ChatInput`'s `onRegisterFill`): both images (shrunk to ≤ 1568 px on
+  the long side — the API's own limit, and big PNGs hit the 5 MB per-image limit; JPEG if still large) as attachments with a
+  name and a caption (`ImagePayload.caption` → shown as a card: "Figma 디자인.png · 1440 × 900", "구현 화면.png ·
+  localhost:5173") + the prompt "첫 번째 그림은 Figma 디자인, 두 번째는 지금 구현 화면입니다. 다른 부분을 찾아 디자인에 맞게
+  고쳐줘." + the page URL; never sends. Panel state (design, capture, size, mode) lives per tab in a module map so other
+  panels/tabs can be visited without losing the capture. All verified in the dev app against a static page served on a
+  random loopback port, with a simulated dev-server task (main's `background:output` handler swapped from the inspector).
 
 ### 사용 가이드 (`UserGuide.tsx`, content in `user-guide.ts`)
 

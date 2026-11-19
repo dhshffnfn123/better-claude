@@ -137,6 +137,19 @@ interface PermissionRequestData {
     input: unknown;
 }
 
+// 화면 대조 — 이 컴퓨터의 웹 페이지 찍기 (main/services/screen-capture.ts와 같은 모양)
+interface ScreenCaptureRequest {
+    url: string;
+    width: number; // 창(뷰포트) 크기, CSS 픽셀
+    height: number;
+    fullPage?: boolean; // 페이지 끝까지 (창 높이를 페이지 높이로 늘려 찍는다)
+    colorScheme?: "light" | "dark"; // 페이지가 보는 prefers-color-scheme
+}
+
+type ScreenCaptureResult =
+    | {ok: true; dataUrl: string; url: string; title: string; width: number; height: number; pixelWidth: number; pixelHeight: number; at: number}
+    | {ok: false; error: string};
+
 // Figma 읽기 호출 수 (main/services/figma-usage.ts) — 날짜별 횟수 + 최근 1분 안의 호출 시각
 interface FigmaUsage {
     days: Record<string, number>;
@@ -800,6 +813,7 @@ interface Window {
         getPathForFile: (file: File) => string;
         getRateLimits: () => Promise<RateLimitWindow[]>;
         onRateLimits: (callback: (limits: RateLimitWindow[]) => void) => () => void;
+        captureScreen: (req: ScreenCaptureRequest) => Promise<ScreenCaptureResult>;
         getFigmaUsage: () => Promise<FigmaUsage>;
         onFigmaUsage: (callback: (usage: FigmaUsage) => void) => () => void;
         copyText: (text: string) => Promise<boolean>;

@@ -1,4 +1,5 @@
 import {createContext} from "react";
+import type {CompareRequest} from "./screen-compare";
 
 // 지금 그리는 탭의 id — 답변 속 파일 경로를 그 탭의 작업 폴더 기준으로 IDE에서 열 때 쓴다 (ChatTabView가 넣는다)
 export const TabIdContext = createContext<string>("");
@@ -25,6 +26,9 @@ export interface PreviewRequest {
 }
 
 export const PreviewOpenContext = createContext<((req: PreviewRequest) => void) | null>(null);
+
+// 화면 대조 패널을 연다 (셸이 그린다 — ChatTabView가 넣는다). Figma 기능을 끄면 null — "구현과 비교" 버튼을 숨긴다.
+export const CompareOpenContext = createContext<((req: CompareRequest) => void) | null>(null);
 
 // 이 답변을 지금 받는 중인가 — 코드 블록이 아직 덜 쓰였을 수 있어 미리보기 대신 코드를 보인다 (MessageItem이 넣는다)
 export const ReplyLiveContext = createContext<boolean>(false);

@@ -1,7 +1,7 @@
 import {useEffect, useLayoutEffect, useMemo, useRef, useState} from "react";
 import classNames from "classnames/bind";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
-import {faArrowDown, faCheck, faCircleNotch, faCopy, faGears, faStop, faXmark} from "@fortawesome/free-solid-svg-icons";
+import {faArrowDown, faCheck, faCircleDot, faCircleNotch, faCopy, faGears, faStop, faXmark} from "@fortawesome/free-solid-svg-icons";
 import styles from "./chat.page.module.scss";
 import {middleTruncate} from "./ActivityPanel";
 import {copyText} from "../../clipboard";
@@ -26,6 +26,7 @@ import {ImageViewer} from "./Lightbox";
 import {TabIdContext} from "../../tab-context";
 import {terminalText} from "../../terminal-text";
 import {toolShortName, useMcpDisplayVersion} from "../../mcp-tool-display";
+import {useTaskUrl} from "../../screen-compare";
 
 const cx = classNames.bind(styles);
 
@@ -47,6 +48,7 @@ interface Props {
     onStopAll: () => void;
     onClearFinished: () => void;
     onOpenAgent?: (ref: AgentRef) => void; // 에이전트 작업 → "에이전트가 한 일" 패널 (작업 id = 에이전트 id)
+    onCaptureScreen?: (url: string) => void; // dev 서버 화면 찍기 → 화면 대조 (Figma 기능을 끄면 없음)
     width: number;
     onResize: (width: number) => void;
     onClose: () => void;
@@ -62,6 +64,7 @@ export function BackgroundPanel({
     onStopAll,
     onClearFinished,
     onOpenAgent,
+    onCaptureScreen,
     width,
     onResize,
     onClose,
@@ -201,6 +204,7 @@ export function BackgroundPanel({
                             now={now}
                             onStop={() => onStopTask(selected.id)}
                             onOpenAgent={onOpenAgent}
+                            onCaptureScreen={onCaptureScreen}
                         />
                     )}
                 </>
@@ -216,14 +220,18 @@ function TaskDetail({
     now,
     onStop,
     onOpenAgent,
+    onCaptureScreen,
 }: {
     tabId: string;
     task: AnyTask;
     now: number;
     onStop: () => void;
     onOpenAgent?: (ref: AgentRef) => void;
+    onCaptureScreen?: (url: string) => void;
 }) {
     const kind = kindOf(task);
+    // 실행 중인 셸 작업(dev 서버)의 출력에 나온 이 컴퓨터 주소 — [화면 찍기]
+    const url = useTaskUrl(tabId, task.running && onCaptureScreen ? task : null, true);
     // strict가 꺼져 있어 task.running으로는 좁혀지지 않는다 — 나눠 둔다
     const run = task.running ? (task as BackgroundTask) : null;
     const fin = task.running ? null : (task as FinishedTask);
@@ -248,6 +256,11 @@ function TaskDetail({
             </div>
             <div className={cx("bgpDetailTitle")}>{task.description}</div>
             {task.command && <code className={cx("bgpCommand")}>{task.command}</code>}
+            {url && onCaptureScreen && (
+                <button className={cx("bgCapture", "bgpCapture")} onClick={() => onCaptureScreen(url)} title="이 화면을 찍어 디자인과 맞대 봅니다">
+                    <FontAwesomeIcon icon={faCircleDot} /> 화면 찍기 · {url}
+                </button>
+            )}
             {fin?.terminated && <div className={cx("bgpActivity")}>{terminatedNote(fin)}</div>}
             {activity && <div className={cx("bgpActivity")}>{activity}</div>}
             {(task.toolUses != null || taskTokens(task) != null) && (

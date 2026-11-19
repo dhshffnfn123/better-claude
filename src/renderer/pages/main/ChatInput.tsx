@@ -198,6 +198,8 @@ interface Props {
     onRegisterAddFiles?: (add: ((files: File[]) => void) | null) => void;
     // 작업 파일 패널에서 끌어 온 파일을 @로 넣는다 (ChatTabView가 받는다)
     onRegisterAddMention?: (add: ((path: string) => void) | null) => void;
+    // 글과 그림을 입력창에 넣는 함수를 넘긴다 — 화면 대조의 "차이 고쳐 달라고 하기" (보내지는 않는다)
+    onRegisterFill?: (fill: ((text: string, images: ImagePayload[]) => void) | null) => void;
     // 답변이 끝난 뒤 CLI가 짐작한 다음 요청 — 입력창이 비어 있으면 흐리게 보이고 Tab으로 채운다
     suggestion?: string | null;
     onSuggestionUsed?: () => void;
@@ -224,6 +226,7 @@ export function ChatInput({
     promptHooks,
     onRegisterAddFiles,
     onRegisterAddMention,
+    onRegisterFill,
     suggestion,
     onSuggestionUsed,
     top,
@@ -341,6 +344,14 @@ export function ChatInput({
             resizeFrameRef.current = null;
         });
     }, []);
+
+    // 바깥에서 넣은 글(화면 대조) — 그려진 뒤 높이를 맞춘다. 미리 재면 옛 글 높이라 두 줄째가 가려졌다.
+    const resizeAfterFillRef = useRef(false);
+    useEffect(() => {
+        if (!resizeAfterFillRef.current) return;
+        resizeAfterFillRef.current = false;
+        scheduleResize();
+    }, [input, scheduleResize]);
 
     const clearDraft = () => {
         setInput("");
@@ -639,6 +650,19 @@ export function ChatInput({
         return () => onRegisterAddMention(null);
     }, [onRegisterAddMention]);
 
+    // 바깥(화면 대조)에서 글·그림 넣기 — 쓰던 글이 있으면 그 뒤에 잇는다(아무것도 버리지 않는다)
+    useEffect(() => {
+        if (!onRegisterFill) return;
+        onRegisterFill((text, images) => {
+            setInput((cur) => (cur.trim() ? `${cur.trimEnd()}\n\n${text}` : text));
+            if (images.length > 0) setSelectedImages((cur) => [...cur, ...images]);
+            // 높이는 바뀐 글이 그려진 뒤에 잰다 (아래 input 효과)
+            resizeAfterFillRef.current = true;
+            textareaRef.current?.focus();
+        });
+        return () => onRegisterFill(null);
+    }, [onRegisterFill, scheduleResize]);
+
     const removeImage = (index: number) => {
         setSelectedImages((prev) => prev.filter((_, i) => i !== index));
     };
@@ -740,24 +764,48 @@ export function ChatInput({
 
             {(selectedImages.length > 0 || selectedFiles.length > 0) && (
                 <div className={cx("imagePreviewStrip")} ref={attachStripRef}>
-                    {selectedImages.map((img, i) => (
-                        <div key={`img-${i}`} className={cx("imagePreviewItem")}>
-                            {/* 보내기 전에도 눌러서 크게 (첨부한 그림끼리 앞뒤로 넘긴다) */}
-                            <img
-                                src={img.previewUrl}
-                                className={cx("imagePreviewThumb")}
-                                alt=""
-                                draggable={false}
-                                data-zoomable=""
-                                data-zoom-name={img.name ?? "첨부한 그림"}
-                                onClick={(e) => openAttached(img.previewUrl, e.currentTarget)}
-                                data-tooltip="눌러서 크게 보기"
-                            />
-                            <button className={cx("imagePreviewRemove")} onClick={() => removeImage(i)}>
-                                <FontAwesomeIcon icon={faXmark} />
-                            </button>
-                        </div>
-                    ))}
+                    {selectedImages.map((img, i) =>
+                        img.caption ? (
+                            // 이름·설명이 붙은 그림(화면 대조가 넣은 것) — 파일 카드처럼 작은 그림 + 이름 + 설명
+                            <div key={`img-${i}`} className={cx("filePreviewItem", "imagePreviewCard")} data-tooltip={img.name}>
+                                <img
+                                    src={img.previewUrl}
+                                    className={cx("imagePreviewCardThumb")}
+                                    alt=""
+                                    draggable={false}
+                                    data-zoomable=""
+                                    data-zoom-name={img.name ?? "첨부한 그림"}
+                                    onClick={(e) => openAttached(img.previewUrl, e.currentTarget)}
+                                />
+                                <span className={cx("attachCardText")}>
+                                    <span className={cx("attachCardName")}>
+                                        <MiddleName name={img.name ?? "그림"} />
+                                    </span>
+                                    <span className={cx("attachCardSub")}>{img.caption}</span>
+                                </span>
+                                <button className={cx("imagePreviewRemove")} onClick={() => removeImage(i)} aria-label="첨부 빼기">
+                                    <FontAwesomeIcon icon={faXmark} />
+                                </button>
+                            </div>
+                        ) : (
+                            <div key={`img-${i}`} className={cx("imagePreviewItem")}>
+                                {/* 보내기 전에도 눌러서 크게 (첨부한 그림끼리 앞뒤로 넘긴다) */}
+                                <img
+                                    src={img.previewUrl}
+                                    className={cx("imagePreviewThumb")}
+                                    alt=""
+                                    draggable={false}
+                                    data-zoomable=""
+                                    data-zoom-name={img.name ?? "첨부한 그림"}
+                                    onClick={(e) => openAttached(img.previewUrl, e.currentTarget)}
+                                    data-tooltip="눌러서 크게 보기"
+                                />
+                                <button className={cx("imagePreviewRemove")} onClick={() => removeImage(i)}>
+                                    <FontAwesomeIcon icon={faXmark} />
+                                </button>
+                            </div>
+                        )
+                    )}
                     {/* 첨부 파일 — 보낸 메시지의 파일 카드와 같은 모양 (종류별 색 아이콘 + 이름 + 폴더) */}
                     {selectedFiles.map((f, i) => {
                         const fi = iconForFile(f.name);

@@ -16,6 +16,7 @@ import {explainMcpLoginError, isOpenableAuthUrl, TERMINAL_LOGIN_HINT} from "./ma
 import type {McpAuthMethods, McpAuthReply, McpLoginError} from "./main/services/mcp-login";
 import {figmaLinksIn, figmaToolInfo} from "./shared/figma";
 import {figmaUsage, observeFigmaMessage} from "./main/services/figma-usage";
+import {captureScreen, type ScreenCaptureRequest} from "./main/services/screen-capture";
 import type {GitChange, GitStatusResult} from "./main/services/git-changes";
 import * as skills from "./main/services/skills";
 import * as hooks from "./main/services/hooks";
@@ -4006,6 +4007,8 @@ ipcMain.handle("models:list", () => loadModels());
 ipcMain.handle("chat:get_rate_limits", () => rateLimitList());
 // Figma 읽기 호출 수 (MCP 창의 figma 줄) — 바뀌면 figma:usage로 다시 온다
 ipcMain.handle("figma:usage", () => figmaUsage());
+// 화면 대조 — 이 컴퓨터의 웹 페이지를 숨은 창에서 찍는다 (main/services/screen-capture.ts, 이 컴퓨터 주소만)
+ipcMain.handle("screen:capture", (_event, req: unknown) => captureScreen(req as ScreenCaptureRequest));
 
 // 이 사용자 메시지를 보내기 직전 상태로 Claude가 고친 파일을 되돌린다. 대화 내용은 그대로다.
 // 백업은 세션 기록에 남아 있어 프로세스가 끝난 뒤에도 되돌릴 수 있다(실측).

@@ -157,6 +157,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
         ipcRenderer.on("chat:rate_limits", handler);
         return () => ipcRenderer.removeListener("chat:rate_limits", handler);
     },
+    // 화면 대조: 이 컴퓨터의 웹 페이지(dev 서버)를 숨은 창에서 찍는다 — localhost·127.0.0.1만
+    captureScreen: (req: ScreenCaptureRequest) => ipcRenderer.invoke("screen:capture", req),
     // Figma 읽기 호출 수 (계정 한도라 앱 전체 하나) — MCP 창의 figma 줄
     getFigmaUsage: () => ipcRenderer.invoke("figma:usage"),
     onFigmaUsage: (callback: (usage: FigmaUsage) => void) => {

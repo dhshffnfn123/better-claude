@@ -23,6 +23,7 @@ import {
     type BackgroundLink,
     type BackgroundLinks,
     BackgroundLinksContext,
+    CompareOpenContext,
     FILE_DRAG_TYPE,
     ImageViewerContext,
     PreviewOpenContext,
@@ -35,6 +36,8 @@ import {useJumpMode} from "../../jump-setting";
 import {ActivityPanel, middleTruncate} from "./ActivityPanel";
 import {QuestionModal} from "./QuestionModal";
 import type {AppCommand, SlashResult} from "../../slash-commands";
+import {type CompareRequest, conversationImages, type DesignImage} from "../../screen-compare";
+import {useFigmaFeatures} from "../../figma-setting";
 
 const cx = classNames.bind(styles);
 
@@ -60,6 +63,9 @@ export interface TabViewApi {
     // ⌘F / ⌘G / ⇧⌘G (앱 메뉴)
     openFind: () => void;
     findStep: (dir: 1 | -1) => void;
+    // 화면 대조 패널(셸이 그린다): 이 대화의 그림 (최근 것부터), 입력창에 글·그림 넣기 (보내지 않는다)
+    listImages: () => DesignImage[];
+    fillInput: (text: string, images: ImagePayload[]) => boolean;
 }
 
 interface RewindState {
@@ -97,6 +103,8 @@ interface Props {
     onOpenPreview: (tabId: string, req: PreviewRequest) => void;
     // 슬래시 명령 중 앱이 하는 것 — 모델·effort·새 대화·패널 열기 (탭 바깥이 한다)
     onAppCommand: (tabId: string, cmd: AppCommand) => void;
+    // 화면 대조 패널 (디자인 ↔ 구현 화면) — 셸이 그린다. Figma 기능을 끄면 들어가는 버튼을 숨긴다.
+    onOpenCompare: (tabId: string, req: CompareRequest) => void;
 }
 
 // 탭 하나의 대화 화면: 메시지·알림·진행 패널·입력창, 그리고 이 탭의 모달(권한·질문·되돌리기·이미지)
@@ -118,6 +126,7 @@ function ChatTabViewBase({
     onOpenAgent,
     onOpenPreview,
     onAppCommand,
+    onOpenCompare,
 }: Props) {
     const {
         messages,
@@ -161,6 +170,14 @@ function ChatTabViewBase({
     const registerAddMention = useCallback((add: ((path: string) => void) | null) => {
         addMentionRef.current = add;
     }, []);
+    // 화면 대조의 "차이 고쳐 달라고 하기" → 입력창에 글·그림 (ChatInput이 넣는 함수를 등록한다)
+    const fillRef = useRef<((text: string, images: ImagePayload[]) => void) | null>(null);
+    const registerFill = useCallback((fill: ((text: string, images: ImagePayload[]) => void) | null) => {
+        fillRef.current = fill;
+    }, []);
+    // 화면 대조 패널이 이 대화의 그림을 고를 때 — 지금 메시지를 읽는다
+    const messagesRef = useRef(messages);
+    messagesRef.current = messages;
     // 글자·링크를 끄는 건 받지 않는다 — Finder의 파일(첨부)과 작업 파일 패널의 파일(@)만
     const isPanelFile = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes(FILE_DRAG_TYPE);
     const hasFiles = (e: React.DragEvent) => isPanelFile(e) || Array.from(e.dataTransfer.types).includes("Files");
@@ -280,7 +297,19 @@ function ChatTabViewBase({
 
     // 탭 바깥에서 쓰는 기능을 등록한다
     useEffect(() => {
-        registerApi(tabId, {setNotice, respondPermission, stop: stopGeneration, openFind, findStep});
+        registerApi(tabId, {
+            setNotice,
+            respondPermission,
+            stop: stopGeneration,
+            openFind,
+            findStep,
+            listImages: () => conversationImages(messagesRef.current),
+            fillInput: (text, images) => {
+                if (!fillRef.current) return false;
+                fillRef.current(text, images);
+                return true;
+            },
+        });
     }, [registerApi, tabId, setNotice, respondPermission, stopGeneration, openFind, findStep]);
     useEffect(() => () => registerApi(tabId, null), [registerApi, tabId]);
 
@@ -389,6 +418,16 @@ function ChatTabViewBase({
             else onAppCommand(tabId, r.command);
         },
         [onAppCommand, tabId, setNotice]
+    );
+    // 화면 대조 열기 — Figma 기능을 끄면 null (답변 속 "구현과 비교", 작업 줄의 [화면 찍기]가 사라진다)
+    const [figmaOn] = useFigmaFeatures();
+    const openCompare = useMemo(
+        () => (figmaOn ? (req: CompareRequest) => onOpenCompare(tabId, req) : null),
+        [figmaOn, onOpenCompare, tabId]
+    );
+    const captureFromTask = useMemo(
+        () => (openCompare ? (url: string) => openCompare({url, capture: true}) : undefined),
+        [openCompare]
     );
     const backgroundRunning = background.running.length;
     const openBackground = useCallback((taskId: string | null) => onOpenBackground(tabId, taskId), [onOpenBackground, tabId]);
@@ -504,6 +543,7 @@ function ChatTabViewBase({
                 <TabIdContext.Provider value={tabId}>
                 <ImageViewerContext.Provider value={openImage}>
                 <PreviewOpenContext.Provider value={openPreview}>
+                <CompareOpenContext.Provider value={openCompare}>
                     <div
                         className={cx("messageList")}
                         ref={messageListRef}
@@ -565,6 +605,7 @@ function ChatTabViewBase({
                             </div>
                         )}
                     </div>
+                </CompareOpenContext.Provider>
                 </PreviewOpenContext.Provider>
                 </ImageViewerContext.Provider>
                 </TabIdContext.Provider>
@@ -624,6 +665,7 @@ function ChatTabViewBase({
                 promptHooks={promptHooks}
                 onRegisterAddFiles={registerAddFiles}
                 onRegisterAddMention={registerAddMention}
+                onRegisterFill={registerFill}
                 suggestion={suggestion}
                 onSuggestionUsed={clearSuggestion}
                 onSlashCommand={handleSlashCommand}
@@ -636,6 +678,7 @@ function ChatTabViewBase({
                         panelTaskId={bgPanelTaskId}
                         onOpen={openBackground}
                         onClosePanel={onCloseBackground}
+                        onCapture={captureFromTask}
                     />
                 }
             />

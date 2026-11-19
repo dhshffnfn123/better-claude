@@ -13,6 +13,7 @@ import {
     faCopy,
     faDownLeftAndUpRightToCenter,
     faPen,
+    faRightLeft,
     faRotateLeft,
     faRotateRight,
 } from "@fortawesome/free-solid-svg-icons";
@@ -23,7 +24,7 @@ import {copyText} from "../../clipboard";
 import {highlightLanguage} from "../../highlight";
 import {editorHint, looksLikeFilePath, openFileRef, resolveFileRef} from "../../file-links";
 import {imageRefKey, imageRefsInText, isImagePath, resolveImageRefs} from "../../image-refs";
-import {ImageViewerContext, type OpenImage, ReplyLiveContext, TabIdContext} from "../../tab-context";
+import {CompareOpenContext, ImageViewerContext, type OpenImage, ReplyLiveContext, TabIdContext} from "../../tab-context";
 import {QUESTION_TOOL} from "../../question-answers";
 import {remarkHtmlAsText, remarkSoftBreaks} from "../../remark-prompt";
 import {isAgentTool, middleTruncate, ToolRow} from "./ActivityPanel";
@@ -35,6 +36,7 @@ import {MiddleName} from "./MiddleName";
 import {type AttachmentParts, parseAttachments, tildePath} from "../../attachments";
 import {SkillChip} from "./SkillRef";
 import {toolImageName, useMcpDisplayVersion} from "../../mcp-tool-display";
+import {type DesignImage, figmaDesignOf} from "../../screen-compare";
 
 const cx = classNames.bind(styles);
 
@@ -287,6 +289,7 @@ interface ReplyImage {
     name: string;
     path?: string; // 파일이면 — 썸네일이 줄인 그림일 때 누르면 원본을 다시 읽는다
     full: boolean;
+    compare?: DesignImage; // Figma 도구가 돌려준 그림 — 옆에 "구현과 비교" (화면 대조)
 }
 
 interface SegImages {
@@ -382,7 +385,14 @@ function useReplyImages(msg: Message, live: boolean): Map<number, SegImages> {
             if (seg.kind !== "tool") return;
             const fp = toolFilePath(seg.tool);
             (seg.tool.images ?? []).forEach((src, j) =>
-                add(i, {key: `result-${j}`, src, name: fp ? baseNameOf(fp) : toolImageName(seg.tool.name, seg.tool.input), path: fp, full: true})
+                add(i, {
+                    key: `result-${j}`,
+                    src,
+                    name: fp ? baseNameOf(fp) : toolImageName(seg.tool.name, seg.tool.input),
+                    path: fp,
+                    full: true,
+                    compare: figmaDesignOf(seg.tool, src),
+                })
             );
             if (seg.tool.imagesOmitted) add(i, null, seg.tool.imagesOmitted);
             fromRefs(i);
@@ -396,27 +406,39 @@ function useReplyImages(msg: Message, live: boolean): Map<number, SegImages> {
 
 function ImageStrip({images, omitted, indent, onOpen}: SegImages & {indent: boolean; onOpen?: OpenImage}) {
     const tabId = useContext(TabIdContext);
+    // 화면 대조 열기 — Figma 기능을 끄면 null
+    const openCompare = useContext(CompareOpenContext);
     const [all, setAll] = useState(false);
     const list = all ? images : images.slice(0, STRIP_MAX);
     return (
         <div className={cx("imageStrip", {imageStripIndent: indent})}>
             {list.map((im) => (
-                <button
-                    key={im.key}
-                    className={cx("imageThumb")}
-                    data-zoomable={onOpen ? "" : undefined}
-                    data-zoom-name={im.name}
-                    data-zoom-path={im.path}
-                    onClick={(e) => {
-                        const el = e.currentTarget;
-                        void fullImageSrc(tabId, im.src, im.path, im.full).then((u) => onOpen?.(u, el));
-                    }}
-                    data-tooltip={middleTruncate(im.path ?? im.name, 90)}
-                >
-                    {/* 끌어서 놓으면 탭의 파일 놓기로 첨부될 수 있어 막는다 */}
-                    <img className={cx("imageThumbImg")} src={im.src} alt="" draggable={false} />
-                    <span className={cx("imageThumbName")}>{middleTruncate(im.name, 30)}</span>
-                </button>
+                <Fragment key={im.key}>
+                    <button
+                        className={cx("imageThumb")}
+                        data-zoomable={onOpen ? "" : undefined}
+                        data-zoom-name={im.name}
+                        data-zoom-path={im.path}
+                        onClick={(e) => {
+                            const el = e.currentTarget;
+                            void fullImageSrc(tabId, im.src, im.path, im.full).then((u) => onOpen?.(u, el));
+                        }}
+                        data-tooltip={middleTruncate(im.path ?? im.name, 90)}
+                    >
+                        {/* 끌어서 놓으면 탭의 파일 놓기로 첨부될 수 있어 막는다 */}
+                        <img className={cx("imageThumbImg")} src={im.src} alt="" draggable={false} />
+                        <span className={cx("imageThumbName")}>{middleTruncate(im.name, 30)}</span>
+                    </button>
+                    {im.compare && openCompare && (
+                        <button
+                            className={cx("imageCompare")}
+                            onClick={() => im.compare && openCompare({design: im.compare})}
+                            title="이 디자인과 지금 구현 화면을 오른쪽 패널에서 맞대 봅니다"
+                        >
+                            <FontAwesomeIcon icon={faRightLeft} /> 구현과 비교
+                        </button>
+                    )}
+                </Fragment>
             ))}
             {!all && images.length > STRIP_MAX && (
                 <button className={cx("imageMore")} onClick={() => setAll(true)}>

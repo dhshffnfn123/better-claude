@@ -82,6 +82,10 @@
   --c-preview-light: #fff;
   --c-preview-dark: #1e1f1b;
 
+  /* 화면 대조의 "차이" — 같은 곳은 검게(difference 섞기의 바탕), 범례의 "다른 곳" 색. 테마와 상관없이 같다 */
+  --c-diff-canvas: #000;
+  --c-diff-bright: #b8d8ff;
+
   /* 연한 금색 바탕(--c-accent-soft) 위 글자 — 지침 패널의 배지·작업 폴더 줄의 "지침" 표시 */
   --c-accent-soft-text: #785e16;
 

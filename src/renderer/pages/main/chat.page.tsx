@@ -47,6 +47,9 @@ import {isImeComposing, type PromptHooks} from "./ChatInput";
 import {ChatTabView, type TabLoadRequest, type TabViewApi} from "./ChatTabView";
 import {TabStrip} from "./TabStrip";
 import {type AppCommand, pluginCommandTarget} from "../../slash-commands";
+import {ScreenComparePanel} from "./ScreenComparePanel";
+import {type CompareRequest, forgetCompareState} from "../../screen-compare";
+import {useFigmaFeatures} from "../../figma-setting";
 
 const cx = classNames.bind(styles);
 
@@ -316,8 +319,13 @@ const ChatPage = () => {
     const [instrNonce, setInstrNonce] = useState(0);
     // 기억 알림을 눌렀다 — 그 탭의 지침 패널이 기억 탭에서 이 기억을 연다 (패널이 받으면 지운다)
     const [instrFocus, setInstrFocus] = useState<{tabId: string; path: string} | null>(null);
-    // HTML·SVG 미리보기 크게 보기 — 연 탭에서만 보인다(같은 자리: 에이전트 > 백그라운드 > 미리보기 > 지침 > 작업 파일)
+    // HTML·SVG 미리보기 크게 보기 — 연 탭에서만 보인다(같은 자리: 에이전트 > 백그라운드 > 화면 대조 > 미리보기 > 지침 > 작업 파일)
     const [previewView, setPreviewView] = useState<{tabId: string; req: PreviewRequest} | null>(null);
+    // 화면 대조(디자인 ↔ 구현 화면) — 연 탭에서만 보인다. seq: 같은 요청을 다시 보내도 패널이 다시 적용하게
+    const [compareView, setCompareView] = useState<{tabId: string; req: CompareRequest; seq: number} | null>(null);
+    const compareSeqRef = useRef(0);
+    // Figma 기능을 끄면 화면 대조도 닫는다 (들어가는 버튼은 탭 화면이 숨긴다)
+    const [figmaOn] = useFigmaFeatures();
 
     // 콜백·IPC 핸들러에서 최신 값을 읽으려고
     const tabsRef = useRef(tabs);
@@ -611,6 +619,7 @@ const ChatPage = () => {
         }
         void window.electronAPI.closeTab(id);
         callbacksCache.current.delete(id);
+        forgetCompareState(id);
         const idx = list.findIndex((x) => x.id === id);
         const rest = list.filter((x) => x.id !== id);
         if (rest.length === 0) {
@@ -698,12 +707,14 @@ const ChatPage = () => {
         setInstrOpen(false);
         setPreviewView(null);
         setBgView(null);
+        setCompareView(null);
     }, []);
     const openPreview = useCallback((tabId: string, req: PreviewRequest) => {
         setPreviewView({tabId, req});
         setAgentView(null);
         setInstrOpen(false);
         setBgView(null);
+        setCompareView(null);
     }, []);
     // 입력창 위 작업 줄의 카드·답변 속 실행 줄 → 오른쪽 백그라운드 패널
     const openBackground = useCallback((tabId: string, taskId: string | null) => {
@@ -712,7 +723,21 @@ const ChatPage = () => {
         setAgentView(null);
         setInstrOpen(false);
         setPreviewView(null);
+        setCompareView(null);
     }, []);
+    // 화면 대조 열기 — 답변 속 Figma 그림의 "구현과 비교", 작업 줄·백그라운드 패널의 [화면 찍기]
+    const openCompare = useCallback((tabId: string, req: CompareRequest) => {
+        setCompareView({tabId, req, seq: ++compareSeqRef.current});
+        setAgentView(null);
+        setInstrOpen(false);
+        setPreviewView(null);
+        setBgView(null);
+    }, []);
+    const closeCompare = useCallback(() => setCompareView(null), []);
+    // 그 탭을 닫거나 Figma 기능을 끄면 닫는다
+    useEffect(() => {
+        if (compareView && (!figmaOn || !tabs.some((t) => t.id === compareView.tabId))) setCompareView(null);
+    }, [tabs, compareView, figmaOn]);
     const closeBackground = useCallback(() => setBgView(null), []);
     const selectBackgroundTask = useCallback((taskId: string) => setBgView((cur) => (cur ? {...cur, taskId} : cur)), []);
     // 그 탭이 없어지거나 다른 대화가 되면 닫는다
@@ -1009,10 +1034,16 @@ const ChatPage = () => {
 
     const toggleFilesPanel = () => {
         // 지침·미리보기·백그라운드 패널이 그 자리를 덮고 있으면 걷어서 작업 파일 패널을 보여 준다
-        if (instrOpen || (previewView && previewView.tabId === active?.id) || (bgView && bgView.tabId === active?.id)) {
+        if (
+            instrOpen ||
+            (previewView && previewView.tabId === active?.id) ||
+            (bgView && bgView.tabId === active?.id) ||
+            (compareView && compareView.tabId === active?.id)
+        ) {
             setInstrOpen(false);
             setPreviewView(null);
             setBgView(null);
+            setCompareView(null);
             if (filesOpen) return;
         }
         const next = !filesOpen;
@@ -1022,11 +1053,15 @@ const ChatPage = () => {
 
     const toggleInstructions = () => {
         // 미리보기·백그라운드 패널이 그 자리를 덮고 있으면 지침 패널을 보여 준다(닫지 않는다)
-        const covered = (!!previewView && previewView.tabId === active?.id) || (!!bgView && bgView.tabId === active?.id);
+        const covered =
+            (!!previewView && previewView.tabId === active?.id) ||
+            (!!bgView && bgView.tabId === active?.id) ||
+            (!!compareView && compareView.tabId === active?.id);
         setInstrOpen((v) => (covered ? true : !v));
         setAgentView(null);
         setPreviewView(null);
         setBgView(null);
+        setCompareView(null);
     };
     const closeInstructions = useCallback(() => setInstrOpen(false), []);
 
@@ -1038,6 +1073,7 @@ const ChatPage = () => {
         setAgentView(null);
         setPreviewView(null);
         setBgView(null);
+        setCompareView(null);
         setInstrFocus({tabId, path: memoryPath});
     }, []);
     const clearInstrFocus = useCallback(() => setInstrFocus(null), []);
@@ -1090,6 +1126,7 @@ const ChatPage = () => {
                 setAgentView(null);
                 setPreviewView(null);
                 setBgView(null);
+                setCompareView(null);
             },
         }),
         [closeExtensions]
@@ -1234,6 +1271,7 @@ const ChatPage = () => {
                 setAgentView(null);
                 setPreviewView(null);
                 setBgView(null);
+                setCompareView(null);
                 return;
             case "background":
                 openBackground(tabId, null);
@@ -1654,6 +1692,7 @@ const ChatPage = () => {
                             onOpenAgent={openAgent}
                             onOpenPreview={openPreview}
                             onAppCommand={handleAppCommand}
+                            onOpenCompare={openCompare}
                         />
                     ))}
                 </div>
@@ -1678,9 +1717,23 @@ const ChatPage = () => {
                         onStopAll={() => void window.electronAPI.stopAllBackground(active.id)}
                         onClearFinished={() => void window.electronAPI.clearFinishedBackground(active.id)}
                         onOpenAgent={(ref) => openAgent(active.id, ref)}
+                        onCaptureScreen={figmaOn ? (url) => openCompare(active.id, {url, capture: true}) : undefined}
                         width={filesWidth}
                         onResize={setFilesWidth}
                         onClose={closeBackground}
+                    />
+                ) : active && compareView?.tabId === active.id ? (
+                    <ScreenComparePanel
+                        key={active.id}
+                        tabId={active.id}
+                        req={compareView.req}
+                        reqSeq={compareView.seq}
+                        background={bg}
+                        listImages={() => apiRef.current.get(active.id)?.listImages() ?? []}
+                        onFill={(text, images) => apiRef.current.get(active.id)?.fillInput(text, images) ?? false}
+                        width={filesWidth}
+                        onResize={setFilesWidth}
+                        onClose={closeCompare}
                     />
                 ) : active && previewView?.tabId === active.id ? (
                     <PreviewPanel

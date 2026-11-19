@@ -7,6 +7,7 @@ export interface ImagePayload {
     data: string;      // base64
     mediaType: string;
     name?: string; // 파일 이름 — 보내기 전 크게 보기에 보인다 (main으로는 data·mediaType만 간다)
+    caption?: string; // 있으면 입력창에 이름과 함께 카드로 ("1440 × 900", "localhost:5173" — 화면 대조가 넣는 그림)
 }
 
 export async function readFileAsImagePayload(file: File): Promise<ImagePayload> {

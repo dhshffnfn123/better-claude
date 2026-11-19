@@ -1,7 +1,7 @@
-import {memo, useEffect, useReducer, useState} from "react";
+import {Fragment, memo, useEffect, useReducer, useState} from "react";
 import classNames from "classnames/bind";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
-import {faChevronRight, faXmark} from "@fortawesome/free-solid-svg-icons";
+import {faChevronRight, faCircleDot, faXmark} from "@fortawesome/free-solid-svg-icons";
 import styles from "./chat.page.module.scss";
 import type {BackgroundLink} from "../../tab-context";
 import {
@@ -17,6 +17,7 @@ import {
     useNow,
 } from "./background-tasks";
 import {compactTokens} from "../../token-format";
+import {useTaskUrl} from "../../screen-compare";
 
 const cx = classNames.bind(styles);
 
@@ -38,6 +39,8 @@ interface Props {
     panelTaskId: string | null;
     onOpen: (taskId: string | null) => void;
     onClosePanel: () => void;
+    // [화면 찍기] — 셸 작업 출력에 이 컴퓨터 주소(dev 서버)가 보이면 그 화면을 찍어 화면 대조로 (Figma 기능을 끄면 없음)
+    onCapture?: (url: string) => void;
 }
 
 type Card = {kind: "running"; task: BackgroundTask; children: number} | {kind: "done"; task: FinishedTask};
@@ -45,7 +48,7 @@ type Card = {kind: "running"; task: BackgroundTask; children: number} | {kind: "
 // 작업 줄에서 지운 끝난 작업 — id에 끝난 시각을 붙인다(다시 이어 돈 에이전트는 같은 id로 또 끝난다)
 const doneKey = (f: FinishedTask) => `${f.id}@${f.endedAt}`;
 
-export const BackgroundDock = memo(function BackgroundDock({tabId, active, state, panelOpen, panelTaskId, onOpen, onClosePanel}: Props) {
+export const BackgroundDock = memo(function BackgroundDock({tabId, active, state, panelOpen, panelTaskId, onOpen, onClosePanel, onCapture}: Props) {
     const running = runningOnly(state);
     const runningIds = new Set(running.map((t) => t.id));
     // 에이전트가 띄운 작업은 그 에이전트 카드에 묶는다 (패널에서는 그 밑에 보인다)
@@ -146,48 +149,52 @@ export const BackgroundDock = memo(function BackgroundDock({tabId, active, state
                 const done = c.kind === "done" ? c.task : null;
                 // 끝난 카드에는 지우기(×)가 들어가서 카드 자체는 button이 아니다(button 안에 button을 둘 수 없다)
                 return (
-                    <div
-                        key={t.id}
-                        role="button"
-                        tabIndex={0}
-                        className={cx("bgChip", {
-                            bgChipSel: panelOpen && panelTaskId === t.id,
-                            bgChipFailed: done?.status === "failed",
-                            bgChipDone: done && done.status !== "failed",
-                        })}
-                        onClick={() => onOpen(t.id)}
-                        onKeyDown={(e) => {
-                            if (e.target !== e.currentTarget || (e.key !== "Enter" && e.key !== " ")) return;
-                            e.preventDefault();
-                            onOpen(t.id);
-                        }}
-                        title={[t.description, t.command].filter(Boolean).join("\n") + "\n\n눌러서 오른쪽 패널에서 보기"}
-                    >
-                        <span className={cx("bgChipHead")}>
-                            {done ? (
-                                <FontAwesomeIcon icon={statusInfo(done.status).icon} className={cx("bgChipStatus", done.status)} />
-                            ) : (
-                                <span className={cx("bgSpin")} />
-                            )}
-                            <FontAwesomeIcon icon={kind.icon} className={cx("bgChipKind")} />
-                            <span className={cx("bgChipName")}>{taskName(t)}</span>
-                            {!done && t.startedAt && <span className={cx("bgChipTime")}>{formatElapsed(now - t.startedAt)}</span>}
-                            {done && (
-                                <button
-                                    className={cx("bgChipDismiss")}
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        dismiss([done]);
-                                    }}
-                                    title="작업 줄에서 지우기 (패널의 기록은 남습니다)"
-                                    aria-label="작업 줄에서 지우기"
-                                >
-                                    <FontAwesomeIcon icon={faXmark} />
-                                </button>
-                            )}
-                        </span>
-                        <span className={cx("bgChipLine")}>{secondLine(c)}</span>
-                    </div>
+                    <Fragment key={t.id}>
+                        <div
+                            role="button"
+                            tabIndex={0}
+                            className={cx("bgChip", {
+                                bgChipSel: panelOpen && panelTaskId === t.id,
+                                bgChipFailed: done?.status === "failed",
+                                bgChipDone: done && done.status !== "failed",
+                            })}
+                            onClick={() => onOpen(t.id)}
+                            onKeyDown={(e) => {
+                                if (e.target !== e.currentTarget || (e.key !== "Enter" && e.key !== " ")) return;
+                                e.preventDefault();
+                                onOpen(t.id);
+                            }}
+                            title={[t.description, t.command].filter(Boolean).join("\n") + "\n\n눌러서 오른쪽 패널에서 보기"}
+                        >
+                            <span className={cx("bgChipHead")}>
+                                {done ? (
+                                    <FontAwesomeIcon icon={statusInfo(done.status).icon} className={cx("bgChipStatus", done.status)} />
+                                ) : (
+                                    <span className={cx("bgSpin")} />
+                                )}
+                                <FontAwesomeIcon icon={kind.icon} className={cx("bgChipKind")} />
+                                <span className={cx("bgChipName")}>{taskName(t)}</span>
+                                {!done && t.startedAt && <span className={cx("bgChipTime")}>{formatElapsed(now - t.startedAt)}</span>}
+                                {done && (
+                                    <button
+                                        className={cx("bgChipDismiss")}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            dismiss([done]);
+                                        }}
+                                        title="작업 줄에서 지우기 (패널의 기록은 남습니다)"
+                                        aria-label="작업 줄에서 지우기"
+                                    >
+                                        <FontAwesomeIcon icon={faXmark} />
+                                    </button>
+                                )}
+                            </span>
+                            <span className={cx("bgChipLine")}>{secondLine(c)}</span>
+                        </div>
+                        {c.kind === "running" && onCapture && (
+                            <CaptureChip tabId={tabId} task={c.task} active={active} onCapture={onCapture} />
+                        )}
+                    </Fragment>
                 );
             })}
             {hidden > 0 && (
@@ -217,6 +224,18 @@ export const BackgroundDock = memo(function BackgroundDock({tabId, active, state
         </div>
     );
 });
+
+// dev 서버 카드 옆 [화면 찍기] — 출력에 이 컴퓨터 주소(http://localhost:5173 등)가 나온 셸 작업만. 누르면 화면 대조 패널이
+// 열리며 그 주소를 찍는다. 주소는 출력이 나올 때까지 몇 초마다 다시 읽는다(보이는 탭에서만).
+function CaptureChip({tabId, task, active, onCapture}: {tabId: string; task: BackgroundTask; active: boolean; onCapture: (url: string) => void}) {
+    const url = useTaskUrl(tabId, task, active);
+    if (!url) return null;
+    return (
+        <button className={cx("bgCapture")} onClick={() => onCapture(url)} title={`${url} 화면을 찍어 디자인과 맞대 봅니다`}>
+            <FontAwesomeIcon icon={faCircleDot} /> 화면 찍기
+        </button>
+    );
+}
 
 // 답변 속 실행 줄의 상태 — "백그라운드 · 실행 중 1:51" / "완료 · 3:02" / "실패 · 코드 1". 누르면 패널에서 연다.
 // link가 없으면(앱을 다시 켰거나 끝난 기록을 지움) 백그라운드로 띄웠다는 것만 보인다.
