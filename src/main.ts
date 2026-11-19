@@ -3941,6 +3941,14 @@ ipcMain.handle("mcp:logout", async (event, tabId: string, name: unknown): Promis
         if (typeof api.mcpClearAuth !== "function") {
             return {ok: false, error: "이 버전에서는 앱에서 로그아웃할 수 없습니다 — 터미널에서 /mcp로 하세요", unavailable: true};
         }
+        // Claude 계정 로그인은 어떤 경우에도 건드리지 않는다 — 지우는 건 자체 OAuth를 쓰는 HTTP·SSE 서버의 토큰뿐이다.
+        // CLI도 그 밖의 종류는 "Cannot clear auth"로 거절하지만(2.1.325 확인), claude.ai 커넥터는 Claude 계정으로
+        // 붙으므로 CLI가 바뀌어도 앱이 먼저 막는다. 서버 목록을 못 읽으면(시간 초과) 지우지 않는다.
+        const target = (await withTimeout(q.mcpServerStatus(), 5000)).find((m) => m.name === name);
+        const serverType = (target?.config as {type?: string} | undefined)?.type;
+        if (!target || target.scope === "claudeai" || (serverType !== "http" && serverType !== "sse")) {
+            return {ok: false, error: "이 서버는 앱에서 로그아웃할 수 없습니다"};
+        }
         await withTimeout(api.mcpClearAuth(name), 30_000);
         const list = await withTimeout(q.mcpServerStatus(), 5000).catch(() => null);
         refreshMcpEverywhere(name, list ? {cwd, list} : null, s ?? undefined);
