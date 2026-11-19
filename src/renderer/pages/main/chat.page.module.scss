@@ -689,6 +689,29 @@
   color: var(--c-text-muted);
 }
 
+// 끝난 카드의 × — 작업 줄에서만 지운다 (패널의 기록은 남는다)
+.bgChipDismiss {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  margin: -2px -4px -2px auto;
+  font-size: 9px;
+  color: var(--c-text-faint);
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-radius: 4px;
+
+  &:hover {
+    color: var(--c-text);
+    background-color: var(--c-hover);
+  }
+}
+
 .bgChipLine {
   overflow: hidden;
   font-family: "SFMono-Regular", Consolas, monospace;

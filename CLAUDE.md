@@ -155,7 +155,18 @@ Things that are load-bearing:
   spinner, kind icon, name (`taskName`: Claude's description, a trailing "in background" dropped), elapsed time, and
   for shells the **last output line** (`getBackgroundOutput(…, 2000)` every 2 s, visible tab only), for agents their
   activity; agent-launched tasks fold into their agent's card (`parentTaskId`); ≤3 cards + "+N"; finished tasks stay
-  as ✓/✗ (red) cards for 15 s (`RECENT_DONE_MS`), then the dock disappears. A card opens **the panel**
+  as ✓/✗ (red) cards for 15 s (`RECENT_DONE_MS`), then the dock disappears. **Their age is measured with the real
+  clock at render** (+ a timer for the next expiry): it used to be the 1 s ticker's value (`useNow`), which stops while
+  the tab is hidden or nothing runs — a task that finished while you were in another tab (or a card re-rendered for
+  another reason in its last second) kept "방금 끝남" on screen forever (reproduced: 63 s after the end; fixed: gone at
+  15 s, also after coming back from another tab). **Clearing** (the owner asked for it): × on a finished card, or
+  "완료 지우기" next to 패널로 보기 — dock only (`dismissed`, keyed by id + end time, renderer state of the always-mounted
+  dock). Deliberately not the panel's history: the finished records are the only place a finished task's log can be
+  read again, and the launch rows' "완료 · 3:02" links depend on them; the panel keeps its own 지우기 for that. No stale
+  "running" entries were found in `bgMembers` — the CLI's `background_tasks_changed` follows each `task_notification`,
+  and `pump`'s `finally` sends `running: []` when the process ends (traced with a raw-frame probe and in the app) —
+  except a stopped session: "모두 중지" then the panel's 지우기 re-sent the dying task as running until the process
+  exited, so `sendBackground` sends no running tasks for a `stopped` session. A card opens **the panel**
   (`BackgroundPanel` in `BackgroundTasksPanel.tsx`, the files panel's slot, state `bgView` in the shell — agent >
   background > preview > instructions > files): task list (agent-launched ones nested under their agent, finished
   ones below with 지우기) + the selected task's detail — a big log (60 KB tail, re-read every 1.5 s while running)

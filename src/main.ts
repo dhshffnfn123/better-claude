@@ -1677,10 +1677,12 @@ function updateTaskInfo(s: LiveSession, msg: SDKMessage) {
     s.taskInfo.set(m.task_id, d);
 }
 
-// 화면에 보낼 백그라운드 작업: 실행 중(내부용 ambient 작업 제외) + 이 대화에서 최근 끝난 것
+// 화면에 보낼 백그라운드 작업: 실행 중(내부용 ambient 작업 제외) + 이 대화에서 최근 끝난 것.
+// 멈춘·닫는 세션(stopped)의 목록은 낡았다 — 그 프로세스는 작업째 정리되는 중이고 더는 소식이 오지 않는다. 예전에는
+// 그래도 보내서, "모두 중지" 직후 패널의 "지우기"를 누르면 꺼지는 작업이 프로세스가 끝날 때까지 "실행 중"으로 다시 떴다(재현됨).
 function sendBackground(s: LiveSession) {
     const list = [...s.bgMembers]
-        .filter(([, m]) => !m.ambient)
+        .filter(([, m]) => !m.ambient && !s.stopped)
         .map(([id, m]) => {
             const d = s.taskInfo.get(id);
             const input = d?.toolUseId ? (s.toolInputs.get(d.toolUseId) as {command?: unknown} | undefined) : undefined;

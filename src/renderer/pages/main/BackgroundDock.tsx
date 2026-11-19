@@ -1,7 +1,7 @@
-import {memo, useEffect, useState} from "react";
+import {memo, useEffect, useReducer, useState} from "react";
 import classNames from "classnames/bind";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
-import {faChevronRight} from "@fortawesome/free-solid-svg-icons";
+import {faChevronRight, faXmark} from "@fortawesome/free-solid-svg-icons";
 import styles from "./chat.page.module.scss";
 import type {BackgroundLink} from "../../tab-context";
 import {
@@ -42,14 +42,39 @@ interface Props {
 
 type Card = {kind: "running"; task: BackgroundTask; children: number} | {kind: "done"; task: FinishedTask};
 
+// 작업 줄에서 지운 끝난 작업 — id에 끝난 시각을 붙인다(다시 이어 돈 에이전트는 같은 id로 또 끝난다)
+const doneKey = (f: FinishedTask) => `${f.id}@${f.endedAt}`;
+
 export const BackgroundDock = memo(function BackgroundDock({tabId, active, state, panelOpen, panelTaskId, onOpen, onClosePanel}: Props) {
     const running = runningOnly(state);
     const runningIds = new Set(running.map((t) => t.id));
     // 에이전트가 띄운 작업은 그 에이전트 카드에 묶는다 (패널에서는 그 밑에 보인다)
     const topLevel = running.filter((t) => !t.parentTaskId || !runningIds.has(t.parentTaskId));
-    const hasRecentDone = state.finished.some((f) => Date.now() - f.endedAt < RECENT_DONE_MS);
-    const now = useNow(active && (running.length > 0 || hasRecentDone));
-    const recentDone = state.finished.filter((f) => now - f.endedAt < RECENT_DONE_MS && !(f.parentTaskId && runningIds.has(f.parentTaskId)));
+    // 실행 중인 카드의 경과 시간 — 보이는 탭에서만 1초마다 다시 그린다
+    useNow(active && running.length > 0);
+    // 시각은 그릴 때마다 실제 시계로 잰다. 예전에는 위 타이머의 값을 썼는데, 타이머가 멈춰 있는 동안(다른 탭에 있을 때,
+    // 실행 중인 작업이 없을 때) 그 값이 옛 시각에 머물러서 끝난 카드가 15초가 지나도 영영 남았다 — 다른 탭에 가 있는
+    // 사이 끝난 작업, 사라지기 직전 1초 안에 다른 이유로 다시 그려진 카드("방금 끝남"이 계속 보임 — 재현됨).
+    const now = Date.now();
+    // "완료 지우기"·카드의 ×로 작업 줄에서만 지운 것. 패널의 "최근 끝난 작업"과 답변 속 실행 줄의 상태는 그대로 둔다 —
+    // 끝난 작업의 로그는 거기서만 다시 볼 수 있다(패널에는 기록까지 지우는 "지우기"가 따로 있다).
+    const [dismissed, setDismissed] = useState<ReadonlySet<string>>(() => new Set());
+    const recentDone = state.finished.filter(
+        (f) => now - f.endedAt < RECENT_DONE_MS && !dismissed.has(doneKey(f)) && !(f.parentTaskId && runningIds.has(f.parentTaskId))
+    );
+    // 끝난 카드는 사라질 때 맞춰 다시 그린다 (탭이 숨어 있어도 — 돌아왔을 때 이미 사라져 있게)
+    const [, rerender] = useReducer((n: number) => n + 1, 0);
+    const nextExpiry = recentDone.length > 0 ? Math.min(...recentDone.map((f) => f.endedAt)) + RECENT_DONE_MS : 0;
+    useEffect(() => {
+        if (!nextExpiry) return;
+        const timer = window.setTimeout(rerender, Math.max(0, nextExpiry - Date.now()) + 50);
+        return () => window.clearTimeout(timer);
+    }, [nextExpiry]);
+    const dismiss = (list: FinishedTask[]) => {
+        // 기록에서 빠진 것(패널의 지우기, 새 대화)은 같이 잊는다
+        const kept = new Set(state.finished.map(doneKey));
+        setDismissed((prev) => new Set([...[...prev].filter((k) => kept.has(k)), ...list.map(doneKey)]));
+    };
 
     const cards: Card[] = [
         ...topLevel.map((t) => ({kind: "running" as const, task: t, children: running.filter((c) => c.parentTaskId === t.id).length})),
@@ -119,15 +144,23 @@ export const BackgroundDock = memo(function BackgroundDock({tabId, active, state
                 const t = c.task;
                 const kind = kindOf(t);
                 const done = c.kind === "done" ? c.task : null;
+                // 끝난 카드에는 지우기(×)가 들어가서 카드 자체는 button이 아니다(button 안에 button을 둘 수 없다)
                 return (
-                    <button
+                    <div
                         key={t.id}
+                        role="button"
+                        tabIndex={0}
                         className={cx("bgChip", {
                             bgChipSel: panelOpen && panelTaskId === t.id,
                             bgChipFailed: done?.status === "failed",
                             bgChipDone: done && done.status !== "failed",
                         })}
                         onClick={() => onOpen(t.id)}
+                        onKeyDown={(e) => {
+                            if (e.target !== e.currentTarget || (e.key !== "Enter" && e.key !== " ")) return;
+                            e.preventDefault();
+                            onOpen(t.id);
+                        }}
                         title={[t.description, t.command].filter(Boolean).join("\n") + "\n\n눌러서 오른쪽 패널에서 보기"}
                     >
                         <span className={cx("bgChipHead")}>
@@ -139,9 +172,22 @@ export const BackgroundDock = memo(function BackgroundDock({tabId, active, state
                             <FontAwesomeIcon icon={kind.icon} className={cx("bgChipKind")} />
                             <span className={cx("bgChipName")}>{taskName(t)}</span>
                             {!done && t.startedAt && <span className={cx("bgChipTime")}>{formatElapsed(now - t.startedAt)}</span>}
+                            {done && (
+                                <button
+                                    className={cx("bgChipDismiss")}
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        dismiss([done]);
+                                    }}
+                                    title="작업 줄에서 지우기 (패널의 기록은 남습니다)"
+                                    aria-label="작업 줄에서 지우기"
+                                >
+                                    <FontAwesomeIcon icon={faXmark} />
+                                </button>
+                            )}
                         </span>
                         <span className={cx("bgChipLine")}>{secondLine(c)}</span>
-                    </button>
+                    </div>
                 );
             })}
             {hidden > 0 && (
@@ -150,6 +196,15 @@ export const BackgroundDock = memo(function BackgroundDock({tabId, active, state
                 </button>
             )}
             </div>
+            {recentDone.length > 0 && (
+                <button
+                    className={cx("bgDockOpen")}
+                    onClick={() => dismiss(recentDone)}
+                    title="끝난 작업 카드를 작업 줄에서 지웁니다 — 오른쪽 패널의 기록과 로그는 남습니다"
+                >
+                    완료 지우기
+                </button>
+            )}
             <button className={cx("bgDockOpen")} onClick={panelOpen ? onClosePanel : () => onOpen(null)}>
                 {panelOpen ? (
                     "패널 닫기"
