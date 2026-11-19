@@ -258,6 +258,7 @@ interface FinishedTask {
     totalTokens?: number;
     toolUses?: number;
     exitCode?: number; // 셸 작업의 종료 코드
+    terminated?: boolean; // 다른 명령(kill·pkill, dev 서버 다시 띄우기 …)이 신호로 끝냈다 — 실패가 아니라 "종료됨" (status는 stopped)
     hasOutput: boolean;
     recentTools?: ToolStep[];
     launchedByAgent?: boolean;

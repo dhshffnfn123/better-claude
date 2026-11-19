@@ -391,6 +391,7 @@ function ChatTabViewBase({
                     endedAt: f.endedAt,
                     status: f.status,
                     exitCode: f.exitCode,
+                    terminated: f.terminated,
                 });
             }
         }

@@ -12,7 +12,8 @@ import {
     formatElapsed,
     kindOf,
     runningOnly,
-    STATUS_INFO,
+    statusInfo,
+    terminatedNote,
     taskName,
     taskTokens,
     TOKENS_HINT,
@@ -175,7 +176,7 @@ export function BackgroundPanel({
                                     onKeyDown={rowKeys(f.id)}
                                     title={f.description}
                                 >
-                                    <FontAwesomeIcon icon={STATUS_INFO[f.status].icon} className={cx("bgpRowStatus", f.status)} />
+                                    <FontAwesomeIcon icon={statusInfo(f.status).icon} className={cx("bgpRowStatus", f.status)} />
                                     <FontAwesomeIcon icon={kind.icon} className={cx("bgpRowKind")} />
                                     <span className={cx("bgpRowName")}>{taskName(f)}</span>
                                     {f.status !== "completed" && <span className={cx("bgpRowResult", f.status)}>{finishedLabel(f)}</span>}
@@ -227,11 +228,16 @@ function TaskDetail({
     const status = fin
         ? `${finishedLabel(fin)}${fin.startedAt ? ` · ${formatElapsed(fin.endedAt - fin.startedAt)} 걸림` : ""}`
         : `실행 중${task.startedAt ? ` ${formatElapsed(now - task.startedAt)}` : ""}`;
-    const activity = run ? (run.summary ?? run.activity) : fin?.summary && fin.summary !== fin.description ? fin.summary : undefined;
+    // 종료됨이면 CLI의 요약("… failed with exit code 143")은 빼고 위의 설명만 — 실패라고 적힌 문장이 설명과 어긋난다
+    const activity = run
+        ? (run.summary ?? run.activity)
+        : fin?.summary && fin.summary !== fin.description && !fin.terminated
+          ? fin.summary
+          : undefined;
     return (
         <div className={cx("bgpDetail")}>
             <div className={cx("bgpDetailHead", fin?.status)}>
-                {fin ? <FontAwesomeIcon icon={STATUS_INFO[fin.status].icon} /> : <span className={cx("bgSpin")} />}
+                {fin ? <FontAwesomeIcon icon={statusInfo(fin.status).icon} /> : <span className={cx("bgSpin")} />}
                 <FontAwesomeIcon icon={kind.icon} />
                 <span>
                     {kind.text} · {status}
@@ -240,6 +246,7 @@ function TaskDetail({
             </div>
             <div className={cx("bgpDetailTitle")}>{task.description}</div>
             {task.command && <code className={cx("bgpCommand")}>{task.command}</code>}
+            {fin?.terminated && <div className={cx("bgpActivity")}>{terminatedNote(fin)}</div>}
             {activity && <div className={cx("bgpActivity")}>{activity}</div>}
             {(task.toolUses != null || taskTokens(task) != null) && (
                 <div className={cx("bgpMeta")} title={TOKENS_HINT}>

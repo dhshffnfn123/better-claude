@@ -38,6 +38,7 @@ export interface BackgroundLink {
     endedAt?: number;
     status?: "completed" | "failed" | "stopped";
     exitCode?: number;
+    terminated?: boolean; // 다른 명령이 신호로 끝냈다 ("종료됨")
 }
 
 export interface BackgroundLinks {

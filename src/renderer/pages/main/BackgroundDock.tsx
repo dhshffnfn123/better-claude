@@ -11,7 +11,7 @@ import {
     kindOf,
     lastOutputLine,
     runningOnly,
-    STATUS_INFO,
+    statusInfo,
     taskName,
     taskTokens,
     useNow,
@@ -132,7 +132,7 @@ export const BackgroundDock = memo(function BackgroundDock({tabId, active, state
                     >
                         <span className={cx("bgChipHead")}>
                             {done ? (
-                                <FontAwesomeIcon icon={STATUS_INFO[done.status].icon} className={cx("bgChipStatus", done.status)} />
+                                <FontAwesomeIcon icon={statusInfo(done.status).icon} className={cx("bgChipStatus", done.status)} />
                             ) : (
                                 <span className={cx("bgSpin")} />
                             )}
@@ -170,7 +170,7 @@ export function BackgroundBadge({link, onOpen}: {link: BackgroundLink | null; on
     if (!link) return <span className={cx("bgBadge")}>백그라운드</span>;
     const text = link.running
         ? `백그라운드 · 실행 중${link.startedAt ? ` ${formatElapsed(now - link.startedAt)}` : ""}`
-        : `${finishedLabel({status: link.status ?? "completed", exitCode: link.exitCode})}${
+        : `${finishedLabel({status: link.status ?? "completed", exitCode: link.exitCode, terminated: link.terminated})}${
               link.startedAt && link.endedAt ? ` · ${formatElapsed(link.endedAt - link.startedAt)}` : ""
           }`;
     return (

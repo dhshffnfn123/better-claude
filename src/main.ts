@@ -1303,6 +1303,7 @@ interface FinishedTask {
     totalTokens?: number;
     toolUses?: number;
     exitCode?: number;
+    terminated?: boolean; // 다른 명령이 신호로 끝냈다 — status는 stopped, 화면엔 "종료됨"
     hasOutput: boolean;
     recentTools?: ToolStep[];
     launchedByAgent?: boolean;
@@ -1455,6 +1456,21 @@ function sendBackground(s: LiveSession) {
 }
 
 // 백그라운드 작업이 끝났다(task_notification) — 결과를 "최근 끝난 작업"으로 남긴다
+// 신호로 끝난 종료 코드(128 + 신호 번호) 중 "누가 끝냈다"는 것 — 프로그램이 스스로 죽은 신호(ABRT·SEGV·BUS…)는 넣지 않는다
+const TERMINATED_EXIT_CODES = new Set([129, 130, 137, 143, 144]);
+
+// 스스로 끝나지 않는 명령(dev 서버·감시·무한 반복) — 누가 끌 때가 정상적인 끝이라, 신호로 끝나면 "완료"로 본다.
+// 명령 이름으로 짐작한다(가끔 틀린다). 경로 속 단어(/dev/null, src/server.ts)는 앞이 /·글자면 빼고, vite build는 뺀다.
+// 명령으로 못 알아보는 것(node src/server/index.js …)은 Claude가 붙인 설명("Start dev server …")으로 본다.
+// 예시 51개(서버 25 · 빌드·테스트 등 16 · 설명 10)로 맞춰 봤다.
+const LONG_RUNNING_COMMAND =
+    /(?<![/\w.-])(dev|serve|server|runserver|start|preview|watch|nodemon|uvicorn|gunicorn|http-server|live-server)\b|--watch\b|(?<![/\w.-])vite\b(?!\s+build)|\bhttp\.server\b|SimpleHTTPServer|\btail\b[^|;&\n]*\s-[a-zA-Z]*[fF]\b|\bwhile\s+(true|:)/i;
+const LONG_RUNNING_DESCRIPTION = /dev\s*server|\bserver\b(?!\.\w)|\bwatch(er|ing)?\b|서버|감시/i;
+
+function looksLongRunning(command: string | undefined, description: string | undefined): boolean {
+    return (!!command && LONG_RUNNING_COMMAND.test(command)) || (!!description && LONG_RUNNING_DESCRIPTION.test(description));
+}
+
 function recordFinishedTask(s: LiveSession, msg: SDKMessage) {
     const n = msg as unknown as {
         task_id: string;
@@ -1476,14 +1492,22 @@ function recordFinishedTask(s: LiveSession, msg: SDKMessage) {
         n.summary?.match(/exit code (\d+)/) ??
         (outputFile ? readOutputTail(outputFile, 400)?.text.match(/\[exited with code (\d+)\]\s*$/) : null);
     const exitCode = code ? Number(code[1]) : undefined;
+    // 다른 명령이 신호로 끝낸 셸은 실패가 아니다 — CLI는 종료 코드만 보고 failed로 알린다. 흔한 경우: Claude가 dev 서버를
+    // 다시 띄우려고 이전 것을 kill/pkill (143 = SIGTERM), Ctrl-C(130), 창 닫힘(129), kill -9(137), pkill된 Electron(144 — 실측).
+    // 실제 기록 집계: "실패" 77건 중 74건이 143·144였다. 스스로 죽은 경우(134 SIGABRT, 139 SIGSEGV …)와 일반 오류 코드는 그대로 실패.
+    const terminated = n.status === "failed" && exitCode !== undefined && TERMINATED_EXIT_CODES.has(exitCode);
+    const command = typeof input?.command === "string" ? input.command : undefined;
+    // 꺼진 것이 dev 서버·감시 같은 명령이면 그게 정상적인 끝 → 완료(✓). 빌드·테스트 등은 도중에 끊긴 것 → 종료됨(회색)
+    const endedNormally = terminated && looksLongRunning(command, m.description);
     const record: FinishedTask = {
         id: n.task_id,
         type: m.type,
         description: m.description,
         subagentType: m.subagentType ?? d?.subagentType,
         workflowName: d?.workflowName,
-        command: typeof input?.command === "string" ? input.command : undefined,
-        status: n.status,
+        command,
+        status: endedNormally ? "completed" : terminated ? "stopped" : n.status,
+        terminated: terminated || undefined,
         summary: n.summary || undefined,
         startedAt: d?.startedAt,
         endedAt: Date.now(),

@@ -56,6 +56,9 @@ main via `--inspect`):
   Fast Refresh remount, the window navigated away and back) can run in the home folder — `tabFor` creates
   an unknown tab with `os.homedir()`; a test conversation and its auto memory landed in
   `~/.claude/projects/-Users-<you>/` (reproduced). Reload fully and check the cwd bar before sending.
+- **Background tasks in tests**: the CLI keeps their output under `/private/tmp/claude-<uid>/<project path>/` — delete
+  the test project's folder there too. A `pkill -f <pattern>` that Claude runs also matches *your* monitoring shell if
+  its command line contains the pattern (it was killed, exit 144) — keep such strings out of your own commands.
 - **An occluded window stops rendering**: `visibilityState` is `hidden`, rAF never fires, scroll events
   and smooth scrolling stall — scroll-driven UI looks broken in tests. `setBackgroundThrottling(false)`
   did not survive a reload; `W.setAlwaysOnTop(true, "floating"); W.showInactive()` (from the main
@@ -168,7 +171,21 @@ Things that are load-bearing:
   `task_notification` (status, summary, usage) → the tab's `finishedTasks` (last 10, survives the
   CLI process exiting, cleared on new chat / resume / cwd change / "지우기"). Exit code is parsed from
   the summary ("… failed with exit code N") first — the output file's "[exited with code N]" line may
-  not be written yet at notification time. `chat:background` sends `{running, finished}`; both carry `toolUseId` and
+  not be written yet at notification time. **Killed by another command ≠ failed**: the CLI reports any non-zero exit
+  as `failed`, so a dev server Claude killed to restart it showed a red "실패 · 코드 143" (the owner: "별론데"; in the
+  owner's real transcripts 74 of 77 "failed" were 143/144). `recordFinishedTask` turns `failed` + an exit code in
+  `TERMINATED_EXIT_CODES` (129 HUP, 130 INT, 137 KILL, 143 TERM, 144 — measured for a `pkill`ed process) into
+  `status: "stopped"` + `terminated: true` → "종료됨" in gray, with "다른 명령(kill 등)이 도중에 끝냈습니다 …" in the panel
+  instead of the CLI's "failed" summary; crashes (134, 139 …) and ordinary codes stay 실패. **Unless it never ends by
+  itself**: a dev server / watcher / endless loop ends normally only when killed, so `looksLongRunning(command,
+  description)` (`LONG_RUNNING_COMMAND`: dev/serve/server/start/preview/watch/vite (not `vite build`)/nodemon/uvicorn/
+  `http.server`/`tail -f`/`while true` …, path words like `/dev/null` or `src/server.ts` excluded; or Claude's
+  description "… dev server / server / watch …") turns it into `status: "completed"` + `terminated` → ✓ 완료, with
+  "dev 서버·감시처럼 스스로 끝나지 않는 명령이라 …" in the panel. A guess by name (the owner chose it knowing that) —
+  checked against 51 sample commands/descriptions; a miss just falls back to gray 종료됨. The SDK's status is
+  only completed/failed/stopped (the transcript's own `killed` = time limit arrives as stopped); `statusInfo()` still
+  falls back to 중지됨 for anything unknown. Verified: a `pkill`ed background script → 종료됨, `exit 3` → 실패 · 코드 3,
+  a killed `python3 -m http.server` → ✓ 완료. `chat:background` sends `{running, finished}`; both carry `toolUseId` and
   `parentTaskId`. At the moment a task finishes it is briefly in both lists (record → membership update) — the
   renderer prefers the finished record (`runningOnly`, `allTasks`). `background:output` takes an optional byte count.
   **Tokens per task**: agents show `usedTokens` — the sum over the agent's own model calls (input + cache write + cache

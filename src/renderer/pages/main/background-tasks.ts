@@ -63,9 +63,25 @@ export function taskTokens(t: {type: string; usedTokens?: number; totalTokens?: 
 export const TOKENS_HINT = "이 작업이 모델 호출에 쓴 토큰 (입력·캐시·출력 합계)";
 
 // 끝난 작업의 상태 글: "완료" / "실패 · 코드 1" / "중지됨"
-export function finishedLabel(f: {status: FinishedTask["status"]; exitCode?: number}): string {
-    const base = STATUS_INFO[f.status].label;
+// 다른 명령이 신호로 끝낸 셸 (main의 TERMINATED_EXIT_CODES — 예전엔 "실패 · 코드 143"으로 빨갛게 보였다):
+// dev 서버·감시처럼 스스로 끝나지 않는 명령이면 status가 completed로 와서 "완료", 그 밖(빌드·테스트 …)은 "종료됨".
+// 모르는 상태가 와도 화면이 깨지지 않게 "중지됨"으로 그린다.
+export function finishedLabel(f: {status: FinishedTask["status"]; exitCode?: number; terminated?: boolean}): string {
+    if (f.terminated) return f.status === "completed" ? "완료" : "종료됨";
+    const base = statusInfo(f.status).label;
     return f.status === "failed" && f.exitCode != null ? `${base} · 코드 ${f.exitCode}` : base;
+}
+
+export function statusInfo(status: string): {label: string; icon: IconDefinition} {
+    return STATUS_INFO[status as FinishedTask["status"]] ?? STATUS_INFO.stopped;
+}
+
+// 다른 명령이 끝낸 작업에 덧붙이는 설명 (패널의 자세히)
+export function terminatedNote(f: {status: FinishedTask["status"]; exitCode?: number}): string {
+    const code = f.exitCode != null ? ` (종료 신호 · 코드 ${f.exitCode})` : "";
+    return f.status === "completed"
+        ? `dev 서버·감시처럼 스스로 끝나지 않는 명령이라, 다른 명령이 끈 것을 정상적인 끝으로 봤습니다${code}`
+        : `다른 명령(kill 등)이 도중에 끝냈습니다 — 오류로 멈춘 게 아닙니다${code}`;
 }
 
 // 출력의 마지막 줄 — 빈 줄과 끝에 붙는 "[exited with code N]"은 건너뛴다
