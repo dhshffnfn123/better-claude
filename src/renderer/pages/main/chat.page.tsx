@@ -46,7 +46,7 @@ import {FILES_PANEL_MIN_WIDTH, readPref, writePref} from "./files-panel-prefs";
 import {isImeComposing, type PromptHooks} from "./ChatInput";
 import {ChatTabView, type TabLoadRequest, type TabViewApi} from "./ChatTabView";
 import {TabStrip} from "./TabStrip";
-import type {AppCommand} from "../../slash-commands";
+import {type AppCommand, pluginCommandTarget} from "../../slash-commands";
 
 const cx = classNames.bind(styles);
 
@@ -1241,6 +1241,13 @@ const ChatPage = () => {
             case "sessions":
                 setSidebarOpen(true);
                 return;
+            case "plugins": {
+                // /plugin, /plugin install <이름> … → 확장 창의 플러그인 탭 (그 플러그인을 찾아서)
+                const target = pluginCommandTarget(cmd.args);
+                if (target.kind === "notice") apiRef.current.get(tabId)?.setNotice(target.notice);
+                else openExtensions("plugins", target.focus);
+                return;
+            }
         }
     };
     const handleAppCommand = useCallback((tabId: string, cmd: AppCommand) => appCommandRef.current(tabId, cmd), []);

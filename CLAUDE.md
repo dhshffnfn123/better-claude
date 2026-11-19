@@ -720,16 +720,18 @@ mostly don't work" (measured, CLI 2.1.325 / SDK 0.3.319):
   conversation in this tab (`tabs:open` with no session + `clearedTab`; asks first while responding or with
   background tasks, like a folder change), bare `/config` (`/settings`) → 설정, bare `/mcp` → the MCP popover,
   `/usage` (`/cost`, `/stats`) → the usage popover (`UsageMeter openSignal`), `/help` → 사용 가이드, `/memory` → 지침 panel,
-  `/tasks` (`/bashes`) → background panel, `/resume` → sidebar. Feedback is an `info` notice in the tab (new level).
+  `/tasks` (`/bashes`) → background panel, `/resume` → sidebar, `/plugin` (`/plugins`) → 확장 → 플러그인 (`pluginCommandTarget`:
+  `install|uninstall|enable|disable|details <id>` focuses that plugin; `marketplace …` stays a terminal notice with the shell
+  command). Feedback is an `info` notice in the tab (new level).
 - **Terminal only** (`TERMINAL_COMMANDS`, tagged 터미널): the CLI answers "/X isn't available in this environment" for
-  its interactive-only builtins (`/plugin`, `/status`, `/login`, `/logout`, `/permissions`, `/hooks`, `/theme`, `/add-dir`,
+  its interactive-only builtins (`/status`, `/login`, `/logout`, `/permissions`, `/hooks`, `/theme`, `/add-dir`,
   `/rewind`, `/export`, `/exit`, …), and `/color`, `/focus` are marked `terminalOriented` by the CLI itself (no visible
-  effect in the app). Not sent; a Korean notice says so and where the app has the equivalent. `/plugin …` shows the shell
-  command (`claude plugin install <id>`) — plugin management has no SDK API, only the terminal UI and the shell.
+  effect in the app). Not sent; a Korean notice says so and where the app has the equivalent. (`/plugin` used to be here —
+  plugin management has no SDK API; the app now runs the shell's `claude plugin …` itself, see 확장 window.)
   Unlisted ones the owner is likely to type are added to the menu (`EXTRA_TERMINAL`, only after a letter is typed).
 - **Unknown names** (`/install`): the CLI hands them to the model as text ("cmd_unknown_model_fallback"), which looked
   like the command ran and did nothing. Not sent: the list is re-probed first (a plugin just installed, a skill just
-  written), then a notice (`/install` → the plugin notice). Only lowercase command-like first words count — paths
+  written), then a notice (`/install` → "use /plugin install <id>"). Only lowercase command-like first words count — paths
   (`/Users/…`, `/tmp 정리해 줘`) are text, and a leading space sends anything as text. A custom command with the same
   name as a terminal/app one wins (sent).
 - **Menu keys**: exact name first, then custom commands, then shorter names — the old CLI order turned "/usage" + Enter
@@ -1033,6 +1035,60 @@ nav shrinks to icons.
   listen on `window` in the **capture** phase and `preventDefault()` — the window ignores a prevented Esc.
 - Styles live in `extensions/extensions.module.scss` (not the shared `chat.page.module.scss`), tab-specific parts below the
   shell's.
+
+**플러그인 tab** (`PluginsTab.tsx`; main `plugins:list|details|available|run|busy|cancel`; `src/main/services/plugins.ts`). The SDK
+can only `reloadPlugins()`; installing needs the CLI, so main runs the app's own binary (`resolveClaudePath()`) as
+`claude plugin …` in the tab's cwd (stdin closed — non-interactive; `process.env`, so `CLAUDE_CONFIG_DIR` carries over). The UI
+says settings are shared with the terminal's claude. Measured with CLI 2.1.325:
+
+- **Shapes**: `list --json` = array `{id, version, scope, enabled, installPath, installedAt, projectPath?, mcpServers?, …}` —
+  `enabled` is the effective state *for the cwd*; project/local installs of other repos are listed too (with their
+  `projectPath`, `enabled: false`) → main marks `here` (user/managed scope, or the cwd inside `projectPath`) and the tab shows
+  the rest under "다른 레포에만 설치됨" (no switches — manage them from a tab in that repo). `list --json --available` =
+  `{installed, available[]}` (~3,800–4,100: `pluginId, name, description, marketplaceName, source, version?, installCount?` —
+  counts only on ~310 directory entries; installed ones are excluded). Mutations with `--json` print **one JSON line last on
+  stdout** (`{command, outcome: "ok"|"failed", plugin, pluginId, scope, message, failureCode?, shownCommand?}`), human text may
+  precede it on stdout (`parseCliJson` takes the last JSON line; `pluginCliText` keeps the rest for error details). `details
+  <name>` is text only and works only for installed plugins (`parsePluginDetails`: Skills/Agents/Hooks/MCP/LSP lists,
+  "Always-on: ~N tok", the per-component always-on/on-invoke table) — the cards' contents and "대화마다 ~N 토큰" (an estimate).
+- **Scopes**: user = 모든 프로젝트, project = 팀 공유 (`<repo>/.claude/settings.json`), local = 이 레포에서 나만
+  (`.claude/settings.local.json`); the repo = `projectRootFor` (walk up to `.git`; a worktree → its main checkout). The home
+  folder is not a repo: its "project settings" would be `~/.claude/settings.json` = the user settings, so repo scopes are
+  refused there (main and the radio). Install defaults to 이 레포에서 나만 (the owner's "try it locally first"). `enable` runs
+  without `--scope` (auto-detect finds a local override); `disable`/`uninstall` pass the record's scope. Turning off a
+  user/project plugin asks where (everywhere/team vs 이 레포에서 나만 = `disable --scope local`). Re-enabling such a local
+  override makes the CLI record the plugin at local scope too (the *next* `list` shows a second record for the same id —
+  reconcile), so here-records are grouped per id into one card with several scope badges, and 지우기 offers one button per
+  scope (uninstalling only the user record left the plugin enabled through the local one — seen).
+- **Risk and login**: hooks and MCP servers are flagged "내 권한으로 프로그램 실행" (hook events; stdio = 이 컴퓨터의 프로그램 with
+  its command, http/sse = 원격 서버 host). A plugin MCP server's status comes from the folder's MCP list as
+  `plugin:<plugin>:<server>` (e.g. `plugin:figma:figma`, scope `dynamic`); `needs-auth` → "MCP 목록에서 로그인" → `host.openMcp()`
+  (the cwd bar popover's [로그인], F1). 찾아보기's page shows the source (`describePluginSource`: GitHub/GitLab links from
+  url/git-subdir/github sources, marketplace repo + path for relative sources, npm; http(s) links only, opened by the link
+  guard) and always warns that hooks/MCP servers run code with the owner's permissions.
+- **Command-source plugins** (`source: {source: "command", command, mode}`): install fails with `failureCode:
+  "command_source_refused"` + `shownCommand {kind, pluginId, command, mode, catalogRevision, sha256}` → the page shows that
+  command in a red box ("명령을 실행하고 설치") and only then re-runs with `--accept-command <sha256>`. **The CLI ignores
+  `--accept-command` inside a Claude Code session** (`CLAUDECODE`… in the env — a dev app started from an agent's shell
+  inherits it): it answers the same refusal with `acceptCommandMatched: true` and the stdout line "--accept-command is ignored
+  inside a Claude Code session" → "Claude Code 안에서 띄운 앱이라 CLI가 확인을 받지 않습니다 — 터미널에서 …". The app does not
+  strip those variables (that guard exists to stop an agent from accepting for the user). So an accepted install was not
+  verified; the owner's Dock-launched app has no such variables.
+- **One mutating command at a time** (`pluginOp`, app-wide): a second gets `busy`. Timeouts: install 5 min, uninstall 2 min,
+  enable/disable 1 min, lists 30–90 s. 취소 (install) = SIGTERM, SIGKILL after 3 s; a reopened window picks up a running op
+  (`plugins:busy`, polled every second) and refreshes when it ends. Verified with a marketplace entry whose git URL points to a
+  local server that never answers: busy banner, the second op refused, close/reopen kept the banner, 취소, and a 4 s timeout
+  (patched through the inspector) → "시간이 너무 오래 걸려 멈췄습니다".
+- **After a change** (`afterPluginChange`): details/available caches cleared, `invalidateInstructions()` (plugin skills are in
+  the start context), `folderInfo.clear()` + `pushFolderInfo` for tabs without a live CLI ("/" menu, MCP list), and live
+  sessions get `q.reloadPlugins()` **in the background** → `chat:commands`/`chat:mcp`. Not awaited: the reload reconciles
+  marketplaces and waited forever on that never-answering git source (normally 66 ms, measured). Verified with a live session
+  injected into a tab: disabling a plugin pushed the list without its skill ~450 ms later, enabling brought it back.
+- **Testing**: only with an isolated `CLAUDE_CONFIG_DIR` + a local marketplace (`claude plugin marketplace add <dir>`, dummy
+  plugins: a skill, an echo hook, a tiny stdio MCP server, a command-source one) and test folders that are their own git repos.
+  A dev app launched from an agent's shell became the frontmost app (keystrokes!) — start it with `--inspect-brk`, resume from a
+  script and, as soon as `BrowserWindow.getAllWindows()` has the window, `setFocusable(false)` + `app.hide()` (macOS gives the
+  previous app back) + `showInactive()`; `setActivationPolicy("accessory")` alone did not help.
 
 ### Send queue, notifications, copy, code blocks (renderer)
 

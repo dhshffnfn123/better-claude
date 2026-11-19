@@ -8,6 +8,7 @@ import {expandPathForChildProcesses} from "./main/services/path-expander";
 import {loadSdk} from "./main/services/claude-sdk";
 import {getGitDiff, getGitStatus, isGitIgnored} from "./main/services/git-changes";
 import * as instr from "./main/services/instructions";
+import * as plug from "./main/services/plugins";
 import {installPreviewProtocol, MAX_PREVIEW_HTML, PREVIEW_SCHEME, registerDir, registerHtml, registerPreviewScheme} from "./main/services/previews";
 import {imageDataUrl, imageFile, imageThumbnail, sniffImage, toolResultImages} from "./main/services/images";
 import {openInIde, pickIde} from "./main/services/jetbrains";
@@ -3284,6 +3285,322 @@ ipcMain.handle("instructions:delete_memory", async (event, tabId: string, p: unk
     } catch (e) {
         return {ok: false, error: (e as Error).message};
     }
+});
+
+// ── 확장 창: 플러그인 (claude plugin …) ──
+// SDK에 설치·지우기 API가 없어 앱이 고른 claude로 셸 명령을 돌린다(services/plugins.ts). 설정은 터미널의 claude와 같은 곳에 적힌다.
+// 바꾸는 명령(설치·켜기·끄기·지우기)은 앱 전체에서 한 번에 하나만 — 두 명령이 같은 설정 파일을 동시에 고치지 않게.
+const PLUGIN_TIMEOUT = {list: 30_000, available: 90_000, details: 30_000, install: 300_000, toggle: 60_000, uninstall: 120_000};
+const PLUGIN_CACHE_MS = 10 * 60_000;
+
+type PluginOpKind = "install" | "enable" | "disable" | "uninstall";
+let pluginOp: {kind: PluginOpKind; id: string; startedAt: number; cancel: () => void} | null = null;
+const pluginDetailsCache = new Map<string, {at: number; p: Promise<plug.PluginDetails | {error: string}>}>();
+const pluginAvailableCache = new Map<string, {at: number; p: Promise<AvailablePluginsResult>}>();
+
+type AvailablePluginsResult =
+    | {
+          ok: true;
+          plugins: {
+              id: string;
+              name: string;
+              description?: string;
+              marketplace: string;
+              version?: string;
+              installCount: number | null;
+              source: plug.PluginSource;
+          }[];
+          installed: string[];
+          fetchedAt: number;
+      }
+    | {ok: false; error: string};
+
+// CLI가 실행될 폴더 — 레포 범위(프로젝트·나만) 설정은 이 폴더의 레포에 적힌다. 지워진 폴더면 홈(사용자 범위만 안전하다).
+function pluginCwd(tab: ChatTab): string {
+    try {
+        if (fs.statSync(tab.cwd).isDirectory()) return tab.cwd;
+    } catch {
+        // 아래
+    }
+    return os.homedir();
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+    return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
+// CLI가 실패했을 때 보일 한국어 — 결과 JSON이 없으면(충돌·시간 초과) stderr의 마지막 줄
+function pluginCliError(r: plug.PluginCliResult, what: string): string {
+    if (r.spawnError) return `Claude CLI를 실행하지 못했습니다: ${r.spawnError}`;
+    if (r.timedOut) return `${what} — 시간이 너무 오래 걸려 멈췄습니다`;
+    if (r.cancelled) return "취소했습니다";
+    const last = r.stderr.trim().split("\n").filter(Boolean).pop();
+    return last ? `${what}: ${last.replace(/^✘\s*/, "")}` : `${what} (종료 코드 ${r.code ?? "?"})`;
+}
+
+// CLI가 사람에게 보이는 글 — stdout의 결과 JSON 줄 앞 글(명령 실행형 설치의 안내·거절 이유는 여기 온다)과 stderr
+function pluginCliText(r: plug.PluginCliResult): string | undefined {
+    const out = r.stdout.split("\n").filter((l) => l.trim() && !l.trim().startsWith("{"));
+    const err = r.stderr.split("\n").filter((l) => l.trim() && !out.includes(l));
+    const text = [...out, ...err].join("\n").trim();
+    return text ? text.slice(-2000) : undefined;
+}
+
+const PLUGIN_FAILURES: Record<string, string> = {
+    not_found: "마켓플레이스에서 이 플러그인을 찾지 못했습니다 — 마켓플레이스 목록이 오래됐을 수 있습니다 (터미널: claude plugin marketplace update)",
+    enabled_at_project_scope:
+        "팀 공유 설정(레포의 .claude/settings.json)에서 켜져 있어 이 범위로는 지울 수 없습니다 — \"팀 공유\" 범위로 지우거나, 나만 끄려면 끄기에서 \"이 레포에서 나만\"을 고르세요",
+    invalid_plugin_id: "플러그인 이름이 올바르지 않습니다",
+};
+
+const SCOPE_WORD: Record<string, string> = {user: "모든 프로젝트", project: "팀 공유(레포 설정)", local: "이 레포에서 나만"};
+
+// 플러그인이 바뀐 뒤: 캐시를 비우고, 폴더 정보("/" 메뉴의 명령·MCP 목록)와 지침·대화 시작 비용(플러그인 스킬이 시작 컨텍스트에
+// 든다)을 다시 받게 한다. 살아 있는 CLI(응답 중·추천 대기·백그라운드 작업)는 플러그인을 다시 읽힌다(reloadPlugins — 같은 프로세스로
+// 갈 다음 메시지에도 적용되게). 다시 읽기는 마켓플레이스를 맞춰 보느라 네트워크를 기다릴 수 있어(답하지 않는 저장소가 있으면 끝없이
+// 기다렸다 — 실측) 기다리지 않고 뒤에서 하고, 끝나면 그 탭의 명령·MCP 목록을 보낸다.
+function afterPluginChange() {
+    pluginDetailsCache.clear();
+    pluginAvailableCache.clear();
+    invalidateInstructions();
+    folderInfo.clear();
+    for (const tab of tabs.values()) {
+        const s = tab.live;
+        if (!s || s.stopped || s.inputEnded) {
+            pushFolderInfo(tab);
+            continue;
+        }
+        void withTimeout(s.q.reloadPlugins(), 60_000)
+            .then((r) => {
+                if (s.stopped || tab.live !== s) return;
+                send(tab, "chat:commands", toCommandList(r.commands));
+                send(tab, "chat:mcp", toMcpList(r.mcpServers));
+            })
+            .catch((e) => console.error("[plugins] 살아 있는 세션의 플러그인 다시 읽기 실패", (e as Error)?.message));
+    }
+}
+
+// 설치된 플러그인 — 이 폴더에서 쓰는 것(here: 사용자 범위, 또는 이 폴더가 그 레포 안)과 다른 레포에만 있는 것
+ipcMain.handle("plugins:list", async (event, tabId: string) => {
+    const tab = tabFor(event, tabId);
+    const claudePath = resolveClaudePath();
+    if (!claudePath) return {ok: false, error: "Claude CLI를 찾지 못했습니다"};
+    const cwd = pluginCwd(tab);
+    const r = await plug.runPluginCli(claudePath, ["list", "--json"], cwd, PLUGIN_TIMEOUT.list).result;
+    const data = plug.parseCliJson(r.stdout);
+    if (!Array.isArray(data)) return {ok: false, error: pluginCliError(r, "설치된 플러그인 목록을 받지 못했습니다")};
+    const realCwd = realOrResolved(cwd);
+    const plugins = data.filter(isRecord).flatMap((p) => {
+        const id = typeof p.id === "string" ? p.id : "";
+        if (!id) return [];
+        const {name, marketplace} = plug.splitPluginId(id);
+        const scope = typeof p.scope === "string" ? p.scope : "user";
+        const projectPath = typeof p.projectPath === "string" ? p.projectPath : undefined;
+        const here = scope === "user" || scope === "managed" || (!!projectPath && isInside(realOrResolved(projectPath), realCwd));
+        const servers = isRecord(p.mcpServers) ? p.mcpServers : {};
+        return [
+            {
+                id,
+                name,
+                marketplace,
+                version: typeof p.version === "string" ? p.version : undefined,
+                scope,
+                enabled: p.enabled === true,
+                here,
+                projectPath,
+                installedAt: typeof p.installedAt === "string" ? p.installedAt : undefined,
+                mcpServers: Object.entries(servers).map(([server, cfg]) => {
+                    const c = isRecord(cfg) ? cfg : {};
+                    const command = typeof c.command === "string" ? c.command : "";
+                    const args = Array.isArray(c.args) ? c.args.filter((a): a is string => typeof a === "string") : [];
+                    return {
+                        name: server,
+                        transport: typeof c.type === "string" ? c.type : command ? "stdio" : "unknown",
+                        target: typeof c.url === "string" ? c.url : [command, ...args].join(" ").trim() || undefined,
+                    };
+                }),
+            },
+        ];
+    });
+    return {ok: true, cwd: tab.cwd, projectRoot: plug.projectRootFor(cwd), home: os.homedir(), configDir: instr.claudeConfigDir(), plugins};
+});
+
+// 플러그인 하나에 든 것(스킬·에이전트·훅·MCP)과 대화마다 드는 토큰 — claude plugin details (설치된 것만 된다)
+ipcMain.handle("plugins:details", async (event, tabId: string, id: unknown) => {
+    if (!plug.isPluginRef(id)) return {ok: false, error: "플러그인 이름이 올바르지 않습니다"};
+    const tab = tabFor(event, tabId);
+    const claudePath = resolveClaudePath();
+    if (!claudePath) return {ok: false, error: "Claude CLI를 찾지 못했습니다"};
+    const cwd = pluginCwd(tab);
+    const key = `${cwd}\u0000${id}`;
+    let hit = pluginDetailsCache.get(key);
+    if (!hit || Date.now() - hit.at > PLUGIN_CACHE_MS) {
+        const p = plug
+            .runPluginCli(claudePath, ["details", id], cwd, PLUGIN_TIMEOUT.details)
+            .result.then((r) => plug.parsePluginDetails(r.stdout) ?? {error: pluginCliError(r, "플러그인 내용을 읽지 못했습니다")});
+        hit = {at: Date.now(), p};
+        pluginDetailsCache.set(key, hit);
+        void p.then((d) => {
+            if ("error" in d && pluginDetailsCache.get(key) === hit) pluginDetailsCache.delete(key);
+        });
+    }
+    const d = await hit.p;
+    return "error" in d ? {ok: false, error: d.error} : {ok: true, details: d};
+});
+
+// 설치할 수 있는 플러그인 — 등록된 마켓플레이스와 공식 디렉터리(4천여 개). 출처 링크를 만들려고 마켓플레이스 목록도 받는다.
+ipcMain.handle("plugins:available", async (event, tabId: string, refresh: unknown): Promise<AvailablePluginsResult> => {
+    const tab = tabFor(event, tabId);
+    const claudePath = resolveClaudePath();
+    if (!claudePath) return {ok: false, error: "Claude CLI를 찾지 못했습니다"};
+    const cwd = pluginCwd(tab);
+    const cached = pluginAvailableCache.get(cwd);
+    if (cached && refresh !== true && Date.now() - cached.at < PLUGIN_CACHE_MS) return cached.p;
+    const p = (async (): Promise<AvailablePluginsResult> => {
+        const [r, m] = await Promise.all([
+            plug.runPluginCli(claudePath, ["list", "--json", "--available"], cwd, PLUGIN_TIMEOUT.available).result,
+            plug.runPluginCli(claudePath, ["marketplace", "list", "--json"], cwd, PLUGIN_TIMEOUT.list).result,
+        ]);
+        const data = plug.parseCliJson(r.stdout);
+        if (!isRecord(data) || !Array.isArray(data.available)) {
+            return {ok: false, error: pluginCliError(r, "설치할 수 있는 플러그인 목록을 받지 못했습니다")};
+        }
+        const markets = plug.parseCliJson(m.stdout);
+        const byName = new Map<string, plug.MarketplaceInfo>(
+            (Array.isArray(markets) ? markets : []).filter(isRecord).map((x) => [String(x.name), x as unknown as plug.MarketplaceInfo])
+        );
+        const plugins = data.available.filter(isRecord).flatMap((x) => {
+            const id = typeof x.pluginId === "string" ? x.pluginId : "";
+            if (!id) return [];
+            const marketplace = typeof x.marketplaceName === "string" ? x.marketplaceName : plug.splitPluginId(id).marketplace;
+            return [
+                {
+                    id,
+                    name: typeof x.name === "string" ? x.name : plug.splitPluginId(id).name,
+                    description: typeof x.description === "string" && x.description.trim() ? x.description.trim() : undefined,
+                    marketplace,
+                    version: typeof x.version === "string" ? x.version : undefined,
+                    installCount: typeof x.installCount === "number" ? x.installCount : null,
+                    source: plug.describePluginSource(x.source, byName.get(marketplace)),
+                },
+            ];
+        });
+        const installed = (Array.isArray(data.installed) ? data.installed : []).filter(isRecord).map((x) => String(x.id ?? ""));
+        return {ok: true, plugins, installed: installed.filter(Boolean), fetchedAt: Date.now()};
+    })().catch((e) => ({ok: false as const, error: `설치할 수 있는 플러그인 목록을 받지 못했습니다: ${(e as Error).message}`}));
+    const entry = {at: Date.now(), p};
+    pluginAvailableCache.set(cwd, entry);
+    void p.then((res) => {
+        if (!res.ok && pluginAvailableCache.get(cwd) === entry) pluginAvailableCache.delete(cwd);
+    });
+    return p;
+});
+
+// 설치·켜기·끄기·지우기. 명령 실행형 설치는 처음에 CLI가 명령을 보이고 거절한다 → confirm으로 그 명령을 화면에 보이고,
+// 사람이 확인하면 acceptCommand(그 sha256)를 실어 다시 부른다. 같은 명령·같은 카탈로그일 때만 CLI가 받는다.
+ipcMain.handle("plugins:run", async (event, tabId: string, op: unknown) => {
+    const tab = tabFor(event, tabId);
+    if (pluginOp) return {ok: false, busy: true, error: "다른 플러그인 작업이 진행 중입니다 — 끝난 뒤 다시 하세요"};
+    const o = isRecord(op) ? op : {};
+    const kind = o.kind;
+    const id = o.id;
+    if (kind !== "install" && kind !== "enable" && kind !== "disable" && kind !== "uninstall") return {ok: false, error: "알 수 없는 작업입니다"};
+    if (!plug.isPluginRef(id)) return {ok: false, error: "플러그인 이름이 올바르지 않습니다"};
+    const scope = o.scope;
+    if (kind !== "enable" && !plug.isPluginScope(scope)) return {ok: false, error: "범위가 올바르지 않습니다"};
+    const accept = typeof o.acceptCommand === "string" ? o.acceptCommand : undefined;
+    if (o.acceptCommand !== undefined && (!accept || !/^[0-9a-f]{64}$/.test(accept))) return {ok: false, error: "확인한 명령이 올바르지 않습니다"};
+    const claudePath = resolveClaudePath();
+    if (!claudePath) return {ok: false, error: "Claude CLI를 찾지 못했습니다"};
+    const cwd = tab.cwd;
+    if (!fs.existsSync(cwd)) return {ok: false, error: "작업 폴더가 없습니다 — 폴더를 바꾼 뒤 다시 하세요"};
+    // 홈 폴더(레포 아님)의 "프로젝트 설정"은 ~/.claude/settings.json — 사용자 설정과 같은 파일이라 레포 범위로는 쓰지 않는다
+    if ((scope === "project" || scope === "local") && realOrResolved(plug.projectRootFor(cwd)) === realOrResolved(os.homedir())) {
+        return {ok: false, error: "홈 폴더는 레포가 아니라 레포 범위로 바꿀 수 없습니다 — \"모든 프로젝트\"로 하거나, 레포 폴더의 탭에서 하세요"};
+    }
+    const args =
+        kind === "install"
+            ? ["install", id, "--scope", scope as string, "--json", ...(accept ? ["--accept-command", accept] : [])]
+            : kind === "enable"
+              ? ["enable", id, "--json"]
+              : [kind, id, "--scope", scope as string, "--json"];
+    const timeout = kind === "install" ? PLUGIN_TIMEOUT.install : kind === "uninstall" ? PLUGIN_TIMEOUT.uninstall : PLUGIN_TIMEOUT.toggle;
+    const handle = plug.runPluginCli(claudePath, args, cwd, timeout);
+    pluginOp = {kind, id, startedAt: Date.now(), cancel: handle.cancel};
+    let r: plug.PluginCliResult;
+    try {
+        r = await handle.result;
+    } finally {
+        pluginOp = null;
+    }
+    const json = plug.parseCliJson(r.stdout);
+    const res = isRecord(json) ? json : null;
+    const name = plug.splitPluginId(id).name;
+    if (r.cancelled || r.timedOut) {
+        afterPluginChange();
+        return {
+            ok: false,
+            cancelled: r.cancelled,
+            error: r.cancelled
+                ? "취소했습니다 — 도중에 멈춰서 일부만 바뀌었을 수 있습니다. 목록을 다시 확인하세요"
+                : `시간이 너무 오래 걸려 멈췄습니다 (${timeout >= 60_000 ? `${Math.round(timeout / 60_000)}분` : `${Math.round(timeout / 1000)}초`}) — 네트워크가 느리거나 저장소가 큽니다. 목록을 다시 확인하세요`,
+        };
+    }
+    if (res?.outcome === "ok") {
+        afterPluginChange();
+        const where = SCOPE_WORD[String(res.scope ?? scope)] ?? "";
+        const message =
+            kind === "install"
+                ? `${name} 설치함${where ? ` — ${where}` : ""}`
+                : kind === "enable"
+                  ? `${name} 켬`
+                  : kind === "disable"
+                    ? `${name} 끔${where ? ` — ${where}` : ""}`
+                    : `${name} 지움${where ? ` — ${where}` : ""}`;
+        return {ok: true, message, cliMessage: typeof res.message === "string" ? res.message : undefined};
+    }
+    const code = typeof res?.failureCode === "string" ? res.failureCode : undefined;
+    if (code === "already_in_goal_state") {
+        return {ok: true, message: kind === "enable" ? `${name}은(는) 이미 켜져 있습니다` : kind === "disable" ? `${name}은(는) 이미 꺼져 있습니다` : `${name}: 이미 그 상태입니다`};
+    }
+    const shown = isRecord(res?.shownCommand) ? res?.shownCommand : null;
+    if (code === "command_source_refused" && shown && typeof shown.sha256 === "string") {
+        // 확인하고 다시 보냈는데도 거절 — CLI가 받지 않는 환경(예: Claude Code 세션 안에서 띄운 앱)이거나 그사이 명령이 바뀌었다
+        if (accept) {
+            const changed = shown.sha256 !== accept;
+            const text = pluginCliText(r);
+            return {
+                ok: false,
+                code,
+                error: changed
+                    ? "그사이 마켓플레이스의 설치 명령이 바뀌었습니다 — 새 명령을 다시 확인하세요"
+                    : /inside a Claude Code session/i.test(text ?? "")
+                      ? `Claude Code 안에서 띄운 앱이라 CLI가 확인을 받지 않습니다 — 터미널에서 claude plugin install ${id}로 설치하세요`
+                      : `CLI가 확인한 명령을 받지 않았습니다 — 터미널에서 claude plugin install ${id}로 설치하세요`,
+                detail: text,
+                confirm: changed ? {command: String(shown.command ?? ""), mode: typeof shown.mode === "string" ? shown.mode : undefined, sha256: shown.sha256} : undefined,
+            };
+        }
+        return {
+            ok: false,
+            code,
+            error: "이 플러그인은 마켓플레이스가 정한 명령을 이 컴퓨터에서 실행해 설치합니다 — 명령을 확인해 주세요",
+            confirm: {command: String(shown.command ?? ""), mode: typeof shown.mode === "string" ? shown.mode : undefined, sha256: shown.sha256},
+        };
+    }
+    const cliMessage = typeof res?.message === "string" ? res.message : undefined;
+    return {
+        ok: false,
+        code,
+        error: (code && PLUGIN_FAILURES[code]) || (cliMessage ? `실패했습니다: ${cliMessage}` : pluginCliError(r, "플러그인 명령이 실패했습니다")),
+        detail: code && PLUGIN_FAILURES[code] ? cliMessage : pluginCliText(r),
+    };
+});
+
+// 진행 중인 바꾸는 명령 — 창을 닫았다 다시 열었을 때 "설치 중"을 이어 보여 준다 / 취소(설치가 오래 걸릴 때)
+ipcMain.handle("plugins:busy", () => (pluginOp ? {kind: pluginOp.kind, id: pluginOp.id, startedAt: pluginOp.startedAt} : null));
+ipcMain.handle("plugins:cancel", () => {
+    pluginOp?.cancel();
 });
 
 // ── 답변 속 그림 ──

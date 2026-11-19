@@ -5419,6 +5419,11 @@
   background-color: var(--c-accent);
 }
 
+.switch:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
 .switchKnob {
   position: absolute;
   top: 2px;

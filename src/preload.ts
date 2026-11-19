@@ -120,6 +120,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
     reconnectMcp: (tabId: string, name: string) => ipcRenderer.invoke("mcp:reconnect", tabId, name),
     mcpLogout: (tabId: string, name: string) => ipcRenderer.invoke("mcp:logout", tabId, name),
 
+    // ── 확장 창: 플러그인 (탭의 작업 폴더에서 claude plugin …) — 바꾸는 명령은 앱 전체에서 한 번에 하나 ──
+    listPlugins: (tabId: string) => ipcRenderer.invoke("plugins:list", tabId),
+    getPluginDetails: (tabId: string, id: string) => ipcRenderer.invoke("plugins:details", tabId, id),
+    listAvailablePlugins: (tabId: string, refresh?: boolean) => ipcRenderer.invoke("plugins:available", tabId, refresh === true),
+    runPluginOp: (tabId: string, op: object) => ipcRenderer.invoke("plugins:run", tabId, op),
+    getPluginBusy: () => ipcRenderer.invoke("plugins:busy"),
+    cancelPluginOp: () => ipcRenderer.invoke("plugins:cancel"),
+
     // ── 백그라운드 작업 패널 (탭별): 셸 작업의 최근 출력, 작업 하나만 중지 ──
     getBackgroundOutput: (tabId: string, taskId: string, maxBytes?: number) =>
         ipcRenderer.invoke("background:output", tabId, taskId, maxBytes),

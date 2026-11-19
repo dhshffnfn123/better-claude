@@ -9,14 +9,25 @@ import {useSuggestionsEnabled} from "../../suggestion-setting";
 
 const cx = classNames.bind(styles);
 
-// 켜기/끄기 스위치 — 설정 창(SettingsDialog)도 같이 쓴다
-export function Switch({checked, onChange, label}: {checked: boolean; onChange: (next: boolean) => void; label: string}) {
+// 켜기/끄기 스위치 — 설정 창(SettingsDialog)·확장 창의 플러그인 켜기·끄기도 같이 쓴다
+export function Switch({
+    checked,
+    onChange,
+    label,
+    disabled = false,
+}: {
+    checked: boolean;
+    onChange: (next: boolean) => void;
+    label: string;
+    disabled?: boolean;
+}) {
     return (
         <button
             type="button"
             role="switch"
             aria-checked={checked}
             aria-label={label}
+            disabled={disabled}
             className={cx("switch", {switchOn: checked})}
             onClick={() => onChange(!checked)}
         >

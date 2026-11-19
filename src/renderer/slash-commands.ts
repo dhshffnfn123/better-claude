@@ -4,7 +4,7 @@ import type {ChatNotice} from "./hooks/useClaudeChat";
 // 목록과 실행은 CLI가 기준이다(main의 commands:list = SDK의 supportedCommands). 앱은 세 가지만 가로챈다:
 //  - 앱에 같은 기능이 있는 것: CLI(SDK)에서는 "이번 프로세스만" 바뀌고 앱은 메시지마다 CLI를 새로 띄워서 다음 메시지에
 //    사라지거나(/model, /effort), SDK에서 안 되거나(/fast "not available in the Agent SDK"), 화면이 따로 있는 것(/usage …)
-//  - 터미널 화면에서만 되는 것: CLI가 "isn't available in this environment"라고만 답하거나(/plugin, /status, /login …)
+//  - 터미널 화면에서만 되는 것: CLI가 "isn't available in this environment"라고만 답하거나(/status, /login …)
 //    터미널 화면의 일이라 앱에는 보이지 않는 것(/color, /focus — CLI 자신도 terminalOriented로 표시한다)
 //  - 없는 명령(/install …): CLI는 모델에게 그대로 넘겨서 엉뚱한 답이 왔다
 // 그 밖(스킬·/compact·/context·/rename·/goal …)은 그대로 보낸다 — 출력은 답변에 보인다.
@@ -21,7 +21,8 @@ export type AppAction =
     | "guide"
     | "instructions"
     | "background"
-    | "sessions";
+    | "sessions"
+    | "plugins";
 
 // 앱이 처리할 명령 (탭 바깥 — 셸이 한다)
 export interface AppCommand {
@@ -72,6 +73,9 @@ const APP_COMMANDS: Record<string, AppSpec> = {
     tasks: BACKGROUND,
     bashes: BACKGROUND,
     resume: {action: "sessions", note: "지난 대화 목록(사이드바)을 엽니다"},
+    // CLI의 /plugin은 터미널 화면 전용이라 SDK에서는 "isn't available"이다 — 앱의 확장 창 플러그인 탭으로 (pluginCommandTarget)
+    plugin: {action: "plugins", note: "플러그인 창을 엽니다 (확장 → 플러그인) — install <이름>이면 그 플러그인을 찾습니다"},
+    plugins: {action: "plugins", note: "플러그인 창을 엽니다 (확장 → 플러그인)"},
 };
 
 // 터미널에서만 되는 것 — 보내지 않고 알린다. 값 = 앱에서 비슷한 일을 하는 곳 (없으면 "")
@@ -79,7 +83,6 @@ const TERMINAL_COMMANDS: Record<string, string> = {
     color: "입력줄 색은 터미널 화면의 것이라 앱에는 보이지 않습니다",
     focus: "터미널 화면 모드라 앱에는 없습니다",
     status: "앱에서는 모델·작업 폴더·사용량이 위쪽 막대에 보입니다",
-    plugin: "", // pluginNotice
     login: "앱은 터미널과 같은 로그인을 씁니다 (터미널에서 claude 실행 후 /login)",
     logout: "앱은 터미널과 같은 로그인을 씁니다 (터미널에서 claude 실행 후 /logout)",
     permissions: "앱에서는 위쪽 방패 버튼으로 이 탭의 전체 허용·확인 모드를 바꿉니다",
@@ -106,9 +109,8 @@ const TERMINAL_COMMANDS: Record<string, string> = {
 
 // "/" 메뉴에 더하는 줄 — CLI 목록에 없는 것. 앱이 하는 것은 늘 보이고, 터미널 것은 글자를 하나라도 쳤을 때만
 // (그냥 "/"만 친 목록이 길어지지 않게 — 정확히 친 이름이 다른 명령으로 바뀌지 않게 하려는 줄이다).
-const EXTRA_APP = ["help", "memory", "tasks", "resume"];
+const EXTRA_APP = ["help", "memory", "tasks", "resume", "plugin"];
 const EXTRA_TERMINAL = [
-    "plugin",
     "status",
     "login",
     "logout",
@@ -149,13 +151,12 @@ export function classifySlash(raw: string, commands: SlashCommand[]): SlashResul
     if (cli?.source === "custom") return {kind: "cli"};
     const app = APP_COMMANDS[name];
     if (app && !(app.argsToCli && args)) return {kind: "app", command: {action: app.action, name, args}};
-    if (name in TERMINAL_COMMANDS) return {kind: "notice", notice: terminalNotice(name, args)};
+    if (name in TERMINAL_COMMANDS) return {kind: "notice", notice: terminalNotice(name)};
     if (cli || commands.length === 0) return {kind: "cli"};
     return {kind: "unknown", name, args};
 }
 
-function terminalNotice(name: string, args: string): ChatNotice {
-    if (name === "plugin") return pluginNotice(args);
+function terminalNotice(name: string): ChatNotice {
     const hint = TERMINAL_COMMANDS[name];
     return {
         level: "warning",
@@ -163,23 +164,39 @@ function terminalNotice(name: string, args: string): ChatNotice {
     };
 }
 
-// 플러그인 관리는 터미널 화면(/plugin)이나 셸 명령(claude plugin …)으로만 된다 — 셸에서 칠 명령을 그대로 보여 준다
-// (알림은 글자 그대로 그려서 코드 표시(`) 없이 쌍점 뒤에 둔다 — 그대로 골라 복사할 수 있게)
-function pluginNotice(args: string, install = false): ChatNotice {
-    const shell = args ? `claude plugin ${args}` : "claude plugin install <플러그인>@<마켓플레이스>";
-    return {
-        level: "warning",
-        message: `플러그인 설치·관리는 터미널에서 합니다 — 셸에서: ${shell}`,
-        detail:
-            "터미널에서 claude를 실행해 /plugin으로 고르거나, 셸에서 claude plugin install·uninstall·enable·disable·marketplace add를 씁니다.\n" +
-            "설치한 플러그인의 명령은 다음 메시지부터 쓸 수 있습니다." +
-            (install ? "\nGitHub 앱 설치(/install-github-app)와 Claude Code 자체 설치(claude install)도 터미널에서 합니다." : ""),
-    };
+// /plugin … — 앱의 확장 창 플러그인 탭을 연다. install·uninstall·enable·disable·details <이름>이면 그 플러그인을 찾아 보여 준다
+// (설치돼 있으면 설치됨의 그 줄, 아니면 찾아보기에서 그 이름으로). 마켓플레이스 추가·관리는 앱에 없어 셸 명령을 알려 준다.
+const PLUGIN_SUBCOMMANDS = new Set(["install", "i", "uninstall", "remove", "enable", "disable", "details", "update", "configure"]);
+
+export function pluginCommandTarget(args: string): {kind: "open"; focus?: string} | {kind: "notice"; notice: ChatNotice} {
+    const words = args.split(/\s+/).filter(Boolean);
+    const first = words[0]?.toLowerCase() ?? "";
+    if (first === "marketplace" || first === "marketplaces") {
+        return {
+            kind: "notice",
+            notice: {
+                level: "warning",
+                message: `마켓플레이스 추가·관리는 터미널에서 합니다 — 셸에서: claude plugin ${words.join(" ")}`,
+                detail: "추가한 마켓플레이스의 플러그인은 사이드바 확장 → 플러그인의 찾아보기에 나옵니다 (↻로 새로 받기).",
+            },
+        };
+    }
+    // 옵션(--scope user …)과 그 값은 건너뛰고 첫 이름만
+    const names = words.filter((w, i) => !w.startsWith("-") && !(i > 0 && words[i - 1].startsWith("-") && !words[i - 1].includes("=")));
+    if (PLUGIN_SUBCOMMANDS.has(first)) return {kind: "open", focus: names[1]};
+    if (first === "list" || !first) return {kind: "open"};
+    return {kind: "open", focus: names[0]};
 }
 
 // 목록을 새로 받아도 없는 명령
 export function unknownNotice(name: string, args: string): ChatNotice {
-    if (name === "install" || name === "plugins") return pluginNotice(args ? `install ${args}` : "", true);
+    if (name === "install") {
+        return {
+            level: "warning",
+            message: `/install 명령은 없습니다 — 플러그인 설치는 /plugin install ${args || "<이름>"} 또는 사이드바 확장 → 플러그인`,
+            detail: "Claude Code 자체 설치(claude install)와 GitHub 앱 설치(/install-github-app)는 터미널에서 합니다.",
+        };
+    }
     return {
         level: "warning",
         message: `/${name} 명령은 없습니다 — "/"를 치면 이 폴더에서 쓸 수 있는 명령이 보입니다`,
@@ -212,7 +229,7 @@ export function menuCommands(commands: SlashCommand[]): MenuCommand[] {
             description: "",
             source: "builtin",
             where: "terminal",
-            note: name === "plugin" ? "플러그인 설치·관리 — 셸의 claude plugin install …" : hint || "터미널의 claude에서만 됩니다",
+            note: hint || "터미널의 claude에서만 됩니다",
             extra: true,
         });
     }

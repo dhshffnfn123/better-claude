@@ -220,6 +220,79 @@ type InstructionRead =
 
 type InstructionWrite = {ok: true; mtimeMs: number} | {ok: false; conflict?: boolean; exists?: boolean; error?: string};
 
+// ── 확장 창: 플러그인 (main의 plugins:*, claude plugin …) ──
+// scope: user = 모든 프로젝트, project = 팀 공유(레포의 .claude/settings.json), local = 이 레포에서 나만(.claude/settings.local.json)
+type PluginScope = "user" | "project" | "local";
+
+interface InstalledPlugin {
+    id: string; // 이름@마켓플레이스
+    name: string;
+    marketplace: string;
+    version?: string;
+    scope: string; // PluginScope 또는 managed(관리 정책)
+    enabled: boolean; // 이 폴더에서 켜져 있다
+    here: boolean; // 이 폴더에 적용된다 (사용자 범위, 또는 이 폴더가 그 레포 안) — 아니면 다른 레포에만 설치된 것
+    projectPath?: string; // 레포 범위로 설치된 레포
+    installedAt?: string;
+    mcpServers: {name: string; transport: string; target?: string}[]; // transport: stdio(이 컴퓨터의 프로그램) | http | sse …
+}
+
+type PluginListResult =
+    | {ok: true; cwd: string; projectRoot: string; home: string; configDir: string; plugins: InstalledPlugin[]}
+    | {ok: false; error: string};
+
+// claude plugin details — 안에 든 것과 대화마다 늘 드는 토큰(CLI의 어림값)
+interface PluginDetails {
+    description?: string;
+    skills: string[];
+    agents: string[];
+    hooks: string[]; // 훅이 걸린 순간(SessionStart …)
+    mcpServers: string[];
+    lspServers: string[];
+    alwaysOnTokens: number | null;
+    components: {name: string; alwaysOn: string; onInvoke: string}[]; // 스킬·에이전트마다: 늘 드는 것 / 부를 때 드는 것
+}
+
+type PluginDetailsResult = {ok: true; details: PluginDetails} | {ok: false; error: string};
+
+// 출처 — link가 있으면 브라우저로 연다(http(s)만). command = 명령 실행형 설치의 그 명령
+interface PluginSource {
+    kind: "repo" | "path" | "npm" | "command" | "other";
+    text: string;
+    link?: string;
+    command?: string;
+}
+
+interface AvailablePlugin {
+    id: string;
+    name: string;
+    description?: string;
+    marketplace: string;
+    version?: string;
+    installCount: number | null; // 공식 디렉터리 일부만 있다
+    source: PluginSource;
+}
+
+type PluginAvailableResult = {ok: true; plugins: AvailablePlugin[]; installed: string[]; fetchedAt: number} | {ok: false; error: string};
+
+type PluginOp =
+    | {kind: "install"; id: string; scope: PluginScope; acceptCommand?: string}
+    | {kind: "enable"; id: string}
+    | {kind: "disable" | "uninstall"; id: string; scope: PluginScope};
+
+// confirm: 명령 실행형 설치 — 이 명령을 보여 주고, 사람이 확인하면 acceptCommand = sha256으로 다시 부른다
+type PluginOpResult =
+    | {ok: true; message: string; cliMessage?: string}
+    | {
+          ok: false;
+          error: string;
+          detail?: string;
+          code?: string;
+          busy?: boolean;
+          cancelled?: boolean;
+          confirm?: {command: string; mode?: string; sha256: string};
+      };
+
 // 대화 갈라지기 결과 — 새 세션을 새 탭으로 연다
 type ForkResult = {ok: true; sessionId: string; title: string; cwd: string} | {ok: false; error: string};
 
@@ -561,6 +634,14 @@ interface Window {
         // 목록을 못 받으면 null
         reconnectMcp: (tabId: string, name: string) => Promise<McpServer[] | null>;
         mcpLogout: (tabId: string, name: string) => Promise<McpLogoutResult>;
+
+        // 확장 창의 플러그인 탭 — 목록·내용·찾아보기, 바꾸기(한 번에 하나), 진행 중인 것·취소
+        listPlugins: (tabId: string) => Promise<PluginListResult>;
+        getPluginDetails: (tabId: string, id: string) => Promise<PluginDetailsResult>;
+        listAvailablePlugins: (tabId: string, refresh?: boolean) => Promise<PluginAvailableResult>;
+        runPluginOp: (tabId: string, op: PluginOp) => Promise<PluginOpResult>;
+        getPluginBusy: () => Promise<{kind: PluginOp["kind"]; id: string; startedAt: number} | null>;
+        cancelPluginOp: () => Promise<void>;
 
         getBackgroundOutput: (tabId: string, taskId: string, maxBytes?: number) => Promise<BackgroundOutput | null>;
         stopBackgroundTask: (tabId: string, taskId: string) => Promise<void>;

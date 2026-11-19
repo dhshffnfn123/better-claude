@@ -135,6 +135,7 @@
   flex: 1;
   flex-direction: column;
   min-width: 0;
+  overflow-x: hidden;
   overflow-y: auto;
 }
 
@@ -144,6 +145,908 @@
   font-size: 13px;
   color: var(--c-text-muted);
   text-align: center;
+}
+
+// ── 탭 본문의 공통 부품 (어느 탭이든 쓸 수 있다) ──
+.extPage {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 24px 28px;
+}
+
+// 탭 맨 위의 한두 줄 설명
+.extLead {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--c-text-muted);
+}
+
+.extBtn {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 6px;
+  align-items: center;
+  height: 28px;
+  padding: 0 11px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--c-text);
+  white-space: nowrap;
+  cursor: pointer;
+  background-color: var(--c-fill);
+  border: 1px solid var(--c-border-neutral);
+  border-radius: 7px;
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.55;
+  }
+
+  &:hover:not(:disabled) {
+    background-color: var(--c-fill-strong);
+  }
+}
+
+// 알림 줄·카드 안의 낮은 단추
+.extBtnSmall {
+  height: 24px;
+}
+
+.extBtnQuiet {
+  color: var(--c-text-2);
+  background-color: transparent;
+  border-color: transparent;
+
+  &:hover:not(:disabled) {
+    color: var(--c-text);
+    background-color: var(--c-hover);
+  }
+}
+
+.extBtnPrimary {
+  color: var(--c-on-primary);
+  background-color: var(--c-primary);
+  border-color: var(--c-primary);
+
+  &:hover:not(:disabled) {
+    background-color: var(--c-primary-hover);
+  }
+}
+
+.extBtnDanger {
+  color: var(--c-on-danger);
+  background-color: var(--c-danger-fill);
+  border-color: var(--c-danger-fill);
+
+  &:hover:not(:disabled) {
+    background-color: var(--c-danger-fill-hover);
+  }
+}
+
+.extIconBtn {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  font-size: 12.5px;
+  color: var(--c-text-muted);
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-radius: 7px;
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.5;
+  }
+
+  &:hover:not(:disabled) {
+    color: var(--c-text);
+    background-color: var(--c-hover);
+  }
+}
+
+// 글자처럼 보이는 단추 (링크 자리)
+.extLinkBtn {
+  padding: 0;
+  font: inherit;
+  color: var(--c-link);
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  background: none;
+  border: none;
+
+  &:hover {
+    text-decoration-color: currentColor;
+  }
+}
+
+.extBadge {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 4px;
+  align-items: center;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  color: var(--c-text-2);
+  white-space: nowrap;
+  background-color: var(--c-chip-bg);
+  border-radius: 999px;
+}
+
+.extBadgeMuted {
+  font-weight: 500;
+  color: var(--c-text-muted);
+  background-color: transparent;
+  box-shadow: inset 0 0 0 1px var(--c-border-neutral);
+}
+
+.extBadgeOk {
+  color: var(--c-success-text);
+  background-color: var(--c-success-soft);
+}
+
+.extBadgeWarn {
+  color: var(--c-warning-text);
+  background-color: var(--c-warning-soft);
+}
+
+// 진행 중·성공·실패 알림 줄
+.extBanner {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 9px 10px 9px 12px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--c-text-2);
+  background-color: var(--c-fill-subtle);
+  border: 1px solid var(--c-border-soft);
+  border-radius: 9px;
+
+  > svg {
+    flex-shrink: 0;
+    margin-top: 3px;
+  }
+}
+
+// 알림 줄 오른쪽 끝의 닫기 (×)
+.extBannerClose {
+  width: 22px;
+  height: 22px;
+  margin: -1px 0 -1px auto;
+}
+
+.extBannerOk {
+  color: var(--c-success-text);
+  background-color: var(--c-success-soft);
+  border-color: transparent;
+}
+
+.extBannerError {
+  color: var(--c-error);
+  background-color: var(--c-error-soft);
+  border-color: var(--c-error-border);
+}
+
+.extBannerText {
+  flex: 1;
+  min-width: 0;
+}
+
+.extBannerDetail {
+  max-height: 120px;
+  margin: 6px 0 0;
+  overflow: auto;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  color: var(--c-text-2);
+  white-space: pre-wrap;
+}
+
+.extEmpty {
+  padding: 36px 12px;
+  font-size: 13px;
+  color: var(--c-text-muted);
+  text-align: center;
+}
+
+.extEmptyError {
+  color: var(--c-error);
+}
+
+.extSearch {
+  position: relative;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 160px;
+}
+
+.extSearchIcon {
+  position: absolute;
+  left: 10px;
+  font-size: 11px;
+  color: var(--c-text-faint);
+  pointer-events: none;
+}
+
+.extSearchInput {
+  box-sizing: border-box;
+  width: 100%;
+  height: 32px;
+  padding: 0 10px 0 30px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--c-text);
+  background-color: var(--c-input-bg);
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  outline: none;
+
+  &:focus {
+    border-color: var(--c-accent);
+  }
+
+  &::placeholder {
+    color: var(--c-placeholder);
+  }
+}
+
+.extSelect {
+  flex-shrink: 0;
+  height: 32px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--c-text);
+  background-color: var(--c-input-bg);
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  outline: none;
+
+  &:focus {
+    border-color: var(--c-accent);
+  }
+}
+
+// 고르는 칸 (라디오) — 설정 창의 settingsChoice와 같은 모양
+.extChoices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.extChoice {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 11px 14px;
+  font: inherit;
+  color: var(--c-text);
+  text-align: left;
+  cursor: pointer;
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: 10px;
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.55;
+  }
+
+  &:hover:not(:disabled) {
+    background-color: var(--c-hover);
+  }
+}
+
+.extChoiceOn {
+  border-color: var(--c-accent);
+  box-shadow: inset 0 0 0 1px var(--c-accent);
+}
+
+.extRadio {
+  position: relative;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  border: 2px solid var(--c-border-strong);
+  border-radius: 50%;
+}
+
+.extChoiceOn .extRadio {
+  border-color: var(--c-accent);
+
+  &::after {
+    position: absolute;
+    inset: 2px;
+    content: "";
+    background-color: var(--c-accent);
+    border-radius: 50%;
+  }
+}
+
+.extChoiceText {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.extChoiceTitle {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.extChoiceDesc {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--c-text-muted);
+  overflow-wrap: anywhere;
+}
+
+// ── 플러그인 탭 (PluginsTab.tsx) ──
+.plugTop {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.plugTopSpacer {
+  flex: 1;
+}
+
+// 설치됨 | 찾아보기
+.plugSeg {
+  display: inline-flex;
+  padding: 3px;
+  background-color: var(--c-fill);
+  border-radius: 9px;
+}
+
+.plugSegBtn {
+  height: 28px;
+  padding: 0 14px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--c-text-2);
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-radius: 7px;
+
+  &:hover {
+    color: var(--c-text);
+  }
+}
+
+.plugSegOn,
+.plugSegOn:hover {
+  font-weight: 700;
+  color: var(--c-text);
+  background-color: var(--c-surface);
+  box-shadow: var(--sh-float);
+}
+
+.plugList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.plugCard {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  background-color: var(--c-panel-bg);
+  border: 1px solid var(--c-border-soft);
+  border-radius: 10px;
+  transition: box-shadow 0.3s ease, border-color 0.3s ease;
+}
+
+// 찾아간 플러그인(focus)을 잠깐 표시
+.plugHighlight {
+  border-color: var(--c-accent);
+  box-shadow: var(--sh-focus-ring);
+}
+
+.plugCardHead {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.plugCardIcon {
+  flex-shrink: 0;
+  font-size: 13px;
+  color: var(--c-accent-text);
+}
+
+.plugName {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--c-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugVersion {
+  flex-shrink: 0;
+  font-size: 11.5px;
+  color: var(--c-text-muted);
+}
+
+.plugId {
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  color: var(--c-text-faint);
+  overflow-wrap: anywhere;
+}
+
+.plugDesc {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--c-text-soft);
+}
+
+.plugMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--c-text-2);
+}
+
+.plugMetaMuted {
+  color: var(--c-text-muted);
+}
+
+// 꺼진 플러그인 — 이름·내용을 흐리게 (스위치는 그대로)
+.plugCardOff .plugName,
+.plugCardOff .plugDesc,
+.plugCardOff .plugMeta {
+  color: var(--c-text-muted);
+}
+
+.plugTokens {
+  font-weight: 600;
+  color: var(--c-text);
+}
+
+// 내 권한으로 프로그램을 실행하는 것(훅·MCP 서버)
+.plugRisk {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: baseline;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--c-warning-text);
+  background-color: var(--c-warning-soft);
+  border: 1px solid var(--c-warning-border);
+  border-radius: 8px;
+}
+
+.plugRiskBadge {
+  flex-shrink: 0;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.plugRiskText {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+// 로그인이 필요한 MCP 서버 — MCP 목록의 [로그인]으로
+.plugLogin {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 8px 6px 10px;
+  font-size: 12px;
+  color: var(--c-accent-soft-text);
+  background-color: var(--c-accent-soft);
+  border-radius: 8px;
+}
+
+.plugLoginText {
+  flex: 1;
+  min-width: 0;
+}
+
+// 안에 든 것 (펼침)
+.plugInside {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--c-text-2);
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-divider);
+  border-radius: 8px;
+}
+
+.plugInsideGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.plugInsideTitle {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--c-text);
+}
+
+.plugInsideList {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 3px 20px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+
+  li {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    justify-content: space-between;
+    min-width: 0;
+  }
+}
+
+.plugInsideTokens {
+  font-size: 11px;
+  color: var(--c-text-muted);
+  white-space: nowrap;
+}
+
+.plugInsideNote {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: var(--c-text-muted);
+}
+
+// 끄기·지우기를 누르면 카드 안에서 한 번 더 묻는다
+.plugAsk {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 8px 10px;
+  background-color: var(--c-fill-subtle);
+  border: 1px solid var(--c-border-soft);
+  border-radius: 8px;
+}
+
+.plugAskDanger {
+  background-color: var(--c-danger-soft);
+  border-color: var(--c-error-border);
+}
+
+.plugAskText {
+  flex: 1 1 260px;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--c-text);
+}
+
+.plugOthers {
+  margin-top: 4px;
+}
+
+.plugOthersHead {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  padding: 4px 0;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--c-text-2);
+  cursor: pointer;
+  background: none;
+  border: none;
+
+  svg {
+    width: 10px;
+    font-size: 10px;
+  }
+}
+
+.plugOthersList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 0 0 17px;
+  margin: 0;
+  list-style: none;
+}
+
+.plugOtherRow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  padding: 5px 8px;
+  font-size: 12.5px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+}
+
+.plugOtherName {
+  flex-shrink: 0;
+  font-weight: 600;
+  color: var(--c-text);
+}
+
+.plugOtherPath {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--c-text-muted);
+}
+
+.plugOthersNote {
+  padding: 2px 8px;
+  font-size: 11.5px;
+  color: var(--c-text-muted);
+}
+
+// 찾아보기
+.plugToolbar {
+  position: sticky;
+  top: -16px;
+  z-index: 1;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 16px 0 8px;
+  margin: -16px 0 -6px;
+  background-color: var(--c-surface);
+}
+
+.plugCount {
+  font-size: 12px;
+  color: var(--c-text-muted);
+}
+
+.plugCountNote {
+  color: var(--c-text-faint);
+}
+
+.plugBrowseList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.plugRow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 10px 12px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  background-color: var(--c-panel-bg);
+  border: 1px solid var(--c-border-soft);
+  border-radius: 9px;
+
+  &:hover {
+    background-color: var(--c-hover);
+  }
+}
+
+.plugRowHead {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.plugInstalls {
+  flex-shrink: 0;
+  font-size: 11.5px;
+  color: var(--c-text-muted);
+}
+
+// 설명은 두 줄까지
+.plugRowDesc {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--c-text-2);
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.plugMore {
+  align-self: center;
+}
+
+// 찾아보기의 플러그인 한 개
+.plugPage {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 760px;
+}
+
+.plugBack {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  align-self: flex-start;
+  font-size: 12.5px;
+}
+
+.plugPageHead {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.plugPageName {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--c-text);
+}
+
+.plugPageDesc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--c-text-soft);
+  white-space: pre-wrap;
+}
+
+.plugSource {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 12.5px;
+}
+
+.plugSourceLabel {
+  flex-shrink: 0;
+  font-weight: 700;
+  color: var(--c-text-2);
+}
+
+.plugSourceLink {
+  color: var(--c-link);
+  overflow-wrap: anywhere;
+
+  svg {
+    margin-left: 2px;
+    font-size: 10px;
+  }
+}
+
+.plugSourceText {
+  color: var(--c-text-2);
+  overflow-wrap: anywhere;
+}
+
+.plugCommand {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.plugCommandTitle {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--c-warning-text);
+}
+
+// 실행할 명령 — 코드 블록처럼 (두 테마 모두 어두운 판)
+.plugCommandCode {
+  display: block;
+  padding: 9px 12px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  color: var(--c-code-text);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  background-color: var(--c-code-bg);
+  border-radius: 8px;
+}
+
+.plugWarn {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--c-warning-text);
+  background-color: var(--c-warning-soft);
+  border: 1px solid var(--c-warning-border);
+  border-radius: 9px;
+}
+
+.plugWarnIcon {
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+
+.plugInstalledNote {
+  font-size: 13px;
+  color: var(--c-success-text);
+}
+
+.plugInstall {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+
+  .extChoices {
+    align-self: stretch;
+  }
+}
+
+.plugInstallTitle {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--c-text);
+}
+
+// 명령 실행형 설치 — 명령을 보이고 한 번 더 묻는다
+.plugConfirm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  background-color: var(--c-danger-soft);
+  border: 1px solid var(--c-error-border);
+  border-radius: 10px;
+}
+
+.plugConfirmTitle {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--c-error);
+}
+
+.plugConfirmText {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--c-text);
+}
+
+.plugConfirmActions {
+  display: flex;
+  gap: 8px;
 }
 
 // 좁은 창에서는 왼쪽 목록을 아이콘만
