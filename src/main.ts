@@ -15,6 +15,7 @@ import {openInIde, pickIde} from "./main/services/jetbrains";
 import {explainMcpLoginError, isOpenableAuthUrl, TERMINAL_LOGIN_HINT} from "./main/services/mcp-login";
 import type {McpAuthMethods, McpAuthReply, McpLoginError} from "./main/services/mcp-login";
 import type {GitChange, GitStatusResult} from "./main/services/git-changes";
+import * as skills from "./main/services/skills";
 import type {
     McpServerStatus,
     ModelInfo,
@@ -295,6 +296,8 @@ interface InstructionMeasure {
     mcpInstructions: {serverName: string; tokens: number}[];
     agents: {agentType: string; source: string; pluginId?: string; path?: string; tokens: number}[];
     mcpServers: {name: string; status: string; scope?: string}[];
+    // 스킬 수와 그중 설명이 컨텍스트에 든 수 (확장 창의 스킬 탭 — 많으면 일부가 빠진다)
+    skillCounts?: {total: number; included: number};
 }
 
 const instructionCache = new Map<string, Promise<InstructionMeasure | null>>();
@@ -356,6 +359,7 @@ function measureInstructions(tab: ChatTab, refresh = false, settle = false): Pro
                 mcpInstructions: (usage.mcpInstructions ?? []).map((m) => ({serverName: m.serverName, tokens: m.tokens})),
                 agents: (usage.agents ?? []).map((a) => ({agentType: a.agentType, source: a.source, pluginId: a.pluginId, path: a.path, tokens: a.tokens})),
                 mcpServers: servers.map((m) => ({name: m.name, status: m.status, scope: m.scope})),
+                skillCounts: usage.skills ? {total: usage.skills.totalSkills, included: usage.skills.includedSkills} : undefined,
             };
         } finally {
             idle.close();
@@ -390,6 +394,11 @@ function notifyInstructions() {
 }
 
 function noteInstructionEdit(p: string) {
+    // 스킬 파일도 새 대화 시작 컨텍스트(스킬 이름·설명)를 바꾼다 — 다시 센다 (확장 창의 스킬 탭이 그 값을 쓴다)
+    if (skills.isSkillFile(p)) {
+        invalidateInstructions();
+        return;
+    }
     if (!instr.isInstructionLike(p)) return;
     // 기억 파일 하나는 대화 시작 때 읽는 파일이 아니다 — CLI를 다시 띄워 셀 필요 없이 목록만 새로 (목록 MEMORY.md는 다시 센다)
     if (instr.isMemoryTopicFile(p)) notifyInstructions();
@@ -4427,6 +4436,46 @@ ipcMain.handle("commands:list", async (event, tabId: string, refresh?: boolean) 
     if (refresh === true) send(tab, "chat:commands", list);
     return list;
 });
+
+// ── 확장 창: 스킬 탭 (src/main/services/skills.ts) ──
+// 목록 = 지침 패널과 같은 측정(스킬별 토큰) + "/" 메뉴와 같은 명령 목록 + CLI가 읽는 폴더. 읽고 쓰는 경로는 목록에 낸 것만.
+function skillsHost(tab: ChatTab): skills.SkillsHost {
+    return {
+        tabId: tab.id,
+        cwd: tab.cwd,
+        measure: async (refresh) => {
+            const m = await measureInstructions(tab, refresh);
+            return m && {skills: m.skills, totalSkills: m.skillCounts?.total, includedSkills: m.skillCounts?.included, at: m.at};
+        },
+        commands: (refresh) => loadCommands(tab, refresh),
+        changed: skillsChanged,
+    };
+}
+
+// 앱에서 스킬을 만들거나 고쳤다 — 다시 세고(새 대화 시작 컨텍스트가 바뀐다), 살아 있는 세션은 reloadSkills로 새 글을 읽게 하고
+// (다음 메시지가 같은 프로세스로 가는 동안 — 추천을 기다리는 몇 초, 백그라운드 작업 중 — 에는 옛 글을 쓴다), "/" 메뉴를 새로 준다.
+function skillsChanged() {
+    invalidateInstructions();
+    for (const cwd of new Set([...tabs.values()].map((t) => t.cwd))) probeFolder(cwd, true);
+    for (const tab of tabs.values()) {
+        const live = tab.live;
+        if (live && !live.inputEnded && !live.stopped) {
+            void withTimeout(live.q.reloadSkills(), 10_000)
+                .then(() => reportCommands(live))
+                .catch((e) => console.error("[skills] reloadSkills 실패", e));
+        } else {
+            pushFolderInfo(tab);
+        }
+    }
+}
+
+ipcMain.handle("skills:list", (event, tabId: string, refresh: unknown) => skills.listSkills(skillsHost(tabFor(event, tabId)), refresh === true));
+ipcMain.handle("skills:read", (_event, tabId: string, p: unknown) => skills.readSkillFile(tabId, p));
+ipcMain.handle("skills:write", (event, tabId: string, p: unknown, content: unknown, baseMtime: unknown, force: unknown) =>
+    skills.writeSkillFile(skillsHost(tabFor(event, tabId)), p, content, baseMtime, force === true)
+);
+ipcMain.handle("skills:create", (event, tabId: string, req: unknown) => skills.createSkill(skillsHost(tabFor(event, tabId)), req));
+ipcMain.handle("skills:reveal", (_event, tabId: string, p: unknown) => skills.revealSkillPath(tabId, p));
 
 ipcMain.handle("mcp:status", (event, tabId: string, refresh?: boolean) => loadMcpStatus(tabFor(event, tabId), refresh === true));
 

@@ -1092,6 +1092,47 @@ says settings are shared with the terminal's claude. Measured with CLI 2.1.325:
   script and, as soon as `BrowserWindow.getAllWindows()` has the window, `setFocusable(false)` + `app.hide()` (macOS gives the
   previous app back) + `showInactive()`; `setActivationPolicy("accessory")` alone did not help.
 
+**스킬 tab** (`SkillsTab.tsx`, main `skills:list|read|write|create|reveal`, `src/main/services/skills.ts`). Every skill the
+tab's folder can use, grouped 개인 / 이 프로젝트 / 플러그인 · <name> / 옛 명령 / 관리자 / 기본 제공 (CLI built-ins like `dataviz`);
+per row name, description, always-on tokens, 직접 부를 때만, `/name`. Detail = rendered SKILL.md (frontmatter stripped, `Markdown`
+with `baseDir` = the skill folder), 부르는 법, the folder's other files (read-only viewer), 편집 for personal and project skills.
+Measured with CLI 2.1.325 / SDK 0.3.319:
+
+- **Three sources, merged in `listSkills`**: `getContextUsage({detail: "full"}).skills.skillFrontmatter` = `{name, source,
+  pluginName, pluginId, path, tokens}` (sources `userSettings` / `projectSettings` / `plugin` / `policySettings` / `built-in` /
+  `syncedSkills`) — taken from the shared `measureInstructions` (its `skills`, plus `skillCounts` = total/included), not a
+  second query; `disable-model-invocation` skills are **not** in it (not in the context → 0 tokens). `supportedCommands()` has every skill
+  incl. manual-only plugin ones, with decorated descriptions (`… (user)`, `… (project)`, `(figma) …` — `cleanDescription`).
+  And the files on disk, scanned the way the CLI does (read from its code, then verified with nested test folders): personal
+  `<CLAUDE_CONFIG_DIR or ~/.claude>/skills/<name>/SKILL.md` (+ `commands/**/*.md`); project = every folder **from the cwd up to
+  the git root, root included, home excluded** (home's `.claude` is the personal one; outside git: up to just below home, or `/`), each
+  `.claude/skills/<name>/SKILL.md` and `.claude/commands/**/*.md`. Below the cwd is not read at start (the CLI discovers those
+  when Claude works there), above the git root never. A linked **git worktree** without its own `<root>/.claude/skills` reads
+  the main checkout's instead. Folders holding `.claude-plugin` are plugins, not skills; command subfolders become `:` names
+  (`commands/team/standup.md` → `/team:standup`). Managed: `/Library/Application Support/ClaudeCode/.claude/skills` (read-only).
+  The name is the folder name. Manual-only plugin skills have no path in the context list — found next to a sibling skill's
+  path or under `installed_plugins.json`'s `installPath`.
+- **Freshness**: the measurement is cached per cwd/model (`instructionCache`), the command list per folder. `listSkills`
+  re-asks both (refresh) when a skill file/folder, `installed_plugins.json` or `settings.json` is newer than the measurement,
+  or a personal/project skill on disk is unknown to the CLI; ↻ forces it. Claude's own Write/Edit of a skill file goes through
+  `noteInstructionEdit` → `invalidateInstructions` (skill descriptions are part of a new conversation's starting context).
+- **Editing = the instructions panel's rules**: `skills:read/write` accept only paths from the tab's last `skills:list`
+  (`access` map in skills.ts, per tab id); other files in a listed skill folder are readable when their realpath stays inside
+  it (a symlink to `package.json` was refused); writes only for personal/project SKILL.md / command files; mtime conflict →
+  다시 불러오기 / 그래도 덮어쓰기; `writeFileAtomic` (temp + rename onto the realpath); unsaved text in the module-level `drafts`
+  (kept across closing the window — verified, with the dot on the row). Plugin skills are read-only (overwritten on update).
+- **새 스킬**: 개인 = `<config>/skills/<name>/SKILL.md`; 이 프로젝트 = the git root's `.claude/skills` (worktree without one →
+  the main checkout's, which is what the CLI reads; outside git → the cwd's; never in the home folder). Name kebab-case ≤64, not
+  any command name or alias (builtins included) and no existing folder — checked in main too. Frontmatter `name`,
+  `description` (one line; quoted as a JSON string when YAML needs it — `: `, ` #` …, the CLI parsed it back verbatim),
+  `disable-model-invocation: true` when 직접 부를 때만. Never overwrites: the folder is created with a non-recursive `mkdir`
+  (fails if it exists) and SKILL.md is `link`ed from a temp file.
+- **After a write** (`skillsChanged` in main): `invalidateInstructions()`, every tab folder re-probed, live sessions
+  `q.reloadSkills()` + `reportCommands` (a message sent within the suggestion wait / during background tasks goes to the same
+  process, which otherwise keeps the old text), other tabs `pushFolderInfo` — the "/" menu shows a new skill at once (verified).
+- `focus` (`openExtensions("skills", name)`) selects and scrolls to the row; it waits for the first fresh list (the cached one
+  may predate the skill) and then says "찾지 못했습니다" if the folder has no such skill.
+
 **대화 시작 비용 tab** (`CostTab.tsx`, main `extensions:start_cost`): how many tokens a fresh conversation in this folder uses
 before anything is said, and from what. It is the 지침 panel's measurement (`measureInstructions`, same cache key cwd + model +
 system prompts), which now keeps the whole `getContextUsage({detail: "full"})` answer: `categories` (`id`/`kind` — classify

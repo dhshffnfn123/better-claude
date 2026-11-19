@@ -503,6 +503,67 @@ interface SlashCommand {
     aliases?: string[]; // 같은 명령의 다른 이름 (/cost → /usage, /new → /clear) — "/" 없이
 }
 
+// ── 확장 창: 스킬 탭 (main/services/skills.ts와 같은 모양) ──
+// scope: personal(~/.claude/skills) | project(<레포>/.claude/skills) | plugin | managed(관리자) | builtin(Claude Code에 들어 있음)
+//        | synced(claude.ai에서 받음) | other
+type SkillScope = "personal" | "project" | "plugin" | "managed" | "builtin" | "synced" | "other";
+
+interface SkillEntry {
+    id: string;
+    name: string; // Claude가 부르는 이름 = /이름 (플러그인 스킬은 "플러그인:스킬")
+    scope: SkillScope;
+    legacy: boolean; // 옛 방식 .claude/commands/*.md
+    plugin?: string;
+    pluginId?: string;
+    description: string;
+    whenToUse?: string;
+    argumentHint?: string;
+    tokens: number | null; // 늘 컨텍스트에 들어가는 토큰 (null = 모름)
+    manualOnly: boolean; // disable-model-invocation — 직접 부를 때만
+    userInvocable: boolean; // false면 /이름으로 부를 수 없다
+    paths?: string[]; // 맞는 파일을 다룰 때만 불려 온다
+    path?: string;
+    dir?: string;
+    base?: string;
+    editable: boolean;
+    loaded: boolean; // CLI가 안다
+}
+
+type SkillProjectTarget =
+    | {ok: true; dir: string; base: string; kind: "git" | "folder" | "worktree-main"}
+    | {ok: false; reason: string};
+
+type SkillsList =
+    | {
+          ok: true;
+          cwd: string;
+          skills: SkillEntry[];
+          measured: boolean;
+          measuredAt?: number;
+          totalSkills?: number;
+          includedSkills?: number;
+          personalDir: string;
+          project: SkillProjectTarget;
+          takenNames: string[];
+      }
+    | {ok: false; error: string};
+
+type SkillFileRead =
+    | {ok: true; content: string; mtimeMs: number; readOnly: boolean; files?: {rel: string; size: number}[]; filesTruncated?: boolean}
+    | {ok: false; error: string};
+
+type SkillFileWrite = {ok: true; mtimeMs: number} | {ok: false; conflict?: boolean; exists?: boolean; error?: string};
+
+interface SkillCreateRequest {
+    scope: "personal" | "project";
+    name: string;
+    description: string;
+    body: string;
+    manualOnly: boolean;
+}
+
+type SkillCreateResult = {ok: true; path: string; name: string} | {ok: false; error: string};
+
 // ── 탭 ──
 // 탭에 대화를 열 때 넘기는 것 (빠진 건 main이 기본값·지금 값으로 채운다)
 interface TabInit {
@@ -648,6 +709,12 @@ interface Window {
         gitDiff: (tabId: string, path: string) => Promise<GitDiffResult>;
         // refresh: 폴더 정보를 새로 받는다 (목록에 없는 명령을 쳤을 때 — 터미널에서 방금 설치한 플러그인 등)
         listCommands: (tabId: string, refresh?: boolean) => Promise<SlashCommand[]>;
+        // 확장 창의 스킬 탭 — 목록 / 스킬 파일 읽기·저장 / 새 스킬 / Finder에서 보기 (경로는 main이 마지막 목록으로 검사)
+        listSkills: (tabId: string, refresh?: boolean) => Promise<SkillsList>;
+        readSkillFile: (tabId: string, path: string) => Promise<SkillFileRead>;
+        writeSkillFile: (tabId: string, path: string, content: string, baseMtime: number | null, force?: boolean) => Promise<SkillFileWrite>;
+        createSkill: (tabId: string, req: SkillCreateRequest) => Promise<SkillCreateResult>;
+        revealSkill: (tabId: string, path: string) => Promise<boolean>;
         getMcpStatus: (tabId: string, refresh?: boolean) => Promise<McpServer[]>;
         // MCP 서버 로그인 — 답은 로그인 주소를 연 뒤의 상태(waiting·claudeai·error), 이후 진행은 onMcpLogin
         mcpLogin: (tabId: string, name: string) => Promise<McpLoginState>;

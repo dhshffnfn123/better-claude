@@ -106,6 +106,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
     gitStatus: (tabId: string) => ipcRenderer.invoke("git:status", tabId),
     gitDiff: (tabId: string, path: string) => ipcRenderer.invoke("git:diff", tabId, path),
     listCommands: (tabId: string, refresh?: boolean) => ipcRenderer.invoke("commands:list", tabId, refresh === true),
+    // 확장 창의 스킬 탭 — 이 탭 폴더의 스킬 목록, 스킬 파일 읽기·저장(경로는 main이 마지막 목록으로 검사), 새 스킬, Finder에서 보기
+    listSkills: (tabId: string, refresh?: boolean) => ipcRenderer.invoke("skills:list", tabId, refresh === true),
+    readSkillFile: (tabId: string, path: string) => ipcRenderer.invoke("skills:read", tabId, path),
+    writeSkillFile: (tabId: string, path: string, content: string, baseMtime: number | null, force?: boolean) =>
+        ipcRenderer.invoke("skills:write", tabId, path, content, baseMtime, force === true),
+    createSkill: (tabId: string, req: object) => ipcRenderer.invoke("skills:create", tabId, req),
+    revealSkill: (tabId: string, path: string) => ipcRenderer.invoke("skills:reveal", tabId, path),
     getMcpStatus: (tabId: string, refresh?: boolean) => ipcRenderer.invoke("mcp:status", tabId, refresh ?? false),
     // MCP 서버 로그인(OAuth) — 그 탭의 작업 폴더에서 시작한다. 진행 상태는 onMcpLogin으로 온다(토큰은 탭과 무관해 앱 전체 이벤트).
     mcpLogin: (tabId: string, name: string) => ipcRenderer.invoke("mcp:login", tabId, name),

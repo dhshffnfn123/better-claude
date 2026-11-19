@@ -1,0 +1,1110 @@
+// 확장 창 — 스킬 탭 (SkillsTab.tsx). 위 도구 줄, 왼쪽 목록(무리별), 오른쪽 스킬 하나(내용·편집) 또는 새 스킬 만들기.
+// 마크다운 상자는 지침 패널과 같은 것(chat.page.module.scss의 bubble·markdown·instrMarkdown)을 쓴다.
+
+.skTab {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.skToolbar {
+  display: flex;
+  flex-shrink: 0;
+  gap: 10px;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--c-divider);
+}
+
+.skSearch {
+  position: relative;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  max-width: 300px;
+}
+
+.skSearchIcon {
+  position: absolute;
+  left: 10px;
+  font-size: 11px;
+  color: var(--c-text-faint);
+  pointer-events: none;
+}
+
+.skSearchInput {
+  box-sizing: border-box;
+  width: 100%;
+  height: 30px;
+  padding: 0 10px 0 29px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--c-text);
+  background-color: var(--c-input-bg);
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  outline: none;
+
+  &:focus {
+    border-color: var(--c-accent);
+  }
+
+  &::placeholder {
+    color: var(--c-placeholder);
+  }
+}
+
+.skSummary {
+  flex-shrink: 1;
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--c-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skToolBtn {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 6px;
+  align-items: center;
+  height: 30px;
+  padding: 0 11px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--c-text-2);
+  white-space: nowrap;
+  cursor: pointer;
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.5;
+  }
+
+  &:hover:not(:disabled) {
+    background-color: var(--c-hover);
+  }
+}
+
+.skToolBtnPrimary {
+  font-weight: 700;
+  color: var(--c-on-primary);
+  background-color: var(--c-primary);
+  border-color: transparent;
+
+  &:hover:not(:disabled) {
+    background-color: var(--c-primary-hover);
+  }
+}
+
+// ── 목록 | 스킬 하나 ──
+.skSplit {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.skList {
+  flex-shrink: 0;
+  width: 340px;
+  padding: 12px 12px 24px;
+  overflow-y: auto;
+  border-right: 1px solid var(--c-divider);
+}
+
+.skDetail {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.skIntro {
+  display: flex;
+  gap: 9px;
+  padding: 9px 11px;
+  margin-bottom: 4px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--c-text-2);
+  background-color: var(--c-fill-subtle);
+  border-radius: 9px;
+
+  code {
+    padding: 0 4px;
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 11.5px;
+    background-color: var(--c-surface);
+    border-radius: 4px;
+  }
+}
+
+.skIntroIcon {
+  flex-shrink: 0;
+  margin-top: 3px;
+  color: var(--c-accent-text);
+}
+
+.skNotice {
+  padding: 18px 6px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--c-text-muted);
+}
+
+.skWarn {
+  display: flex;
+  gap: 8px;
+  padding: 8px 10px;
+  margin: 8px 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--c-warning-text);
+  background-color: var(--c-warning-soft);
+  border: 1px solid var(--c-warning-border);
+  border-radius: 8px;
+
+  svg {
+    flex-shrink: 0;
+    margin-top: 3px;
+  }
+
+  code {
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 11.5px;
+  }
+}
+
+.skHint {
+  display: flex;
+  gap: 8px;
+  padding: 8px 10px;
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--c-text-2);
+  background-color: var(--c-fill-subtle);
+  border-radius: 8px;
+
+  svg {
+    flex-shrink: 0;
+    margin-top: 3px;
+    color: var(--c-text-muted);
+  }
+}
+
+.skGroup {
+  margin-top: 16px;
+}
+
+.skGroupHead {
+  display: flex;
+  gap: 7px;
+  align-items: baseline;
+  padding: 0 2px;
+}
+
+.skGroupTitle {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--c-text);
+}
+
+.skGroupCount {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--c-text-faint);
+}
+
+.skGroupTokens {
+  margin-left: auto;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--c-text-muted);
+}
+
+.skGroupHint {
+  padding: 2px 2px 7px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--c-text-faint);
+}
+
+.skRow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 8px 10px;
+  margin-bottom: 5px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-border-soft);
+  border-radius: 9px;
+  transition: border-color 0.15s;
+
+  &:hover {
+    border-color: var(--c-border-strong);
+  }
+}
+
+.skRowActive,
+.skRowActive:hover {
+  background-color: var(--c-selected);
+  border-color: var(--c-accent);
+}
+
+.skRowHead {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
+.skRowName {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--c-text);
+  white-space: nowrap;
+}
+
+.skRowTokens {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--c-text-muted);
+  white-space: nowrap;
+}
+
+.skRowDesc {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--c-text-2);
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.skRowFoot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
+.skCall {
+  padding: 0 5px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  color: var(--c-accent-soft-text);
+  background-color: var(--c-accent-soft);
+  border-radius: 4px;
+}
+
+.skBadge {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--c-text-2);
+  white-space: nowrap;
+  background-color: var(--c-fill-subtle);
+  border-radius: 999px;
+}
+
+.skBadgeMine {
+  color: var(--c-accent-soft-text);
+  background-color: var(--c-accent-soft);
+}
+
+.skBadgeManual {
+  color: var(--c-memory-badge-text);
+  background-color: var(--c-ultra-bg);
+}
+
+.skBadgeWarn {
+  color: var(--c-warning-text);
+  background-color: var(--c-warning-soft);
+}
+
+.skWhere {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 10.5px;
+  color: var(--c-text-faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skMuted {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--c-text-muted);
+}
+
+.skDraftDot {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  background-color: var(--c-accent);
+  border-radius: 50%;
+}
+
+// ── 오른쪽: 스킬 하나 ──
+.skEmptyDetail {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  font-size: 12.5px;
+  color: var(--c-text-muted);
+  text-align: center;
+}
+
+.skEmptyIcon {
+  font-size: 20px;
+  color: var(--c-text-faint);
+}
+
+.skLinkBtn {
+  padding: 0;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--c-link);
+  cursor: pointer;
+  background: none;
+  border: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.skDetailInner {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.skDetailHead {
+  display: flex;
+  flex-shrink: 0;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--c-divider);
+}
+
+.skBackBtn {
+  display: none;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  font-size: 13px;
+  color: var(--c-text-muted);
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-radius: 7px;
+
+  &:hover {
+    color: var(--c-text);
+    background-color: var(--c-hover);
+  }
+}
+
+.skCloseBtn {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  font-size: 14px;
+  color: var(--c-text-muted);
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-radius: 7px;
+
+  &:hover {
+    color: var(--c-text);
+    background-color: var(--c-hover);
+  }
+}
+
+.skDetailTitleBox {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.skDetailTitle {
+  display: flex;
+  min-width: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--c-text);
+  white-space: nowrap;
+}
+
+.skDetailBadges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.skCreateLead {
+  font-size: 12px;
+  color: var(--c-text-muted);
+}
+
+.skTokenBox {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  align-items: flex-end;
+  padding: 4px 2px 0 8px;
+}
+
+.skTokenNum {
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--c-text);
+}
+
+.skTokenLabel {
+  font-size: 10.5px;
+  color: var(--c-text-muted);
+}
+
+// 가로 스크롤은 막는다 — 마크다운 속 경로의 숨은 말풍선(::after)이 폭을 넘겨 가로 스크롤 막대가 생겼다
+.skDetailScroll {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  padding: 12px 16px 18px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.skDesc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--c-text);
+}
+
+.skWhen {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--c-text-2);
+
+  b {
+    margin-right: 4px;
+    color: var(--c-text-muted);
+  }
+}
+
+.skHow {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px 12px;
+  margin-top: 12px;
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-border-soft);
+  border-radius: 10px;
+}
+
+.skHowCall {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.skHowCode {
+  min-width: 0;
+  padding: 3px 8px;
+  overflow: hidden;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12.5px;
+  color: var(--c-accent-soft-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background-color: var(--c-accent-soft);
+  border-radius: 6px;
+}
+
+.skHowText {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--c-text-2);
+}
+
+.skInlineCode {
+  padding: 0 4px;
+  margin-right: 4px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11.5px;
+  background-color: var(--c-fill-subtle);
+  border-radius: 4px;
+}
+
+.skMiniBtn {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 5px;
+  align-items: center;
+  height: 24px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--c-text-2);
+  white-space: nowrap;
+  cursor: pointer;
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: 6px;
+
+  &:hover {
+    background-color: var(--c-hover);
+  }
+}
+
+.skFileBar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.skFilePath {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  color: var(--c-text-faint);
+  white-space: nowrap;
+}
+
+.skModeBar {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  margin: 12px 0 8px;
+}
+
+.skModeBtn {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  height: 26px;
+  padding: 0 10px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--c-text-muted);
+  cursor: pointer;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 7px;
+
+  &:hover {
+    color: var(--c-text);
+    background-color: var(--c-hover);
+  }
+}
+
+.skModeActive,
+.skModeActive:hover {
+  font-weight: 700;
+  color: var(--c-text);
+  background-color: var(--c-selected);
+}
+
+.skModeNote {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  font-size: 11px;
+  color: var(--c-text-faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skEditor {
+  flex: 1 0 320px;
+  min-height: 320px;
+  padding: 10px 12px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--c-text);
+  white-space: pre-wrap;
+  resize: vertical;
+  background-color: var(--c-input-bg);
+  border: 1px solid var(--c-border);
+  border-radius: 9px;
+  outline: none;
+
+  &:focus {
+    border-color: var(--c-accent);
+  }
+}
+
+.skPre {
+  padding: 10px 12px;
+  margin: 0;
+  overflow-x: auto;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--c-text);
+  white-space: pre-wrap;
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-border-soft);
+  border-radius: 9px;
+}
+
+.skOther {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.skOtherHead {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.skOtherName {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  color: var(--c-text);
+  white-space: nowrap;
+}
+
+.skConflict {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 9px 11px;
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--c-warning-text);
+  background-color: var(--c-warning-soft);
+  border: 1px solid var(--c-warning-border);
+  border-radius: 9px;
+}
+
+.skConflictMsg {
+  display: flex;
+  gap: 8px;
+
+  svg {
+    flex-shrink: 0;
+    margin-top: 3px;
+  }
+}
+
+.skConflictActions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.skFooter {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.skCreateFooter {
+  margin-top: 16px;
+}
+
+.skStatus {
+  display: flex;
+  flex: 1;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11.5px;
+  color: var(--c-text-muted);
+  white-space: nowrap;
+}
+
+.skStatusError {
+  color: var(--c-danger);
+}
+
+.skBtn {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 5px;
+  align-items: center;
+  height: 28px;
+  padding: 0 11px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--c-text-2);
+  white-space: nowrap;
+  cursor: pointer;
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.5;
+  }
+
+  &:hover:not(:disabled) {
+    background-color: var(--c-hover);
+  }
+}
+
+.skBtnPrimary {
+  font-weight: 700;
+  color: var(--c-on-primary);
+  background-color: var(--c-primary);
+  border-color: transparent;
+
+  &:disabled {
+    color: var(--c-on-primary-disabled);
+    background-color: var(--c-primary-disabled);
+    opacity: 1;
+  }
+
+  &:hover:not(:disabled) {
+    background-color: var(--c-primary-hover);
+  }
+}
+
+.skBtnDanger {
+  color: var(--c-danger);
+  border-color: var(--c-danger-soft);
+}
+
+.skKbd {
+  font-weight: 500;
+  opacity: 0.75;
+}
+
+.skFiles {
+  margin-top: 18px;
+}
+
+.skFilesTitle {
+  margin-bottom: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--c-text-faint);
+  letter-spacing: 0.02em;
+}
+
+.skFilesEmpty {
+  padding: 2px 2px 4px;
+}
+
+.skFileRow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  padding: 5px 8px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-radius: 6px;
+
+  &:hover {
+    background-color: var(--c-hover);
+  }
+}
+
+.skFileIcon {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--c-text-muted);
+}
+
+.skFileName {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11.5px;
+  color: var(--c-text);
+  white-space: nowrap;
+}
+
+.skFileSize {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--c-text-faint);
+}
+
+.skFilesNote {
+  padding: 6px 2px 0;
+  font-size: 11px;
+  color: var(--c-text-faint);
+}
+
+// ── 새 스킬 ──
+.skField {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.skLabel {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--c-text);
+}
+
+.skRequired {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--c-accent-text);
+}
+
+.skChoice {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--c-text-2);
+  cursor: pointer;
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-border-soft);
+  border-radius: 9px;
+
+  input {
+    flex-shrink: 0;
+    margin-top: 3px;
+  }
+
+  b {
+    color: var(--c-text);
+  }
+}
+
+.skChoiceOn {
+  border-color: var(--c-accent);
+}
+
+.skChoiceOff {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.skChoiceText {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.skChoicePath {
+  display: flex;
+  min-width: 0;
+  margin-top: 2px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  color: var(--c-text-faint);
+  white-space: nowrap;
+}
+
+.skChoiceNote {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--c-text-muted);
+}
+
+.skNameRow {
+  display: flex;
+  align-items: center;
+}
+
+.skNameSlash {
+  padding: 0 6px 0 2px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 14px;
+  color: var(--c-text-muted);
+}
+
+.skInput {
+  box-sizing: border-box;
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--c-text);
+  background-color: var(--c-input-bg);
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  outline: none;
+
+  &:focus {
+    border-color: var(--c-accent);
+  }
+
+  &::placeholder {
+    color: var(--c-placeholder);
+  }
+}
+
+.skNameInput {
+  font-family: "SFMono-Regular", Consolas, monospace;
+}
+
+.skInputBad,
+.skInputBad:focus {
+  border-color: var(--c-danger);
+}
+
+.skDescInput {
+  line-height: 1.5;
+  resize: none;
+}
+
+.skBodyInput {
+  min-height: 150px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.skFieldHint {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--c-text-faint);
+}
+
+.skFieldBad {
+  color: var(--c-danger);
+}
+
+.skCheck {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  padding: 9px 11px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--c-text);
+  cursor: pointer;
+  background-color: var(--c-fill-subtle);
+  border-radius: 9px;
+
+  input {
+    flex-shrink: 0;
+    margin-top: 3px;
+  }
+}
+
+.skCheckNote {
+  display: block;
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--c-text-muted);
+}
+
+.skTarget {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin-top: 14px;
+}
+
+.skTargetPath {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11.5px;
+  color: var(--c-text-2);
+  white-space: nowrap;
+}
+
+// 좁으면 한쪽씩 — 고른 스킬(또는 새 스킬)이 있으면 목록 대신 그것, ←로 목록
+@media (max-width: 960px) {
+  .skList {
+    flex: 1;
+    width: auto;
+    border-right: none;
+  }
+
+  .skDetail {
+    display: none;
+  }
+
+  .skHasSel .skList {
+    display: none;
+  }
+
+  .skHasSel .skDetail {
+    display: flex;
+  }
+
+  .skBackBtn {
+    display: inline-flex;
+  }
+}
