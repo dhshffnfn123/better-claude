@@ -14,7 +14,8 @@ import {imageDataUrl, imageFile, imageThumbnail, sniffImage, toolResultImages} f
 import {openInIde, pickIde} from "./main/services/jetbrains";
 import {explainMcpLoginError, isOpenableAuthUrl, TERMINAL_LOGIN_HINT} from "./main/services/mcp-login";
 import type {McpAuthMethods, McpAuthReply, McpLoginError} from "./main/services/mcp-login";
-import {figmaLinksIn} from "./shared/figma";
+import {figmaLinksIn, figmaToolInfo} from "./shared/figma";
+import {figmaUsage, observeFigmaMessage} from "./main/services/figma-usage";
 import type {GitChange, GitStatusResult} from "./main/services/git-changes";
 import * as skills from "./main/services/skills";
 import * as hooks from "./main/services/hooks";
@@ -796,6 +797,7 @@ interface ChatNotice {
     level: "error" | "warning";
     message: string;
     detail?: string;
+    source?: "figma"; // Figma 호출 한도 안내 — 화면 설정에서 Figma 기능을 끄면 숨긴다
 }
 
 interface ImageData {
@@ -924,6 +926,30 @@ function formatQuestionAnswers(questions: AskQuestion[], answers: string[][]): s
 // 도구 결과 미리보기 — 화면에는 앞부분만 보낸다. 질문의 답(위 형식)은 질문 카드가 통째로 다시 읽으므로 넉넉히.
 function toolResultPreview(text: string): string {
     return text.slice(0, text.startsWith(QUESTION_ANSWER_PREFIX) ? 4000 : 500);
+}
+
+// ── Figma 호출 수 (src/main/services/figma-usage.ts) ──
+// 앱 전체 하나(계정 한도) — 탭 id 없이 모든 창에 보낸다. 작업 폴더 줄의 MCP 창이 보여 준다.
+function broadcastFigmaUsage() {
+    const usage = figmaUsage();
+    for (const w of BrowserWindow.getAllWindows()) {
+        if (!w.webContents.isDestroyed()) w.webContents.send("figma:usage", usage);
+    }
+}
+
+function noteFigma(tab: ChatTab, msg: SDKMessage) {
+    const r = observeFigmaMessage(msg as {type?: string; message?: {content?: unknown}});
+    if (r.counted > 0) broadcastFigmaUsage();
+    for (const hit of r.limited) {
+        send(tab, "chat:error", {
+            level: "warning",
+            message:
+                "Figma 호출 한도에 걸렸습니다 — 요금제·좌석마다 Figma에서 읽어 오는 횟수(분당·하루, 좌석이 없으면 한 달)가 정해져 있습니다. " +
+                "분당 한도면 1분쯤 뒤, 하루 한도면 내일 다시 됩니다.",
+            detail: `${figmaToolInfo(hit.tool).label} (${hit.tool})\n${hit.text}`,
+            source: "figma",
+        });
+    }
 }
 
 // 도구 결과 글 전체에 나온 Figma 파일 주소 (새로 만든 FigJam 보드 등) — 미리보기(앞 500자)에는 빠질 수 있다.
@@ -2324,6 +2350,8 @@ async function pump(s: LiveSession, claudePath: string) {
                 void noteMemorySaved(s.tab, p, done);
             });
             if (edited) sendChangedFiles(s.tab);
+            // Figma 읽기 호출 세기(요금제 한도 — 서브에이전트 포함) + 한도에 걸린 결과 알림
+            noteFigma(s.tab, msg);
 
             // 백그라운드 작업이 끝났다 — 결과를 남긴다 (목록에서 빠지는 건 뒤따르는 background_tasks_changed)
             if (msg.type === "system" && msg.subtype === "task_notification") {
@@ -3976,6 +4004,8 @@ ipcMain.handle("chat:set_fast_mode", (event, tabId: string, on: boolean) => {
 ipcMain.handle("models:list", () => loadModels());
 
 ipcMain.handle("chat:get_rate_limits", () => rateLimitList());
+// Figma 읽기 호출 수 (MCP 창의 figma 줄) — 바뀌면 figma:usage로 다시 온다
+ipcMain.handle("figma:usage", () => figmaUsage());
 
 // 이 사용자 메시지를 보내기 직전 상태로 Claude가 고친 파일을 되돌린다. 대화 내용은 그대로다.
 // 백업은 세션 기록에 남아 있어 프로세스가 끝난 뒤에도 되돌릴 수 있다(실측).

@@ -157,6 +157,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
         ipcRenderer.on("chat:rate_limits", handler);
         return () => ipcRenderer.removeListener("chat:rate_limits", handler);
     },
+    // Figma 읽기 호출 수 (계정 한도라 앱 전체 하나) — MCP 창의 figma 줄
+    getFigmaUsage: () => ipcRenderer.invoke("figma:usage"),
+    onFigmaUsage: (callback: (usage: FigmaUsage) => void) => {
+        const handler = (_: unknown, usage: FigmaUsage) => callback(usage);
+        ipcRenderer.on("figma:usage", handler);
+        return () => ipcRenderer.removeListener("figma:usage", handler);
+    },
     copyText: (text: string) => ipcRenderer.invoke("clipboard:write", text),
     writeClipboardImage: (dataUrl: string) => ipcRenderer.invoke("clipboard:write_image", dataUrl),
     // macOS 알림 (언제 띄울지는 렌더러가 정한다)

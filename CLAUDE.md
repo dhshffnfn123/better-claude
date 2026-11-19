@@ -1031,6 +1031,25 @@ logged in, no seat) — everything below was verified with fake transcripts and 
   Anthropic `{source: {base64}}` and MCP `{data, mimeType}`, verified live and loaded; the thumbnail is named "Figma 노드
   12:34" (`imageName`).
 
+- **Read-call counter** (`src/main/services/figma-usage.ts`, `FigmaUsageLine.tsx` under the figma row of the cwd
+  bar's MCP popover — `McpRow` in `McpStatus.tsx`, after the status/error lines and before the login progress/hint
+  lines, spanning the row's button column; the row keeps its [로그인]/[로그아웃]/[다시 연결]). Figma limits *read*
+  tool calls by plan and seat (`FIGMA_PLANS` in `src/shared/figma.ts`, from
+  `developers.figma.com/docs/figma-mcp-server/rate-limits-access/` as checked 2026-11-19: View·Collab seats 20 a month on
+  every plan; Full·Dev seats Professional 200/day + 10/min, Organization 200/day + 15/min, Enterprise 600/day + 20/min;
+  "Figma may change rate limits at any time" — change the numbers only there). Write tools are exempt (the docs name
+  add_code_connect_map, create_new_file, generate_figma_design, whoami; `use_figma` etc. are treated as writes too — a
+  guess; AI-credit tools are separate). `pump` hands every message — subagents' too, before the subagent filter — to
+  `noteFigma` → `observeFigmaMessage`: each Figma read `tool_use` counts once (by id), into `userData/figma-usage.json`
+  = per-day counts (local date, 62 days kept for the monthly limit) + timestamps of the last minute; `figma:usage` IPC +
+  broadcast. Only calls made through this app are counted (said so in the UI). The plan is a renderer setting
+  (`figma-plan-setting.ts`, localStorage, default Professional = the tightest Full·Dev limit) chosen in 설정 → Figma; the
+  line turns warning at 80 % of any limit and danger at 100 %. Unit-tested with a node bundle of the module (reads, writes,
+  dedupe, subagent, other servers, unknown `get_` tools). A Figma result that looks like a rate limit (error result:
+  429 / rate limit / too many requests / quota; non-error result: only explicit phrases, so a variable named
+  `rate-limit` does not trip it) sends a warning notice to that tab ("Figma 호출 한도에 걸렸습니다 — …", `source:
+  "figma"`, hidden by the switch).
+
 ### 사용 가이드 (`UserGuide.tsx`, content in `user-guide.ts`)
 
 Sidebar "사용 가이드" (under 새 대화; the sidebar items have icons — 새 대화, 사용 가이드, 확장, 설정) opens a modal over

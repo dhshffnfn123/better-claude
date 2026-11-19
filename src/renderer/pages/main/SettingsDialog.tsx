@@ -6,7 +6,9 @@ import styles from "./chat.page.module.scss";
 import {Switch} from "./NotificationSettings";
 import {type JumpMode, useJumpMode} from "../../jump-setting";
 import {useMemoryToastEnabled} from "../../memory-toast-setting";
+import {useFigmaPlan} from "../../figma-plan-setting";
 import {useFigmaFeatures} from "../../figma-setting";
+import {FIGMA_PLANS, type FigmaPlan} from "../../../shared/figma";
 
 const cx = classNames.bind(styles);
 
@@ -29,6 +31,7 @@ const JUMP_CHOICES: {value: JumpMode; title: string; desc: string}[] = [
 export function SettingsDialog({onClose}: {onClose: () => void}) {
     const [jump, setJump] = useJumpMode();
     const [memoryToast, setMemoryToast] = useMemoryToastEnabled();
+    const [figmaPlan, setFigmaPlan] = useFigmaPlan();
     const [figmaOn, setFigmaOn] = useFigmaFeatures();
 
     useEffect(() => {
@@ -97,6 +100,39 @@ export function SettingsDialog({onClose}: {onClose: () => void}) {
                             </div>
                             <Switch checked={figmaOn} onChange={setFigmaOn} label="Figma 기능" />
                         </div>
+                        {figmaOn && (
+                            <>
+                                <div className={cx("settingsLabel", "settingsLabelGap")}>요금제 · 좌석 (호출 한도 표시 기준)</div>
+                                <p className={cx("settingsHint")}>
+                                    Figma에서 읽어 오는 도구 호출은 요금제·좌석마다 횟수가 정해져 있습니다. 작업 폴더 줄의 MCP 창에서 figma 줄
+                                    밑에 이 기준으로 얼마나 썼는지 보여 줍니다. 앱은 계정의 요금제를 알 수 없어 여기서 고릅니다.
+                                </p>
+                                <div className={cx("settingsChoices")} role="radiogroup" aria-label="Figma 요금제와 좌석">
+                                    {(Object.keys(FIGMA_PLANS) as FigmaPlan[]).map((id) => (
+                                        <button
+                                            key={id}
+                                            className={cx("settingsChoice", {settingsChoiceOn: figmaPlan === id})}
+                                            role="radio"
+                                            aria-checked={figmaPlan === id}
+                                            onClick={() => setFigmaPlan(id)}
+                                        >
+                                            <span className={cx("settingsRadio")} />
+                                            <span className={cx("settingsChoiceText")}>
+                                                <span className={cx("settingsChoiceTitle")}>
+                                                    {FIGMA_PLANS[id].title}
+                                                    {id === "pro" && <span className={cx("settingsDefault")}>기본</span>}
+                                                </span>
+                                                <span className={cx("settingsChoiceDesc")}>{FIGMA_PLANS[id].desc}</span>
+                                            </span>
+                                        </button>
+                                    ))}
+                                </div>
+                                <p className={cx("settingsHint", "settingsHintAfter")}>
+                                    한도는 Figma 문서에 나온 숫자이고 Figma가 바꿀 수 있습니다. 쓰기 도구(파일 수정·새 파일 등)는 한도에서
+                                    빠집니다.
+                                </p>
+                            </>
+                        )}
                     </section>
                     <p className={cx("settingsNote")}>바꾸면 모든 탭에 바로 적용되고, 앱을 다시 켜도 그대로입니다.</p>
                 </div>

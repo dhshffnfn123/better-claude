@@ -1,5 +1,5 @@
-// Figma 층 — 도구 표(한국어 이름, 읽기·쓰기 구분)와 Figma 주소. main과 화면(도구 줄 꾸미기)이 같이 쓴다.
-// DOM·Node에 기대지 않는 순수 함수만 둔다.
+// Figma 층 — 도구 표(한국어 이름, 읽기·쓰기 구분), Figma 주소, 요금제 한도. main(호출 세기)과 화면(도구 줄 꾸미기·링크 카드·
+// 한도 표시)이 같이 쓴다. DOM·Node에 기대지 않는 순수 함수만 둔다. 한도 숫자는 아래 FIGMA_PLANS 한 곳에만 있다.
 // MCP 도구 이름 자체(mcp__서버__도구)는 일반 층 shared/mcp-tools.ts가 읽는다.
 
 // 원격 서버(mcp.figma.com — 플러그인·claude mcp add 둘 다)와 데스크톱 앱 서버. 이름에 figma가 들어간다.
@@ -140,4 +140,44 @@ export function parseFigmaUrl(url: string): FigmaLink | null {
 export function figmaNodeUrl(fileKey: string, nodeId?: string, editor: "design" | "board" = "design"): string {
     const base = `https://www.figma.com/${editor}/${encodeURIComponent(fileKey)}`;
     return nodeId ? `${base}?node-id=${encodeURIComponent(nodeId.replace(/:/g, "-"))}` : base;
+}
+
+// ── 호출 한도 (요금제·좌석) ──
+// 출처: https://developers.figma.com/docs/figma-mcp-server/rate-limits-access/ (2026-11-19에 확인한 표).
+// View·Collab 좌석은 모든 요금제에서 한 달 20회, Full·Dev 좌석은 하루·분당 한도(분당은 하루·한 달 한도와 따로 걸린다).
+// Education은 Professional과 같다. "Figma may change rate limits at any time" — 바뀌면 여기만 고친다.
+export type FigmaPlan = "pro" | "org" | "ent" | "view";
+
+export interface FigmaPlanLimits {
+    title: string;
+    desc: string;
+    perDay?: number;
+    perMinute?: number;
+    perMonth?: number;
+}
+
+export const FIGMA_PLANS: Record<FigmaPlan, FigmaPlanLimits> = {
+    pro: {title: "Professional", desc: "Full·Dev 좌석 — 하루 200회, 분당 10회 (Education도 같음)", perDay: 200, perMinute: 10},
+    org: {title: "Organization", desc: "Full·Dev 좌석 — 하루 200회, 분당 15회", perDay: 200, perMinute: 15},
+    ent: {title: "Enterprise", desc: "Full·Dev 좌석 — 하루 600회, 분당 20회", perDay: 600, perMinute: 20},
+    view: {title: "View·Collab 좌석 · Starter", desc: "좌석이 아직 없거나 보기 전용 — 한 달 20회", perMonth: 20},
+};
+
+// 한도에 걸린 결과로 보이는 글 (Figma 도구 결과에만 쓴다). 오류 결과면 넓게, 아니면(정상 결과 글에 한도 안내가
+// 섞여 올 수도 있다) 분명한 문구만 — 변수 이름 "rate-limit" 같은 데 걸리지 않게.
+const LIMIT_ERROR_RE = /\b429\b|rate[\s_-]*limit|too\s+many\s+requests|quota|limit\s+(?:exceeded|reached)/i;
+const LIMIT_STRICT_RE =
+    /\b429\b|too\s+many\s+requests|rate[\s_-]*limit(?:ed)?\s+(?:exceeded|reached|hit)|(?:exceeded|reached|hit)\s+(?:the|your)\s+[\w\s-]{0,40}?(?:limit|quota)|tool\s+call\s+limit/i;
+
+export function looksLikeFigmaRateLimit(text: string, isError: boolean): boolean {
+    if (!text) return false;
+    if (isError) return LIMIT_ERROR_RE.test(text.slice(0, 4000));
+    return text.length <= 1500 && LIMIT_STRICT_RE.test(text);
+}
+
+// 하루 묶음 키 — 이 컴퓨터 날짜(main·화면 같은 셈)
+export function figmaDayKey(t: number): string {
+    const d = new Date(t);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }

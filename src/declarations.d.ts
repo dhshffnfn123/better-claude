@@ -137,6 +137,12 @@ interface PermissionRequestData {
     input: unknown;
 }
 
+// Figma 읽기 호출 수 (main/services/figma-usage.ts) — 날짜별 횟수 + 최근 1분 안의 호출 시각
+interface FigmaUsage {
+    days: Record<string, number>;
+    recent: number[];
+}
+
 interface RateLimitWindow {
     type: string; // five_hour, seven_day, seven_day_opus ...
     utilization?: number; // 0~1
@@ -655,6 +661,7 @@ interface ChatNoticeData {
     level: "error" | "warning";
     message: string;
     detail?: string;
+    source?: "figma"; // Figma 호출 한도 안내 — 설정에서 Figma 기능을 끄면 숨긴다
 }
 
 // Claude가 자동 메모리(기억)에 기억 하나를 저장했다 (Write·Edit 성공, 실시간만) — 기억 알림
@@ -793,6 +800,8 @@ interface Window {
         getPathForFile: (file: File) => string;
         getRateLimits: () => Promise<RateLimitWindow[]>;
         onRateLimits: (callback: (limits: RateLimitWindow[]) => void) => () => void;
+        getFigmaUsage: () => Promise<FigmaUsage>;
+        onFigmaUsage: (callback: (usage: FigmaUsage) => void) => () => void;
         copyText: (text: string) => Promise<boolean>;
         writeClipboardImage: (dataUrl: string) => Promise<boolean>;
         showNotification: (n: {title: string; body: string; tabId?: string}) => Promise<boolean>;

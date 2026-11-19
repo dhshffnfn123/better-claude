@@ -335,6 +335,17 @@ export const GUIDE: GuideSection[] = [
                 since: "v5",
             },
             {
+                title: "Figma 호출 수",
+                body: "Figma에서 읽어 오는 도구 호출은 요금제·좌석마다 횟수가 정해져 있습니다(분당·하루, 좌석이 없으면 한 달). 작업 폴더 줄의 {i:plug} MCP 창에서 figma 줄 밑에 오늘 읽은 횟수와 최근 1분 횟수가 보입니다.",
+                how: [
+                    "한도에 가까우면 노란색, 닿으면 빨간색으로 바뀝니다",
+                    "이 앱에서 보낸 호출만 셉니다 — 터미널 등 다른 곳에서 쓴 것은 모릅니다. 쓰기 도구(파일 수정·새 파일 등)는 한도에서 빠져 세지 않습니다",
+                    "요금제·좌석은 {i:gear} 설정 → Figma에서 고릅니다 (기본 Professional)",
+                    "Figma 호출이 한도에 걸리면 그 탭에 안내가 뜹니다",
+                ],
+                since: "v5",
+            },
+            {
                 title: "Figma 기능 켜기 · 끄기",
                 body: "사이드바 {i:gear} 설정 → Figma → \"Figma 기능\". 끄면 앱의 Figma 화면만 숨기고 도구 줄은 기본 모양(\"figma · get_screenshot\")으로 돌아갑니다.",
                 how: [
@@ -383,6 +394,7 @@ export const GUIDE: GuideSection[] = [
                     "\"답변 처음으로\" 버튼 기준 — 보고 있는 답변 / 마지막 답변",
                     "기억 알림 — Claude가 기억해 둔 것을 창 가운데에 잠깐 보여 줄지 (기본은 켜짐)",
                     "Figma 기능 — 앱의 Figma 화면을 켜고 끄기 (기본은 켜짐)",
+                    "Figma 요금제·좌석 — MCP 창에 보이는 Figma 호출 수의 한도 기준 (기본 Professional)",
                     "바꾸면 모든 탭에 바로 적용되고, 다시 켜도 그대로입니다",
                 ],
                 since: "v5",

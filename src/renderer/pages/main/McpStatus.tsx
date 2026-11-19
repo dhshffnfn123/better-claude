@@ -4,6 +4,8 @@ import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 import {faCircleNotch, faPlug, faRotateRight} from "@fortawesome/free-solid-svg-icons";
 import styles from "./chat.page.module.scss";
 import {cancelMcpLogin, forgetMcpLogin, loginMcp, useMcpLogins} from "../../mcp-login";
+import {isFigmaServer} from "../../../shared/figma";
+import {FigmaUsageLine} from "./FigmaUsageLine";
 
 const cx = classNames.bind(styles);
 
@@ -269,6 +271,8 @@ function McpRow({
                 {m.scope && ` · ${m.scope}`}
             </span>
             {m.error && <span className={cx("mcpError")}>{m.error}</span>}
+            {/* Figma 읽기 호출 수 — 설정에서 Figma 기능을 끄면 그리지 않는다 (FigmaUsageLine이 본다) */}
+            {isFigmaServer(m.name) && <FigmaUsageLine />}
             {shown?.phase === "starting" && (
                 <span className={cx("mcpProgress")}>
                     <FontAwesomeIcon icon={faCircleNotch} spin />

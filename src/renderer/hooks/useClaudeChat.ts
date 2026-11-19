@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {onTab} from "../tab-events";
+import {figmaFeaturesOn} from "../figma-setting";
 
 export interface ImagePayload {
     previewUrl: string;
@@ -96,6 +97,7 @@ export interface ChatNotice {
     level: "error" | "warning" | "info";
     message: string;
     detail?: string;
+    source?: "figma"; // Figma 호출 한도 안내 — 화면 설정에서 Figma 기능을 끄면 숨긴다
 }
 
 export interface RunningTokens {
@@ -299,6 +301,8 @@ export function useClaudeChat(tabId: string, callbacks: ChatCallbacks = {}) {
         // 오류로 끝난 턴은 알림 문구를 바꾼다
         let failed: ChatNotice | null = null;
         const removeError = onTab("error", tabId, (n) => {
+            // Figma 호출 한도 안내 — 설정에서 Figma 기능을 껐으면 띄우지 않는다
+            if (n.source === "figma" && !figmaFeaturesOn()) return;
             setNotice(n);
             if (n.level === "error") failed = n;
         });
