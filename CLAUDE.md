@@ -1082,6 +1082,20 @@ logged in, no seat) — everything below was verified with fake transcripts and 
   panels/tabs can be visited without losing the capture. All verified in the dev app against a static page served on a
   random loopback port, with a simulated dev-server task (main's `background:output` handler swapped from the inspector).
 
+- **Figma link cards + quick actions** (`FigmaLinkCard.tsx`, `src/renderer/figma-links.ts`, URL parsing in
+  `src/shared/figma.ts`). A Figma URL in the input (`figmaLinksIn`: `/design|file|board|slides|deck|proto|make|site|buzz/
+  <key>`, `/branch/<key>` wins, `node-id=12-34` → `12:34`, the slug decoded with dashes → spaces, trailing punctuation
+  dropped, `figma.com/api/…` asset URLs ignored) shows a card above the textarea — logo tile, file name, "디자인 · 프레임
+  12:34 · 붙인 링크에서 알아냄" (read from the URL only, no Figma call), "Figma에서 열기" — plus quick-action chips for
+  design-type links (not FigJam/Slides: "이 화면 구현" there makes no sense): 이 화면 구현 / 디자인만 보기 / 색·간격 토큰
+  뽑기 / 컴포넌트 연결 (`FIGMA_ACTIONS`). A chip only fills the input — prompt lines, then whatever else the user had
+  typed, then the link with `t`/`fuid`/`share_link_id` removed — and never sends; pressing another chip replaces a previous
+  chip's text instead of stacking (`lastFigmaFillRef`). Sent messages (`UserContent`, live and loaded alike) draw the
+  same card above the bubble and drop lines that are only a Figma URL (`messageFigmaLinks`); the text Claude got is
+  unchanged (verified by stubbing main's `chat:send` from the inspector: the message carried the URL). The card's URL is a
+  `title`, not a `data-tooltip`: the CSS tooltip box exists while invisible, and on a right-aligned sent card a long URL
+  stuck out of the message list and gave it a horizontal scrollbar (reproduced).
+
 ### 사용 가이드 (`UserGuide.tsx`, content in `user-guide.ts`)
 
 Sidebar "사용 가이드" (under 새 대화; the sidebar items have icons — 새 대화, 사용 가이드, 확장, 설정) opens a modal over

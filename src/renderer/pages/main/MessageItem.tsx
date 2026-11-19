@@ -37,6 +37,9 @@ import {type AttachmentParts, parseAttachments, tildePath} from "../../attachmen
 import {SkillChip} from "./SkillRef";
 import {toolImageName, useMcpDisplayVersion} from "../../mcp-tool-display";
 import {type DesignImage, figmaDesignOf} from "../../screen-compare";
+import {messageFigmaLinks} from "../../figma-links";
+import {useFigmaFeatures} from "../../figma-setting";
+import {FigmaLinkCard} from "./FigmaLinkCard";
 
 const cx = classNames.bind(styles);
 
@@ -450,13 +453,24 @@ function ImageStrip({images, omitted, indent, onOpen}: SegImages & {indent: bool
     );
 }
 
-// 내 메시지 — 글 앞에 붙은 첨부 안내("첨부 파일 — …" + 경로 줄들)는 파일 카드로, 긴 글은 접어서 (attachments.ts)
+// 내 메시지 — 글 앞에 붙은 첨부 안내("첨부 파일 — …" + 경로 줄들)는 파일 카드로, 긴 글은 접어서 (attachments.ts).
+// Figma 링크는 카드로 — 링크만 있는 줄은 글에서 빼고 카드가 대신 보인다(Claude에게 간 글은 그대로, figma-links.ts)
 function UserContent({content}: {content: string}) {
+    const [figmaOn] = useFigmaFeatures();
     const parsed = useMemo(() => parseAttachments(content), [content]);
-    const text = parsed ? parsed.text : content;
+    const body = parsed ? parsed.text : content;
+    const figma = useMemo(() => (figmaOn ? messageFigmaLinks(body) : null), [figmaOn, body]);
+    const text = figma && figma.links.length > 0 ? figma.text : body;
     return (
         <>
             {parsed && <AttachmentCards parts={parsed.parts} />}
+            {figma && figma.links.length > 0 && (
+                <div className={cx("figmaCards")}>
+                    {figma.links.map((l) => (
+                        <FigmaLinkCard key={l.url} link={l} />
+                    ))}
+                </div>
+            )}
             {text.trim() && (
                 <div className={cx("bubble")}>
                     <Collapsible max={USER_FOLD_PX} label="전체 보기" toggleClassName="bubbleCollapseToggle">

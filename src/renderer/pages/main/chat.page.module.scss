@@ -3472,6 +3472,124 @@
   border-radius: 6px;
 }
 
+// 입력창에 붙인 Figma 링크 — 카드(파일 이름·종류·프레임, Figma에서 열기) + 빠른 작업 칩 (FigmaLinkCard.tsx)
+.figmaLinkStrip {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 10px 24px 0;
+}
+
+// 보낸 메시지의 Figma 링크 카드 — 말풍선 위 오른쪽 (첨부 카드와 같은 자리)
+.figmaCards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+  margin-bottom: 6px;
+}
+
+.figmaCard {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  width: 380px;
+  max-width: 100%;
+  padding: 8px 12px 8px 8px;
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: 12px;
+}
+
+// Figma 앱 아이콘처럼 어두운 네모 위에 다섯 색 로고 — 두 테마 모두 같은 색
+.figmaCardTile {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  font-size: 18px;
+  background-color: var(--c-figma-tile);
+  border-radius: 9px;
+}
+
+.figmaCardText {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.figmaCardName {
+  display: flex;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--c-text);
+}
+
+.figmaCardMeta {
+  overflow: hidden;
+  font-size: 11px;
+  color: var(--c-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.figmaCardOpen {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 4px;
+  align-items: center;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--c-link);
+  text-decoration: none;
+  white-space: nowrap;
+
+  &:hover {
+    text-decoration: underline;
+  }
+
+  svg {
+    font-size: 9px;
+  }
+}
+
+.figmaActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.figmaActionsLabel {
+  margin-right: 2px;
+  font-size: 11.5px;
+  color: var(--c-text-muted);
+}
+
+.figmaAction {
+  padding: 4px 11px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--c-text-soft);
+  cursor: pointer;
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: 999px;
+
+  &:hover {
+    color: var(--c-accent-soft-text);
+    background-color: var(--c-accent-soft);
+    border-color: var(--c-accent);
+  }
+}
+
 .mentionChipStrip {
   display: flex;
   flex-wrap: wrap;

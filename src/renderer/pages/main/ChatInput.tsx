@@ -42,6 +42,10 @@ import {buildAttachmentText, tildePath} from "../../attachments";
 import {MiddleName} from "./MiddleName";
 import {useLightbox} from "./Lightbox";
 import {classifySlash, filterMenu, type MenuCommand, menuCommands, type SlashResult, unknownNotice} from "../../slash-commands";
+import {figmaLinksIn} from "../../../shared/figma";
+import {type FigmaQuickAction, figmaActionText} from "../../figma-links";
+import {useFigmaFeatures} from "../../figma-setting";
+import {FigmaLinkCard, FigmaQuickActions} from "./FigmaLinkCard";
 
 const cx = classNames.bind(styles);
 
@@ -252,6 +256,12 @@ export function ChatInput({
     const [queued, setQueued] = useState<Draft | null>(null);
     // 목록에 없는 명령을 쳤다 — CLI에 목록을 다시 묻는 중 (그동안 Enter는 받지 않는다)
     const [checkingCommand, setCheckingCommand] = useState(false);
+    // 입력창에 붙인 Figma 링크 — 카드와 빠른 작업 (Figma 기능을 끄면 없음)
+    const [figmaOn] = useFigmaFeatures();
+    const figmaLinks = useMemo(() => (figmaOn ? figmaLinksIn(input, 3) : []), [figmaOn, input]);
+    // 빠른 작업은 디자인 파일 링크에만 — FigJam 보드·슬라이드에 "이 화면 구현"·"토큰 뽑기"는 맞지 않는다
+    const actionLink = figmaLinks.find((l) => l.editor !== "board" && l.editor !== "slides" && l.editor !== "deck");
+    const lastFigmaFillRef = useRef<string | null>(null);
 
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -663,6 +673,17 @@ export function ChatInput({
         return () => onRegisterFill(null);
     }, [onRegisterFill, scheduleResize]);
 
+    // 빠른 작업: 첫 디자인 링크로 준비된 요청문을 채운다 — 보내지 않는다(고쳐서 보내게)
+    const pickFigmaAction = (action: FigmaQuickAction) => {
+        const link = actionLink;
+        if (!link) return;
+        const text = figmaActionText(action, link, input, lastFigmaFillRef.current);
+        lastFigmaFillRef.current = text;
+        setInput(text);
+        pendingCursorRef.current = text.length;
+        resizeAfterFillRef.current = true;
+    };
+
     const removeImage = (index: number) => {
         setSelectedImages((prev) => prev.filter((_, i) => i !== index));
     };
@@ -853,6 +874,14 @@ export function ChatInput({
                             </div>
                         );
                     })}
+                </div>
+            )}
+            {figmaLinks.length > 0 && (
+                <div className={cx("figmaLinkStrip")}>
+                    {figmaLinks.map((l) => (
+                        <FigmaLinkCard key={l.url} link={l} note="붙인 링크에서 알아냄" />
+                    ))}
+                    {actionLink && <FigmaQuickActions onPick={pickFigmaAction} />}
                 </div>
             )}
             {mentionOpen && mentionFiles.length > 0 && (
