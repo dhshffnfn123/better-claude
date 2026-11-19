@@ -1,4 +1,4 @@
-import {useEffect, useState} from "react";
+import {useEffect, useRef, useState} from "react";
 import classNames from "classnames/bind";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 import {faCircleNotch, faPlug, faRotateRight} from "@fortawesome/free-solid-svg-icons";
@@ -28,16 +28,26 @@ interface RowError {
 }
 
 // 작업 폴더 줄의 "MCP 연결/전체" 표시 + 누르면 서버 목록. 인증이 필요한 서버는 여기서 바로 로그인한다(main의 "MCP 서버 로그인").
+// openSignal: 바뀔 때마다 연다 (입력창의 /mcp)
 export function McpStatus({
     tabId,
     servers,
     onList,
+    openSignal = 0,
 }: {
     tabId: string;
     servers: McpServer[];
     onList: (tabId: string, list: McpServer[]) => void;
+    openSignal?: number;
 }) {
     const [open, setOpen] = useState(false);
+    // 처음 그릴 때 이미 올라가 있던 값으로는 열지 않는다 — 바뀌었을 때만
+    const seenOpenSignal = useRef(openSignal);
+    useEffect(() => {
+        if (openSignal === seenOpenSignal.current) return;
+        seenOpenSignal.current = openSignal;
+        setOpen(true);
+    }, [openSignal]);
     const [refreshing, setRefreshing] = useState(false);
     // 이 팝업에서 누른 다시 연결·로그아웃이 진행 중인 서버, 그리고 그 실패 문구
     const [busy, setBusy] = useState<Record<string, "reconnect" | "logout">>({});

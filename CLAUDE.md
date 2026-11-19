@@ -74,6 +74,12 @@ main via `--inspect`):
   at call time) to capture the URL; finish the login by fetching it (302 → the CLI's callback). The test token lands in
   a separate keychain item (`Claude Code-credentials-<hash>`, see "MCP server login") — report its name to the owner
   rather than deleting keychain items yourself.
+- **Settings-writing commands in a test folder inside a git worktree write the *main checkout's* project
+  settings**: the CLI takes the repository's main worktree as the project root, so `/output-style Concise`
+  run in `<worktree>/node_modules/<harness>/proj` landed in `<main checkout>/.claude/settings.local.json`
+  (`CLAUDE_CONFIG_DIR` only isolates user-level settings; reproduced and reverted). `git init` the test folder
+  first so it is its own project. Never let the "/" menu run commands you did not type in full: before the
+  fix below, "/usage" + Enter ran `/usage-credits`, which opens claude.ai in the browser.
 
 **Typecheck with `npx -p typescript@5.6.3 tsc --noEmit -p .`, not the project's own `tsc`.** The pinned
 TypeScript 4.5 cannot parse current `.d.ts` files in `node_modules`, and when there are syntax errors
@@ -655,7 +661,66 @@ Commands (skills, plugins, MCP prompts), models and MCP status come from an idle
 `initializationResult()` gives commands + models in one round trip; `mcpServerStatus()` is polled until
 nothing is `pending` (≤10s). Cached per cwd, failures are not cached. While a live session exists its
 `supportedCommands()` / `mcpServerStatus()` are used instead, MCP status is refreshed after every turn,
-and `commands_changed` system messages are pushed as `chat:commands`.
+and `commands_changed` system messages are pushed as `chat:commands`. The command list is also re-sent at every
+turn end (`reportCommands`) — the per-folder cache never refreshed, so a skill made between messages or a plugin
+installed in the terminal stayed out of the "/" menu until the app restarted — and `commands:list(tabId, true)`
+re-probes the folder (the input calls it for a name it does not know, see below).
+
+### Slash commands (`src/renderer/slash-commands.ts`)
+
+The CLI is the source of truth: the "/" menu is its list (`supportedCommands`, with `aliases`), and everything not
+listed below is sent as typed. In SDK mode a **local command's output arrives as a plain `assistant` message** (and
+`result.local_command`), so it already showed live as the reply — measured for every builtin with a probe that drives
+the SDK like the app (`query()` + push input, isolated `CLAUDE_CONFIG_DIR`). What the owner saw as "slash commands
+mostly don't work" (measured, CLI 2.1.325 / SDK 0.3.319):
+
+- **Sent, works, output shown**: skills (bundled, plugin, project — prompt-type, model call), `/compact`, `/context`,
+  `/rename` (session title → sidebar, terminal `/resume`), `/goal`, `/recap`, `/output-style` (project
+  `.claude/settings.local.json`) and `/autocompact` (user settings) — both survive the next process —, `/agents` (says
+  its wizard was removed), `/list-agents`, `/reload-plugins`, `/reload-skills`, `/advisor` (writes `advisorModel` to user
+  settings — read from the CLI, not run), `/init`, `/security-review` (fails "origin/HEAD" without a remote),
+  `/config key=value`, `/mcp reconnect|enable|disable`, `/usage-credits` (opens the browser by design). Not run (cost,
+  remote, or side effects): `/ultrareview`, `/schedule`, `/loop`, `/batch`, `/deep-research`, `/design*`,
+  `/team-onboarding`, `/import`, `/heapdump`, `/auto-mode-setup`, `/__remote-workflow`, `/workflow-launch-exec`.
+- **Reopened conversations lost every local output** — `getSessionMessages` does not return the transcript's
+  `system/local_command` entries (not even with `includeSystemMessages`), so only "/context" was left. `sessions:messages`
+  now scans the JSONL (`localCommandOutputs`: line by line, JSON only for `"subtype":"local_command"` lines;
+  `<local-command-stdout|stderr>`) and `sessionToMessages` puts each output as the reply after its command (`/compact`
+  excluded — its divider is the result, live shows no text either).
+- **Done by the app instead** (`APP_COMMANDS`, tagged 앱 in the menu): `/model` and `/effort` are "this session only" in
+  the CLI = this process, and the app starts a new process for the next message, so they were silently lost; `/fast`
+  answers "not available in the Agent SDK"; `/clear` (`/reset`, `/new`) emits `conversation_reset` and an empty reply
+  while the app kept resuming the old session. Now: `/model [name]` → the tab's model (aliases from the CLI's model
+  list, display names, or any `claude-…` id; bare → the select's native picker via `showPicker()`, which needs the
+  Enter's user activation — notice as fallback), `/effort [level | ultracode on|off]`, `/fast [on|off]`, `/clear` → a new
+  conversation in this tab (`tabs:open` with no session + `clearedTab`; asks first while responding or with
+  background tasks, like a folder change), bare `/config` (`/settings`) → 설정, bare `/mcp` → the MCP popover,
+  `/usage` (`/cost`, `/stats`) → the usage popover (`UsageMeter openSignal`), `/help` → 사용 가이드, `/memory` → 지침 panel,
+  `/tasks` (`/bashes`) → background panel, `/resume` → sidebar. Feedback is an `info` notice in the tab (new level).
+- **Terminal only** (`TERMINAL_COMMANDS`, tagged 터미널): the CLI answers "/X isn't available in this environment" for
+  its interactive-only builtins (`/plugin`, `/status`, `/login`, `/logout`, `/permissions`, `/hooks`, `/theme`, `/add-dir`,
+  `/rewind`, `/export`, `/exit`, …), and `/color`, `/focus` are marked `terminalOriented` by the CLI itself (no visible
+  effect in the app). Not sent; a Korean notice says so and where the app has the equivalent. `/plugin …` shows the shell
+  command (`claude plugin install <id>`) — plugin management has no SDK API, only the terminal UI and the shell.
+  Unlisted ones the owner is likely to type are added to the menu (`EXTRA_TERMINAL`, only after a letter is typed).
+- **Unknown names** (`/install`): the CLI hands them to the model as text ("cmd_unknown_model_fallback"), which looked
+  like the command ran and did nothing. Not sent: the list is re-probed first (a plugin just installed, a skill just
+  written), then a notice (`/install` → the plugin notice). Only lowercase command-like first words count — paths
+  (`/Users/…`, `/tmp 정리해 줘`) are text, and a leading space sends anything as text. A custom command with the same
+  name as a terminal/app one wins (sent).
+- **Menu keys**: exact name first, then custom commands, then shorter names — the old CLI order turned "/usage" + Enter
+  into `/usage-credits` (it opened the browser — happened during testing) and "/plugin" into the `/plugin-authoring`
+  skill. Enter runs only a builtin whose full name is typed; on a partial name it fills the name (as Tab does); picking
+  a skill / custom / plugin command, or a builtin with an `argumentHint`, fills "/name " for arguments — skills often
+  take arguments without declaring a hint (the owner's `/datahub-executing-plans <plan> 1 …`). A typed line with
+  arguments is sent unchanged, multi-line included (verified: the skill got `$ARGUMENTS` with the newline).
+- **Skill files are re-read by the next process**: edited between two messages, the next reply used the new text
+  (verified in the app with a test skill: V1 → V2). But a message sent while the previous CLI is still alive — within
+  `SUGGESTION_WAIT_MS` after a reply, or while background tasks run — goes into the same process, which keeps the
+  skill text it loaded: it answered with the old V2 after an edit to V3; `/reload-skills` in that process made the next
+  call use the new text (V4). So `/reload-skills` is harmless and only needed right after an edit inside that window.
+- `system/informational` (warning/suggestion) now shows as a warning notice — e.g. `/goal`'s "Goal cleared after an
+  unrecoverable error … Run /goal again" arrived only that way.
 
 ### MCP server login (`McpStatus.tsx`, main "MCP 서버 로그인", `src/main/services/mcp-login.ts`)
 

@@ -36,6 +36,7 @@ registerPreviewScheme();
 import os from "os";
 import fs from "fs";
 import path from "path";
+import readline from "readline";
 import {randomUUID} from "crypto";
 
 // 채팅 설정은 탭마다 따로 있다(ChatTab). 이건 렌더러가 설정을 넘기지 않고 연 탭(첫 탭 등)이 받는 기본값으로,
@@ -360,6 +361,7 @@ interface AppSlashCommand {
     description: string;
     argumentHint?: string;
     source: "builtin" | "custom";
+    aliases?: string[]; // 같은 명령의 다른 이름 (/cost·/stats → /usage) — 입력창이 친 이름을 알아보는 데 쓴다
 }
 
 // 이름이 겹치면 CLI 내장 명령이 실행되므로 내장 쪽을 남긴다. 사용자/프로젝트/플러그인 명령을 위로.
@@ -374,6 +376,7 @@ function toCommandList(commands: SdkSlashCommand[]): AppSlashCommand[] {
             description: c.description,
             argumentHint: c.argumentHint || undefined,
             source: c.builtin ? "builtin" : "custom",
+            aliases: c.aliases?.length ? c.aliases : undefined,
         });
     }
     return [...byName.values()].sort((a, b) => (a.source === b.source ? 0 : a.source === "custom" ? -1 : 1));
@@ -400,17 +403,20 @@ function toMcpList(status: McpServerStatus[] | null): AppMcpServer[] {
     }));
 }
 
-async function loadCommands(tab: ChatTab): Promise<AppSlashCommand[]> {
-    // 살아 있는 세션이 있으면 그쪽이 최신이다(작업 중 발견된 스킬까지 반영)
+// refresh: 폴더 정보를 새로 받는다 — 입력창이 목록에 없는 명령을 쳤을 때(터미널에서 방금 설치한 플러그인의 스킬 등).
+// 폴더 정보는 폴더마다 한 번만 받아 두어서, 그러지 않으면 앱을 다시 켤 때까지 없는 명령으로 보였다.
+async function loadCommands(tab: ChatTab, refresh = false): Promise<AppSlashCommand[]> {
+    // 살아 있는 세션이 있으면 그쪽이 최신이다(작업 중 발견된 스킬까지 반영) — 새로 받을 때는 빼고: 그 프로세스는 뜬 뒤에
+    // 생긴 파일을 모른다. 새로 띄운 CLI가 지금 폴더의 파일을 읽는다.
     const live = tab.live;
-    if (live && !live.inputEnded) {
+    if (live && !live.inputEnded && !refresh) {
         try {
             return toCommandList(await withTimeout(live.q.supportedCommands(), 5000));
         } catch {
             // 아래 폴더 정보로 대체
         }
     }
-    const init = await probeFolder(tab.cwd).init;
+    const init = await probeFolder(tab.cwd, refresh).init;
     return toCommandList(init?.commands ?? []);
 }
 
@@ -2291,7 +2297,7 @@ async function pump(s: LiveSession, claudePath: string) {
             if (msg.type === "result") {
                 commitReplaceFirst(s.tab, msg as {subtype?: string; is_error?: boolean; num_turns?: number});
                 // 컨텍스트 사용량은 query가 살아 있을 때만 물을 수 있어서 턴을 닫기 직전에 조회한다
-                await Promise.all([reportContextUsage(s), reportMcpStatus(s)]);
+                await Promise.all([reportContextUsage(s), reportMcpStatus(s), reportCommands(s)]);
                 if (s.stopped) continue;
                 finishTurn(s);
             }
@@ -2380,6 +2386,18 @@ async function sendTurn(tab: ChatTab, message: string, images: ImageData[], repl
             session_id: tab.sessionId ?? "",
         } as unknown as SDKUserMessage);
     });
+}
+
+// 이 프로세스가 아는 명령 목록 — "/" 메뉴는 폴더마다 한 번 받은 목록이라, 대화 사이에 만든 스킬·터미널에서 설치한
+// 플러그인이 앱을 다시 켤 때까지 메뉴에 없었다. 다음 메시지의 CLI는 그걸 읽고 뜨므로 그 응답이 끝날 때 메뉴를 바꾼다.
+// (supportedCommands는 CLI가 처음·바뀔 때 알려 준 목록을 SDK가 들고 있는 것이라 CLI에 다시 묻지 않는다)
+async function reportCommands(s: LiveSession) {
+    try {
+        const list = toCommandList(await withTimeout(s.q.supportedCommands(), 5000));
+        if (!s.stopped && list.length > 0) send(s.tab, "chat:commands", list);
+    } catch (e) {
+        console.error("[commands] 명령 목록 조회 실패", e);
+    }
 }
 
 async function reportMcpStatus(s: LiveSession) {
@@ -2481,8 +2499,36 @@ function describeCommandEntry(text: string): string | null {
     return args ? `${name} ${args}` : name;
 }
 
+// 다시 연 대화의 슬래시 명령 출력 (명령 항목의 uuid → 출력 글). 실시간에는 CLI가 출력을 답변(assistant)으로 보내 화면에
+// 보이는데, 기록에는 system/local_command 항목으로 남고 getSessionMessages는 그걸 돌려주지 않는다(includeSystemMessages로도
+// — 확인함). 그래서 다시 열면 "/context"만 남고 답이 비었다 — 기록 파일에서 직접 읽는다. 큰 기록도 있어 줄 단위로 읽고,
+// 해당 줄만 JSON으로 푼다. 출력은 <local-command-stdout>, 오류는 <local-command-stderr>("Error: No messages to compact").
+async function localCommandOutputs(sid: string): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    const file = instr.findTranscript(sid);
+    if (!file) return out;
+    const lines = readline.createInterface({input: fs.createReadStream(file, {encoding: "utf8"}), crlfDelay: Infinity});
+    for await (const line of lines) {
+        if (!line.includes('"subtype":"local_command"') || !line.includes("<local-command-std")) continue;
+        try {
+            const e = JSON.parse(line) as {type?: string; subtype?: string; parentUuid?: string; content?: unknown};
+            if (e.type !== "system" || e.subtype !== "local_command" || !e.parentUuid || typeof e.content !== "string") continue;
+            const m = /<local-command-(stdout|stderr)>([\s\S]*?)<\/local-command-\1>/.exec(e.content);
+            const text = m?.[2].trim();
+            if (text) out.set(e.parentUuid, out.has(e.parentUuid) ? `${out.get(e.parentUuid)}\n${text}` : text);
+        } catch {
+            // 깨진 줄은 건너뛴다
+        }
+    }
+    return out;
+}
+
 // subagent: 에이전트 자신의 기록(getSubagentMessages)을 그릴 때 — 그 기록은 항목마다 parent_tool_use_id가 붙어 있다
-function sessionToMessages(entries: SessionMessage[], opts: {subagent?: boolean} = {}): LoadedMessage[] {
+// commandOutputs: 다시 연 대화의 슬래시 명령 출력 (localCommandOutputs) — 명령 다음에 답변으로 넣는다
+function sessionToMessages(
+    entries: SessionMessage[],
+    opts: {subagent?: boolean; commandOutputs?: Map<string, string>} = {}
+): LoadedMessage[] {
     const out: LoadedMessage[] = [];
     let assistant: LoadedMessage | null = null;
     const tools = new Map<string, LoadedTool>();
@@ -2608,6 +2654,9 @@ function sessionToMessages(entries: SessionMessage[], opts: {subagent?: boolean}
         closeAssistant();
         turnUser = {role: "user", content, uuid: entry.uuid, images: images.length > 0 ? images : undefined};
         out.push(turnUser);
+        // 슬래시 명령의 출력 — 실시간처럼 답변으로. /compact는 구분선이 결과라 넣지 않는다(실시간에도 글은 없다)
+        const output = opts.commandOutputs?.get(entry.uuid);
+        if (output && !/^\/compact(\s|$)/.test(content)) assistant = {role: "assistant", content: "", segments: [{kind: "text", text: output}]};
     }
     closeAssistant();
     limitLoadedImages([...tools.values()]);
@@ -2838,6 +2887,17 @@ function handleSdkMessage(tab: ChatTab, msg: SDKMessage, notify: (n: ChatNotice)
             message: `${r.original_model}이(가) 요청을 거절했습니다`,
             detail: refusalDetail(r.api_refusal_category, r.api_refusal_explanation),
         });
+        return;
+    }
+
+    // CLI가 띄우는 알림 줄(SDK "informational": 슬래시 명령의 알림, 훅이 막은 이유 …). 예: /goal이 오류로 목표를 지우면
+    // "Goal cleared after an unrecoverable error … Run /goal again"이 이것으로만 왔다(실측) — 예전에는 버려졌다.
+    // 경고·제안만 알린다('info'는 터미널에서도 기록 보기에서만, 'notice'는 흐린 회색 줄이다).
+    if (msg.type === "system" && msg.subtype === "informational") {
+        const inf = msg as unknown as {content?: unknown; level?: unknown};
+        if (typeof inf.content === "string" && inf.content.trim() && (inf.level === "warning" || inf.level === "suggestion")) {
+            notify({level: "warning", message: inf.content.trim()});
+        }
         return;
     }
 
@@ -3706,7 +3766,11 @@ ipcMain.handle("sessions:list", async () => {
 
 ipcMain.handle("sessions:messages", async (_event, sid: string, cwd?: string) => {
     const {getSessionMessages} = await loadSdk();
-    const list = sessionToMessages(await getSessionMessages(sid, {dir: cwd || undefined}));
+    const [entries, commandOutputs] = await Promise.all([
+        getSessionMessages(sid, {dir: cwd || undefined}),
+        localCommandOutputs(sid).catch(() => new Map<string, string>()),
+    ]);
+    const list = sessionToMessages(entries, {commandOutputs});
     // 앱이 갈라낸 대화면 복사된 메시지까지 표시 — 그 메시지들로는 파일을 되돌릴 수 없다
     const until = forkPoints()[sid]?.until;
     const end = until ? list.findIndex((m) => m.uuid === until || m.replyUuid === until) : -1;
@@ -3876,7 +3940,13 @@ ipcMain.handle("prompts:remove", (_event, index: number) => {
     return systemPrompts;
 });
 
-ipcMain.handle("commands:list", (event, tabId: string) => loadCommands(tabFor(event, tabId)));
+ipcMain.handle("commands:list", async (event, tabId: string, refresh?: boolean) => {
+    const tab = tabFor(event, tabId);
+    const list = await loadCommands(tab, refresh === true);
+    // 새로 받은 목록은 입력창의 "/" 메뉴에도 — 다시 묻지 않아도 그 명령이 메뉴에 보이게
+    if (refresh === true) send(tab, "chat:commands", list);
+    return list;
+});
 
 ipcMain.handle("mcp:status", (event, tabId: string, refresh?: boolean) => loadMcpStatus(tabFor(event, tabId), refresh === true));
 

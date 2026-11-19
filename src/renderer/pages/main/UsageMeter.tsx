@@ -25,8 +25,22 @@ function breakdown(u: TokenTotals): string {
     return `입력 ${compactTokens(u.input)} · 출력 ${compactTokens(u.output)} · 캐시 읽기 ${compactTokens(u.cacheRead)} · 캐시 쓰기 ${compactTokens(u.cacheWrite)}`;
 }
 
-export function UsageMeter({tabs, activeId, onSelect}: {tabs: UsageTab[]; activeId: string; onSelect: (tabId: string) => void}) {
+// openSignal: 바뀔 때마다 연다 (입력창의 /usage·/cost)
+export function UsageMeter({
+    tabs,
+    activeId,
+    onSelect,
+    openSignal = 0,
+}: {
+    tabs: UsageTab[];
+    activeId: string;
+    onSelect: (tabId: string) => void;
+    openSignal?: number;
+}) {
     const [open, setOpen] = useState(false);
+    useEffect(() => {
+        if (openSignal > 0) setOpen(true);
+    }, [openSignal]);
     const [saved, setSaved] = useState<Record<string, {cost?: number; usage?: TokenTotals}>>({});
 
     // 연 동안: 아직 누계가 없는 탭(복원만 되고 열지 않은 탭)의 저장된 값을 읽는다

@@ -404,6 +404,7 @@ interface SlashCommand {
     description: string;
     argumentHint?: string;
     source: "builtin" | "custom";
+    aliases?: string[]; // 같은 명령의 다른 이름 (/cost → /usage, /new → /clear) — "/" 없이
 }
 
 // ── 탭 ──
@@ -540,7 +541,8 @@ interface Window {
         revealFile: (tabId: string, path: string) => Promise<void>;
         gitStatus: (tabId: string) => Promise<GitStatusResult>;
         gitDiff: (tabId: string, path: string) => Promise<GitDiffResult>;
-        listCommands: (tabId: string) => Promise<SlashCommand[]>;
+        // refresh: 폴더 정보를 새로 받는다 (목록에 없는 명령을 쳤을 때 — 터미널에서 방금 설치한 플러그인 등)
+        listCommands: (tabId: string, refresh?: boolean) => Promise<SlashCommand[]>;
         getMcpStatus: (tabId: string, refresh?: boolean) => Promise<McpServer[]>;
         // MCP 서버 로그인 — 답은 로그인 주소를 연 뒤의 상태(waiting·claudeai·error), 이후 진행은 onMcpLogin
         mcpLogin: (tabId: string, name: string) => Promise<McpLoginState>;

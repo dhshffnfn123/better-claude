@@ -151,7 +151,8 @@ export interface NestedInstruction {
 
 const transcriptPaths = new Map<string, string>();
 
-function findTranscript(sid: string): string | null {
+// 세션 기록 파일(<설정 폴더>/projects/<프로젝트>/<세션>.jsonl). main.ts도 쓴다(다시 연 대화의 슬래시 명령 출력).
+export function findTranscript(sid: string): string | null {
     const known = transcriptPaths.get(sid);
     if (known && fs.existsSync(known)) return known;
     const root = path.join(claudeConfigDir(), "projects");

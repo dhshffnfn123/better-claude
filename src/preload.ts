@@ -104,7 +104,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     // "Git 변경" 보기: 마지막 커밋 이후 바뀐 파일, 파일 하나의 차이
     gitStatus: (tabId: string) => ipcRenderer.invoke("git:status", tabId),
     gitDiff: (tabId: string, path: string) => ipcRenderer.invoke("git:diff", tabId, path),
-    listCommands: (tabId: string) => ipcRenderer.invoke("commands:list", tabId),
+    listCommands: (tabId: string, refresh?: boolean) => ipcRenderer.invoke("commands:list", tabId, refresh === true),
     getMcpStatus: (tabId: string, refresh?: boolean) => ipcRenderer.invoke("mcp:status", tabId, refresh ?? false),
     // MCP 서버 로그인(OAuth) — 그 탭의 작업 폴더에서 시작한다. 진행 상태는 onMcpLogin으로 온다(토큰은 탭과 무관해 앱 전체 이벤트).
     mcpLogin: (tabId: string, name: string) => ipcRenderer.invoke("mcp:login", tabId, name),

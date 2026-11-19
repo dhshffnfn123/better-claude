@@ -90,8 +90,9 @@ export interface QuestionRequest {
     questions: AskQuestion[];
 }
 
+// info: 앱이 처리한 슬래시 명령의 결과 (/model haiku → "모델을 … 바꿨습니다") — main은 error·warning만 보낸다
 export interface ChatNotice {
-    level: "error" | "warning";
+    level: "error" | "warning" | "info";
     message: string;
     detail?: string;
 }

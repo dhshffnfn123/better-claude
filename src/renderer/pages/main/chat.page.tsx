@@ -41,6 +41,7 @@ import {FILES_PANEL_MIN_WIDTH, readPref, writePref} from "./files-panel-prefs";
 import {isImeComposing, type PromptHooks} from "./ChatInput";
 import {ChatTabView, type TabLoadRequest, type TabViewApi} from "./ChatTabView";
 import {TabStrip} from "./TabStrip";
+import type {AppCommand} from "../../slash-commands";
 
 const cx = classNames.bind(styles);
 
@@ -53,6 +54,7 @@ interface ModelOption {
     description?: string;
     efforts: string[]; // 빈 배열이면 effort 미지원
     fastMode: boolean;
+    aliases?: string[]; // 이 모델을 가리키는 CLI 별칭 (opus, haiku, default …) — 입력창의 /model haiku
 }
 
 // CLI에서 목록을 못 받았을 때 쓰는 내장 목록. 기본값은 main 프로세스(탭의 model)가 정한다.
@@ -66,6 +68,11 @@ const FALLBACK_MODELS: ModelOption[] = [
 // CLI 목록에는 "default"와 "opus"처럼 같은 모델을 가리키는 별칭 행이 섞여 있다.
 // 실제 ID 기준으로 중복을 걸러낸다.
 function toModelOptions(infos: ClaudeModelInfo[]): ModelOption[] {
+    const aliases = new Map<string, string[]>();
+    for (const m of infos) {
+        const id = m.resolvedModel ?? m.value;
+        if (m.value !== id) aliases.set(id, [...(aliases.get(id) ?? []), m.value.toLowerCase()]);
+    }
     const seen = new Set<string>();
     const out: ModelOption[] = [];
     for (const m of infos) {
@@ -79,9 +86,22 @@ function toModelOptions(infos: ClaudeModelInfo[]): ModelOption[] {
             description: m.description,
             efforts: m.supportsEffort ? m.supportedEffortLevels ?? ALL_EFFORTS : [],
             fastMode: m.supportsFastMode === true,
+            aliases: aliases.get(id),
         });
     }
     return out;
+}
+
+// 입력창의 "/model <이름>" — CLI와 같은 이름(별칭 opus·haiku…, 모델 ID, 화면 이름)을 받는다. 못 찾으면 null.
+function resolveModelArg(arg: string, models: ModelOption[]): string | null {
+    const a = arg.trim().toLowerCase();
+    const hit = models.find((m) => m.id.toLowerCase() === a || m.aliases?.includes(a) || m.label.toLowerCase() === a);
+    if (hit) return hit.id;
+    // 별칭을 아직 못 받았을 때(내장 목록) — opus·sonnet·haiku·fable
+    const family = /^[a-z]+$/.test(a) ? models.find((m) => m.id.includes(`-${a}-`)) : undefined;
+    if (family) return family.id;
+    // 목록에 없는 모델 ID(예전 모델 등)는 그대로 — 맞는지는 다음 메시지에서 CLI가 확인한다
+    return /^claude-[a-z0-9.-]+$/.test(a) ? a : null;
 }
 
 const RATE_LIMIT_LABELS: Record<string, string> = {
@@ -261,6 +281,13 @@ const ChatPage = () => {
     // 설정 (사이드바 "설정", 사용 가이드 밑) — 사용 가이드처럼 탭 화면 위에 덮어 연다
     const [settingsOpen, setSettingsOpen] = useState(false);
     const closeSettings = useCallback(() => setSettingsOpen(false), []);
+    // 입력창의 /usage·/cost — 헤더의 탭별 사용량을 연다
+    const [usageOpenSeq, setUsageOpenSeq] = useState(0);
+    // 입력창의 /mcp — 작업 폴더 줄의 MCP 목록을 연다
+    const [mcpOpenSeq, setMcpOpenSeq] = useState(0);
+    // 입력창의 /model·/effort(인자 없이) — 위 선택 상자를 펼친다
+    const modelSelectRef = useRef<HTMLSelectElement>(null);
+    const effortSelectRef = useRef<HTMLSelectElement>(null);
     const [models, setModels] = useState<ModelOption[]>(FALLBACK_MODELS);
     // 백그라운드 작업 패널 — 작업 파일 패널 자리. 연 탭에서만 보이고, taskId = 보고 있는 작업(null이면 첫 작업)
     const [bgView, setBgView] = useState<{tabId: string; sessionId: string | null; taskId: string | null} | null>(null);
@@ -872,40 +899,46 @@ const ChatPage = () => {
         });
     };
 
-    const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    // 보고 있는 탭의 설정 바꾸기 — 위 선택 상자·버튼과 입력창의 /model·/effort·/fast가 같이 쓴다
+    const setModelValue = (next: string) => {
         if (!active) return;
-        const next = e.target.value;
         patchTab(active.id, {model: next});
         warnBackgroundOnSettingChange();
         noteDeferredSetting("settings");
         void window.electronAPI.setModel(active.id, next);
     };
 
-    const handleEffortChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const setEffortValue = (next: string) => {
         if (!active) return;
-        const next = e.target.value;
         patchTab(active.id, {effort: next});
         warnBackgroundOnSettingChange();
         noteDeferredSetting("settings");
         void window.electronAPI.setEffort(active.id, next);
     };
 
-    const handleToggleUltracode = () => {
+    const setUltracodeValue = (next: boolean) => {
         if (!active) return;
-        const next = !active.ultracode;
         patchTab(active.id, {ultracode: next});
         warnBackgroundOnSettingChange();
         noteDeferredSetting("settings");
         void window.electronAPI.setUltracode(active.id, next);
     };
 
-    const handleToggleFastMode = () => {
+    const setFastValue = (next: boolean) => {
         if (!active) return;
-        const next = !active.fastMode;
         patchTab(active.id, {fastMode: next});
         warnBackgroundOnSettingChange();
         noteDeferredSetting("settings");
         void window.electronAPI.setFastMode(active.id, next);
+    };
+
+    const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => setModelValue(e.target.value);
+    const handleEffortChange = (e: React.ChangeEvent<HTMLSelectElement>) => setEffortValue(e.target.value);
+    const handleToggleUltracode = () => {
+        if (active) setUltracodeValue(!active.ultracode);
+    };
+    const handleToggleFastMode = () => {
+        if (active) setFastValue(!active.fastMode);
     };
 
     const handleTogglePermissions = async () => {
@@ -1034,6 +1067,143 @@ const ChatPage = () => {
     const changedFiles = active?.changedFiles ?? EMPTY_CHANGED;
     const mcpServers = active?.mcp ?? [];
     const openSessionIds = new Set(tabs.map((t) => t.sessionId).filter((s): s is string => !!s));
+
+    // ── 입력창의 슬래시 명령 중 앱이 하는 것 (slash-commands.ts) ──
+    // CLI(SDK)에서 /model·/effort는 "this session only"(= 이번 프로세스)라 메시지마다 CLI를 새로 띄우는 앱에서는 다음
+    // 메시지에 사라졌고, /fast는 SDK에서 안 되며("not available in the Agent SDK"), /clear는 CLI 쪽만 새 대화가 되고 앱은
+    // 옛 대화를 이어 썼다(모두 실측). 그래서 앱의 같은 기능 — 위 선택 상자·버튼, 새 대화, 패널 — 으로 하고 그 탭에 알린다.
+    const startNewConversation = async (t: TabMeta) => {
+        const n = t.background.running.length;
+        if (t.isLoading || n > 0) {
+            const state =
+                t.isLoading && n > 0
+                    ? `응답 중이고 백그라운드 작업 ${n}개도 실행 중입니다`
+                    : t.isLoading
+                      ? "응답 중입니다"
+                      : `백그라운드 작업 ${n}개가 실행 중입니다`;
+            if (!window.confirm(`${state}.\n새 대화로 시작하면 모두 멈춥니다. 계속할까요?`)) return;
+            // 응답부터 닫는다 — 응답 뒤에 보내려던 메시지는 입력창으로 돌아간다
+            if (t.isLoading) apiRef.current.get(t.id)?.stop();
+        }
+        // main이 이 탭의 대화를 비운다(CLI 정리·세션 없음) — 폴더·설정은 그대로. 지금 대화는 사이드바에 남는다.
+        await window.electronAPI.openTab(t.id, {
+            cwd: t.cwd || undefined,
+            sessionId: null,
+            model: t.model,
+            effort: t.effort,
+            ultracode: t.ultracode,
+            fastMode: t.fastMode,
+        });
+        patchTab(t.id, (cur) => clearedTab(cur));
+    };
+    // 인자 없는 /model·/effort — 터미널처럼 고르는 목록을 펼친다 (못 펼치면 false → 알림으로 안내)
+    const openPicker = (el: HTMLSelectElement | null): boolean => {
+        const picker = el as (HTMLSelectElement & {showPicker?: () => void}) | null;
+        if (!picker || picker.disabled || !picker.showPicker) return false;
+        try {
+            picker.showPicker();
+            return true;
+        } catch {
+            return false;
+        }
+    };
+    const appCommandRef = useRef<(tabId: string, cmd: AppCommand) => void>(() => undefined);
+    appCommandRef.current = (tabId, cmd) => {
+        const t = tabsRef.current.find((x) => x.id === tabId);
+        // 입력창은 보고 있는 탭에만 있다 — 그 사이 다른 탭으로 옮겼으면 하지 않는다
+        if (!t || !active || t.id !== active.id) return;
+        const say = (message: string, level: ChatNotice["level"] = "info") => apiRef.current.get(tabId)?.setNotice({level, message});
+        const arg = cmd.args.trim().toLowerCase();
+        const modelLabel = (id: string) => models.find((m) => m.id === id)?.label ?? id;
+        const modelNames = models.map((m) => m.aliases?.find((a) => a !== "default") ?? m.id).join(", ");
+        const later = " — 다음 메시지부터 적용됩니다";
+        switch (cmd.action) {
+            case "new-conversation":
+                void startNewConversation(t);
+                return;
+            case "model": {
+                if (!arg) {
+                    if (!openPicker(modelSelectRef.current)) say(`지금 모델: ${modelLabel(t.model)} — /model 뒤에 이름(${modelNames})을 붙이거나 위 모델 선택에서 고르세요`);
+                    return;
+                }
+                const id = resolveModelArg(arg, models);
+                if (!id) {
+                    say(`"${cmd.args.trim()}" 모델을 찾지 못했습니다 — 쓸 수 있는 이름: ${modelNames}, 또는 모델 ID`, "warning");
+                    return;
+                }
+                if (id !== t.model) setModelValue(id);
+                say(`이 탭의 모델: ${modelLabel(id)}${id !== t.model ? later : ""}`);
+                return;
+            }
+            case "effort": {
+                const [level, onOff] = arg.split(/\s+/);
+                if (!arg) {
+                    if (!openPicker(effortSelectRef.current)) say(`지금 effort: ${ultracode ? "XHigh (Ultracode)" : EFFORT_LABELS[t.effort] ?? t.effort} — /effort ${effortOptions.join("|")}`);
+                    return;
+                }
+                if (level === "ultracode") {
+                    const on = onOff !== "off";
+                    if (on !== t.ultracode) setUltracodeValue(on);
+                    say(on ? `Ultracode 켬 — xhigh 고정, 여러 에이전트 동시 실행${on !== t.ultracode ? later : ""}` : `Ultracode 끔${on !== t.ultracode ? later : ""}`);
+                    return;
+                }
+                if (!effortSupported) {
+                    say("이 모델은 effort 설정을 지원하지 않습니다", "warning");
+                    return;
+                }
+                if (!effortOptions.includes(level) || onOff) {
+                    say(`쓸 수 있는 effort: ${effortOptions.join(", ")}, ultracode on|off${level === "auto" ? " — auto는 앱에 없습니다" : ""}`, "warning");
+                    return;
+                }
+                if (level !== t.effort) setEffortValue(level);
+                say(
+                    `이 탭의 effort: ${EFFORT_LABELS[level] ?? level}` +
+                        (ultracode ? " — Ultracode가 켜져 있는 동안은 XHigh로 고정됩니다" : level !== t.effort ? later : "")
+                );
+                return;
+            }
+            case "fast": {
+                if (!fastSupported) {
+                    say("Fast 모드는 이 모델에서 지원하지 않습니다", "warning");
+                    return;
+                }
+                const next = arg === "on" ? true : arg === "off" ? false : arg ? null : !t.fastMode;
+                if (next === null) {
+                    say("/fast, /fast on, /fast off 중 하나로 쓰세요", "warning");
+                    return;
+                }
+                if (next !== t.fastMode) setFastValue(next);
+                say(next ? `Fast 모드 켬 — 더 빠른 출력, 2배 가격${next !== t.fastMode ? later : ""}` : `Fast 모드 끔${next !== t.fastMode ? later : ""}`);
+                return;
+            }
+            case "settings":
+                setSettingsOpen(true);
+                return;
+            case "guide":
+                setGuideOpen(true);
+                return;
+            case "mcp":
+                if (t.mcp.length > 0) setMcpOpenSeq((n) => n + 1);
+                else say("이 폴더에는 MCP 서버가 없습니다 — 터미널에서 claude mcp add로 추가하면 작업 폴더 줄에 MCP가 보입니다");
+                return;
+            case "usage":
+                setUsageOpenSeq((n) => n + 1);
+                return;
+            case "instructions":
+                setInstrOpen(true);
+                setAgentView(null);
+                setPreviewView(null);
+                setBgView(null);
+                return;
+            case "background":
+                openBackground(tabId, null);
+                return;
+            case "sessions":
+                setSidebarOpen(true);
+                return;
+        }
+    };
+    const handleAppCommand = useCallback((tabId: string, cmd: AppCommand) => appCommandRef.current(tabId, cmd), []);
 
     return (
         <div className={cx("container")}>
@@ -1199,6 +1369,7 @@ const ChatPage = () => {
                     }))}
                     activeId={active?.id ?? ""}
                     onSelect={setActiveId}
+                    openSignal={usageOpenSeq}
                 />
                 <NotificationSettings />
                 <ThemeSettings />
@@ -1320,7 +1491,13 @@ const ChatPage = () => {
                             <span className={cx("settingHintText")}>{settingHintText(active.settingHint).text}</span>
                         </span>
                     )}
-                    <select className={cx("modelSelect")} value={model} onChange={handleModelChange} onClick={(e) => e.stopPropagation()}>
+                    <select
+                        ref={modelSelectRef}
+                        className={cx("modelSelect")}
+                        value={model}
+                        onChange={handleModelChange}
+                        onClick={(e) => e.stopPropagation()}
+                    >
                         {models.map((m) => (
                             <option key={m.id} value={m.id} title={m.description}>
                                 {m.label}
@@ -1330,6 +1507,7 @@ const ChatPage = () => {
                         {model && !currentModel && <option value={model}>{model}</option>}
                     </select>
                     <select
+                        ref={effortSelectRef}
                         className={cx("modelSelect")}
                         value={!effortSupported ? "" : ultracode ? "xhigh" : active.effort}
                         onChange={handleEffortChange}
@@ -1350,7 +1528,7 @@ const ChatPage = () => {
                             </option>
                         ))}
                     </select>
-                    <McpStatus tabId={active.id} servers={mcpServers} onList={patchMcp} />
+                    <McpStatus tabId={active.id} servers={mcpServers} onList={patchMcp} openSignal={mcpOpenSeq} />
                     {rateLimits
                         .filter((w) => typeof w.utilization === "number")
                         .map((w) => {
@@ -1418,6 +1596,7 @@ const ChatPage = () => {
                             onFork={openFork}
                             onOpenAgent={openAgent}
                             onOpenPreview={openPreview}
+                            onAppCommand={handleAppCommand}
                         />
                     ))}
                 </div>

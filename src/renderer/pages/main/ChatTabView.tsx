@@ -6,6 +6,7 @@ import {
     faArrowUp,
     faAt,
     faCircleExclamation,
+    faCircleInfo,
     faClockRotateLeft,
     faPaperclip,
     faShield,
@@ -33,6 +34,7 @@ import {useLightbox} from "./Lightbox";
 import {useJumpMode} from "../../jump-setting";
 import {ActivityPanel, middleTruncate} from "./ActivityPanel";
 import {QuestionModal} from "./QuestionModal";
+import type {AppCommand, SlashResult} from "../../slash-commands";
 
 const cx = classNames.bind(styles);
 
@@ -93,6 +95,8 @@ interface Props {
     onOpenAgent: (tabId: string, ref: AgentRef) => void;
     // HTML·SVG 미리보기를 오른쪽 패널에 크게 (패널은 셸이 그린다)
     onOpenPreview: (tabId: string, req: PreviewRequest) => void;
+    // 슬래시 명령 중 앱이 하는 것 — 모델·effort·새 대화·패널 열기 (탭 바깥이 한다)
+    onAppCommand: (tabId: string, cmd: AppCommand) => void;
 }
 
 // 탭 하나의 대화 화면: 메시지·알림·진행 패널·입력창, 그리고 이 탭의 모달(권한·질문·되돌리기·이미지)
@@ -113,6 +117,7 @@ function ChatTabViewBase({
     onFork,
     onOpenAgent,
     onOpenPreview,
+    onAppCommand,
 }: Props) {
     const {
         messages,
@@ -377,6 +382,14 @@ function ChatTabViewBase({
         [onOpenAgent, tabId]
     );
     const openPreview = useCallback((req: PreviewRequest) => onOpenPreview(tabId, req), [onOpenPreview, tabId]);
+    // 입력창이 CLI로 보내지 않은 슬래시 명령: 알림(터미널 전용·없는 명령)은 이 탭에, 앱이 할 일은 탭 바깥으로
+    const handleSlashCommand = useCallback(
+        (r: Extract<SlashResult, {kind: "app" | "notice"}>) => {
+            if (r.kind === "notice") setNotice(r.notice);
+            else onAppCommand(tabId, r.command);
+        },
+        [onAppCommand, tabId, setNotice]
+    );
     const backgroundRunning = background.running.length;
     const openBackground = useCallback((taskId: string | null) => onOpenBackground(tabId, taskId), [onOpenBackground, tabId]);
     // 답변 속 도구 줄 → 그 줄이 띄운 작업. 끝난 기록을 먼저 넣는다 — 끝나는 순간엔 실행 중 목록에도 잠깐 남아 있다.
@@ -521,9 +534,20 @@ function ChatTabViewBase({
                             />
                         ))}
                         {notice && (
-                            <div className={cx("notice", notice.level === "error" ? "noticeError" : "noticeWarning")}>
+                            <div
+                                className={cx(
+                                    "notice",
+                                    notice.level === "error" ? "noticeError" : notice.level === "info" ? "noticeInfo" : "noticeWarning"
+                                )}
+                            >
                                 <FontAwesomeIcon
-                                    icon={notice.level === "error" ? faCircleExclamation : faTriangleExclamation}
+                                    icon={
+                                        notice.level === "error"
+                                            ? faCircleExclamation
+                                            : notice.level === "info"
+                                              ? faCircleInfo
+                                              : faTriangleExclamation
+                                    }
                                     className={cx("noticeIcon")}
                                 />
                                 <div className={cx("noticeBody")}>
@@ -602,6 +626,7 @@ function ChatTabViewBase({
                 onRegisterAddMention={registerAddMention}
                 suggestion={suggestion}
                 onSuggestionUsed={clearSuggestion}
+                onSlashCommand={handleSlashCommand}
                 top={
                     <BackgroundDock
                         tabId={tabId}

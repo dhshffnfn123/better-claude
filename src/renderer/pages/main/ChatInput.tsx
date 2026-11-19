@@ -41,6 +41,7 @@ import {useSuggestionsEnabled} from "../../suggestion-setting";
 import {buildAttachmentText, tildePath} from "../../attachments";
 import {MiddleName} from "./MiddleName";
 import {useLightbox} from "./Lightbox";
+import {classifySlash, filterMenu, type MenuCommand, menuCommands, type SlashResult, unknownNotice} from "../../slash-commands";
 
 const cx = classNames.bind(styles);
 
@@ -202,6 +203,8 @@ interface Props {
     onSuggestionUsed?: () => void;
     // 입력창 바로 위에 붙일 것 — 백그라운드 작업 줄
     top?: ReactNode;
+    // 슬래시 명령 중 CLI로 보내지 않는 것 — 앱이 하는 것(/model, /clear …)은 탭 바깥이, 알림(터미널 전용·없는 명령)은 탭이 한다
+    onSlashCommand?: (r: Extract<SlashResult, {kind: "app" | "notice"}>) => void;
 }
 
 // 시스템 프롬프트 추가·삭제 전후에 셸이 할 일: confirm = 계속할지(백그라운드 작업이 꺼질 수 있다), changed = 탭마다 안내
@@ -224,6 +227,7 @@ export function ChatInput({
     suggestion,
     onSuggestionUsed,
     top,
+    onSlashCommand,
 }: Props) {
     const [suggestOn] = useSuggestionsEnabled();
     const [input, setInput] = useState("");
@@ -243,6 +247,8 @@ export function ChatInput({
     const [activeMention, setActiveMention] = useState(0);
     const [mentionedFiles, setMentionedFiles] = useState<string[]>([]);
     const [queued, setQueued] = useState<Draft | null>(null);
+    // 목록에 없는 명령을 쳤다 — CLI에 목록을 다시 묻는 중 (그동안 Enter는 받지 않는다)
+    const [checkingCommand, setCheckingCommand] = useState(false);
 
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -254,6 +260,9 @@ export function ChatInput({
     const sendAfterStopRef = useRef(false);
     const seenTurnEndRef = useRef(turnEnd.seq);
     const seenResetRef = useRef(resetSignal);
+    // 명령 목록을 다시 묻는 동안 바뀐 것 — 답이 온 뒤 최신 값으로 판단한다
+    const latestRef = useRef({input, isLoading, onSend, onSlashCommand});
+    latestRef.current = {input, isLoading, onSend, onSlashCommand};
 
     useEffect(() => {
         window.electronAPI.listCommands(tabId).then(setCommands);
@@ -269,11 +278,9 @@ export function ChatInput({
         textareaRef.current?.focus();
     }, [active]);
 
-    const filteredCommands = useMemo(() => {
-        if (!commandsOpen) return [];
-        const q = input.toLowerCase();
-        return commands.filter((c) => c.name.toLowerCase().startsWith(q));
-    }, [commands, input, commandsOpen]);
+    // "/" 메뉴 = CLI 목록 + 앱이 아는 명령(앱·터미널 표시). 친 이름과 정확히 같은 것이 맨 위다.
+    const menu = useMemo(() => menuCommands(commands), [commands]);
+    const filteredCommands = useMemo(() => (commandsOpen ? filterMenu(menu, input) : []), [menu, input, commandsOpen]);
 
     useEffect(() => {
         setActiveCommand(0);
@@ -364,9 +371,53 @@ export function ChatInput({
         clearDraft();
     };
 
+    // 슬래시 명령: 앱이 하는 것·터미널 전용·없는 명령은 CLI로 보내지 않는다(slash-commands.ts). 여기서 맡았으면 true.
+    // 목록에 없는 이름은 목록을 새로 받아 한 번 더 본다 — 터미널에서 방금 설치한 플러그인·방금 만든 스킬일 수 있다.
+    const handleSlash = (text: string): boolean => {
+        if (!onSlashCommand) return false;
+        const r = classifySlash(text, commands);
+        if (r.kind === "cli") return false;
+        if (r.kind !== "unknown") {
+            onSlashCommand(r);
+            clearDraft();
+            return true;
+        }
+        setCheckingCommand(true);
+        const decide = (fresh: SlashCommand[] | null) => {
+            setCheckingCommand(false);
+            const again = fresh ? classifySlash(text, fresh) : ({kind: "cli"} as const);
+            const latest = latestRef.current;
+            const unchanged = latest.input === text;
+            if (again.kind === "unknown") {
+                // 고쳐 쓸 수 있게 입력창은 그대로 둔다
+                latest.onSlashCommand?.({kind: "notice", notice: unknownNotice(again.name, again.args)});
+                return;
+            }
+            if (again.kind !== "cli") {
+                latest.onSlashCommand?.(again);
+            } else if (latest.isLoading) {
+                setQueued((q) => (q ? mergeDrafts(q, {...EMPTY_DRAFT, input: text}) : {...EMPTY_DRAFT, input: text}));
+            } else {
+                latest.onSend(text.trim(), []);
+            }
+            if (unchanged) clearDraft();
+        };
+        window.electronAPI.listCommands(tabId, true).then(
+            (fresh) => {
+                setCommands(fresh);
+                decide(fresh);
+            },
+            // 묻지 못했으면 CLI에 맡긴다 (모르는 명령이면 CLI가 Claude에게 글로 넘긴다)
+            () => decide(null)
+        );
+        return true;
+    };
+
     const handleSend = () => {
         const draft: Draft = {input, images: selectedImages, files: selectedFiles, mentions: mentionedFiles};
-        if (isEmptyDraft(draft)) return;
+        if (isEmptyDraft(draft) || checkingCommand) return;
+        // 첨부 없이 "/"로 시작하면 명령이다 (첨부가 있으면 그 안내가 앞에 붙어 CLI도 명령으로 보지 않는다)
+        if (draft.images.length === 0 && draft.files.length === 0 && draft.mentions.length === 0 && handleSlash(draft.input)) return;
         if (isLoading) {
             queueDraft(draft);
             return;
@@ -376,14 +427,24 @@ export function ChatInput({
         clearDraft();
     };
 
-    const sendCommand = (cmd: SlashCommand) => {
+    // 명령을 그대로 실행 (인자 없이)
+    const runCommand = (cmd: MenuCommand) => {
         setCommandsOpen(false);
+        if (checkingCommand || handleSlash(cmd.name)) return;
         if (isLoading) {
             queueDraft({...EMPTY_DRAFT, input: cmd.name});
             return;
         }
         onSend(cmd.name, []);
         clearDraft();
+    };
+
+    // 메뉴에서 고른 명령: 스킬·사용자·플러그인 명령은 늘, 내장 명령은 인자 자리(argumentHint)가 있으면 "/이름 "까지만
+    // 채우고 인자를 기다린다 — 스킬은 argumentHint가 없어도 인자를 받는 일이 많아서, 고르자마자 보내면 인자를 붙일 틈이
+    // 없었다. 터미널 전용 명령은 채울 것 없이 바로 알린다.
+    const pickCommand = (cmd: MenuCommand) => {
+        if (cmd.where !== "terminal" && (cmd.source === "custom" || cmd.argumentHint)) fillCommand(cmd);
+        else runCommand(cmd);
     };
 
     // 응답이 끝나면 대기 메시지를 보낸다. 중지로 끝났으면 보내지 않고 입력창으로 되돌린다
@@ -426,7 +487,7 @@ export function ChatInput({
         restoreDraft(queued);
     };
 
-    const fillCommand = (cmd: SlashCommand) => {
+    const fillCommand = (cmd: MenuCommand) => {
         setInput(cmd.name + " ");
         setCommandsOpen(false);
         textareaRef.current?.focus();
@@ -493,7 +554,12 @@ export function ChatInput({
             }
             if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
-                sendCommand(filteredCommands[activeCommand]);
+                // 내장 명령의 이름을 다 쳤으면 그대로 실행. 이름 일부만 쳤거나 스킬·사용자 명령이면 이름만 채운다 —
+                // 실행은 입력창에 보이는 그대로 한 번 더 Enter. 예전에는 이름 일부에서 Enter를 누르면 맨 위 명령이 바로
+                // 돌아서 "/us"가 /usage-credits(브라우저가 열린다), "/ul"이 /ultrareview(클라우드 리뷰)가 될 수 있었다.
+                const cmd = filteredCommands[activeCommand];
+                if (cmd.source !== "custom" && cmd.name.toLowerCase() === input.trim().toLowerCase()) runCommand(cmd);
+                else fillCommand(cmd);
                 return;
             }
         }
@@ -783,7 +849,7 @@ export function ChatInput({
                             onMouseDown={(e) => {
                                 // textarea blur 방지
                                 e.preventDefault();
-                                sendCommand(cmd);
+                                pickCommand(cmd);
                             }}
                             onMouseEnter={() => setActiveCommand(i)}
                         >
@@ -792,13 +858,24 @@ export function ChatInput({
                                     {cmd.name}
                                     {cmd.argumentHint && <span className={cx("commandHint")}> {cmd.argumentHint}</span>}
                                 </span>
+                                {/* 앱 = CLI로 보내지 않고 앱이 한다, 터미널 = 터미널의 claude에서만 된다 */}
+                                {cmd.where && (
+                                    <span className={cx("commandWhere", cmd.where === "app" ? "commandWhereApp" : "commandWhereTerminal")}>
+                                        {cmd.where === "app" ? "앱" : "터미널"}
+                                    </span>
+                                )}
                                 <span className={cx("commandSource")}>{cmd.source === "builtin" ? "내장" : "사용자"}</span>
                             </div>
-                            {cmd.description && (
-                                <span className={cx("commandDesc")}>{cmd.description}</span>
+                            {(cmd.note ?? cmd.description) && (
+                                <span className={cx("commandDesc")}>{cmd.note ?? cmd.description}</span>
                             )}
                         </div>
                     ))}
+                </div>
+            )}
+            {checkingCommand && (
+                <div className={cx("commandChecking")} role="status">
+                    명령 목록을 다시 확인하는 중…
                 </div>
             )}
             {queued && (
