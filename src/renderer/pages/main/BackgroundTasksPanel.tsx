@@ -1,4 +1,4 @@
-import {useEffect, useLayoutEffect, useRef, useState} from "react";
+import {useEffect, useLayoutEffect, useMemo, useRef, useState} from "react";
 import classNames from "classnames/bind";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 import {faArrowDown, faCheck, faCircleNotch, faCopy, faGears, faStop, faXmark} from "@fortawesome/free-solid-svg-icons";
@@ -24,6 +24,7 @@ import {startPanelResize} from "./files-panel-prefs";
 import {PromptMarkdown} from "./MessageItem";
 import {ImageViewer} from "./Lightbox";
 import {TabIdContext} from "../../tab-context";
+import {terminalText} from "../../terminal-text";
 
 const cx = classNames.bind(styles);
 
@@ -297,6 +298,8 @@ function LogView({tabId, taskId, running, onStop}: {tabId: string; taskId: strin
     const followRef = useRef(true);
     const [follow, setFollow] = useState(true);
     const [copied, setCopied] = useState(false);
+    // 터미널 제어 문자(색 등)를 뺀, 터미널에서 보이는 그대로의 글 — 화면과 "로그 복사"가 같이 쓴다
+    const shown = useMemo(() => (out?.text ? terminalText(out.text) : ""), [out?.text]);
 
     useEffect(() => {
         let alive = true;
@@ -320,7 +323,7 @@ function LogView({tabId, taskId, running, onStop}: {tabId: string; taskId: strin
     useLayoutEffect(() => {
         const el = ref.current;
         if (el && followRef.current) el.scrollTop = el.scrollHeight;
-    }, [out?.text]);
+    }, [shown]);
 
     const onScroll = () => {
         const el = ref.current;
@@ -338,8 +341,8 @@ function LogView({tabId, taskId, running, onStop}: {tabId: string; taskId: strin
         if (el) el.scrollTop = el.scrollHeight;
     };
     const copy = () => {
-        if (!out?.text) return;
-        void copyText(out.text).then((ok) => {
+        if (!shown) return;
+        void copyText(shown).then((ok) => {
             if (!ok) return;
             setCopied(true);
             window.setTimeout(() => setCopied(false), 1500);
@@ -353,12 +356,12 @@ function LogView({tabId, taskId, running, onStop}: {tabId: string; taskId: strin
                     <div className={cx("bgpLogEmpty")}>
                         <FontAwesomeIcon icon={faCircleNotch} spin /> 출력 불러오는 중…
                     </div>
-                ) : !out || !out.text.trim() ? (
+                ) : !out || !shown.trim() ? (
                     <div className={cx("bgpLogEmpty")}>{running ? "아직 출력이 없습니다" : "출력이 없습니다"}</div>
                 ) : (
                     <pre ref={ref} className={cx("bgpLog")} onScroll={onScroll}>
                         {out.truncated && <span className={cx("bgpLogCut")}>… 앞부분 생략{"\n"}</span>}
-                        {out.text}
+                        {shown}
                     </pre>
                 )}
                 {!follow && (
@@ -374,7 +377,7 @@ function LogView({tabId, taskId, running, onStop}: {tabId: string; taskId: strin
                     </span>
                 )}
                 <span className={cx("bgpFootSpacer")} />
-                <button className={cx("bgpBtn")} onClick={copy} disabled={!out?.text}>
+                <button className={cx("bgpBtn")} onClick={copy} disabled={!shown}>
                     <FontAwesomeIcon icon={copied ? faCheck : faCopy} /> {copied ? "복사됨" : "로그 복사"}
                 </button>
                 {running && (

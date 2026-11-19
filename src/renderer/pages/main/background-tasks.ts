@@ -10,6 +10,7 @@ import {
     faTerminal,
     faTriangleExclamation,
 } from "@fortawesome/free-solid-svg-icons";
+import {terminalText} from "../../terminal-text";
 
 // 백그라운드 작업을 그리는 곳들(입력창 위 작업 줄, 오른쪽 패널, 답변 속 실행 줄)이 같이 쓰는 것.
 // 컴포넌트 파일에서 컴포넌트가 아닌 것을 내보내면 Fast Refresh가 꺼져서 따로 둔다.
@@ -84,10 +85,10 @@ export function terminatedNote(f: {status: FinishedTask["status"]; exitCode?: nu
         : `다른 명령(kill 등)이 도중에 끝냈습니다 — 오류로 멈춘 게 아닙니다${code}`;
 }
 
-// 출력의 마지막 줄 — 빈 줄과 끝에 붙는 "[exited with code N]"은 건너뛴다
+// 출력의 마지막 줄 — 빈 줄과 끝에 붙는 "[exited with code N]"은 건너뛴다. 터미널 제어 문자(색 등)는 뺀다
 export function lastOutputLine(text: string | undefined): string | undefined {
     if (!text) return undefined;
-    const lines = text.split("\n");
+    const lines = terminalText(text).split("\n");
     for (let i = lines.length - 1; i >= 0; i--) {
         const line = lines[i].trim();
         if (line && !/^\[exited with code \d+\]$/.test(line)) return line;

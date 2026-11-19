@@ -169,7 +169,9 @@ Things that are load-bearing:
   click; the tool row that launched a task showed ✓ while the task ran for minutes (the owner: "눈에 안 띈다"). Now:
   **the dock** above the input (`BackgroundDock.tsx`, passed to `ChatInput` as `top`): one card per running task —
   spinner, kind icon, name (`taskName`: Claude's description, a trailing "in background" dropped), elapsed time, and
-  for shells the **last output line** (`getBackgroundOutput(…, 2000)` every 2 s, visible tab only), for agents their
+  for shells the **last output line** (`getBackgroundOutput(…, 2000)` every 2 s, visible tab only; shell output — this line,
+  the panel log and 로그 복사 — goes through `terminalText` (`src/renderer/terminal-text.ts`): colour/cursor codes such as
+  Vite's `ESC[2m…ESC[22m` used to show as "[2m7:30:01 PM[22m", and `\r`-overwritten progress lines keep their last text), for agents their
   activity; agent-launched tasks fold into their agent's card (`parentTaskId`); ≤3 cards + "+N"; finished tasks stay
   as ✓/✗ (red) cards for 15 s (`RECENT_DONE_MS`), then the dock disappears. **Their age is measured with the real
   clock at render** (+ a timer for the next expiry): it used to be the 1 s ticker's value (`useNow`), which stops while
