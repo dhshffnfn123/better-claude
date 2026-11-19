@@ -1,0 +1,164 @@
+// 확장 창 (ExtensionsDialog.tsx)과 그 탭들. 머리줄·닫기 단추는 사용 가이드와 같은 것(chat.page.module.scss의 guide*)을 쓴다.
+// 탭마다 따로 더하는 모양은 그 탭의 파일 아래쪽에 모아 둔다.
+
+.extDialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  width: min(1080px, calc(100vw - 48px));
+  height: min(780px, calc(100vh - 48px));
+  overflow: hidden;
+  background-color: var(--c-surface);
+  border-radius: 14px;
+  box-shadow: var(--sh-modal);
+  transform: translate(-50%, -50%);
+}
+
+// 머리줄의 기준 폴더 — 가운데를 줄인 경로(MiddleName)
+.extFolder {
+  display: flex;
+  flex: 1;
+  gap: 7px;
+  align-items: center;
+  min-width: 0;
+  max-width: 560px;
+  height: 28px;
+  padding: 0 10px;
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--c-text-2);
+  background-color: var(--c-fill-subtle);
+  border: 1px solid var(--c-border-soft);
+  border-radius: 8px;
+}
+
+.extFolderIcon {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--c-accent-text);
+}
+
+.extFolderPath {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+
+.extMain {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.extNav {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: 2px;
+  width: 210px;
+  padding: 12px 10px;
+  overflow-y: auto;
+  background-color: var(--c-panel-bg);
+  border-right: 1px solid var(--c-divider);
+}
+
+.extNavItem {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 9px 10px;
+  font: inherit;
+  color: var(--c-text-2);
+  text-align: left;
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-radius: 8px;
+
+  &:hover {
+    color: var(--c-text);
+    background-color: var(--c-hover);
+  }
+}
+
+.extNavActive,
+.extNavActive:hover {
+  color: var(--c-text);
+  background-color: var(--c-selected);
+}
+
+.extNavIcon {
+  flex-shrink: 0;
+  width: 15px;
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--c-accent-text);
+}
+
+.extNavText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.extNavLabel {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.extNavActive .extNavLabel {
+  font-weight: 700;
+}
+
+.extNavHint {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--c-text-muted);
+}
+
+.extNavNote {
+  padding: 0 6px;
+  margin: auto 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--c-text-faint);
+}
+
+// 탭 본문 자리 — 세로로 스크롤한다. 탭은 위쪽 도구 줄을 position: sticky로 붙일 수 있다.
+.extBody {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+// 준비 중인 탭
+.extSoon {
+  padding: 60px 24px;
+  font-size: 13px;
+  color: var(--c-text-muted);
+  text-align: center;
+}
+
+// 좁은 창에서는 왼쪽 목록을 아이콘만
+@media (max-width: 720px) {
+  .extNav {
+    width: 52px;
+    padding: 12px 6px;
+  }
+
+  .extNavItem {
+    justify-content: center;
+  }
+
+  .extNavText,
+  .extNavNote {
+    display: none;
+  }
+}

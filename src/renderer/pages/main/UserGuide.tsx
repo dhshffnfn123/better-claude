@@ -22,6 +22,7 @@ import {
     faPaperclip,
     faPen,
     faPlug,
+    faPuzzlePiece,
     faRotateLeft,
     faRotateRight,
     faShield,
@@ -68,6 +69,7 @@ const ICONS: Record<string, IconDefinition> = {
     gear: faGear,
     plug: faPlug,
     brain: faBrain,
+    puzzle: faPuzzlePiece,
 };
 
 // [[키]] → 키 모양, {i:이름} → 아이콘, `코드` → 코드 글씨

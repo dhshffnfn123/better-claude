@@ -1002,14 +1002,37 @@ previewed (they need a build).
 
 ### 사용 가이드 (`UserGuide.tsx`, content in `user-guide.ts`)
 
-Sidebar "사용 가이드" (under 새 대화; the three sidebar items have icons — 새 대화, 사용 가이드, 설정) opens a modal over
-the tab view — chats keep running underneath. **설정** (below it, `SettingsDialog.tsx`, same header as the guide) holds
+Sidebar "사용 가이드" (under 새 대화; the sidebar items have icons — 새 대화, 사용 가이드, 확장, 설정) opens a modal over
+the tab view — chats keep running underneath. **설정** (last, `SettingsDialog.tsx`, same header as the guide) holds
 general settings that have no header button of their own — for now the 답변 처음으로 target and the 기억 알림 switch
 (the switch component is `Switch` from `NotificationSettings.tsx`). Left: contents
 (sections with item counts, follows scrolling); right: one card per feature (설명 + 쓰는 방법 lines); top: search over
 title/body/how lines. Text markup: `[[⌘T]]` = keycap, `{i:shield}` = the app's own icon (`ICONS` in `UserGuide.tsx`),
 backticks = code. `since: "v5"` shows a version badge. Esc clears the search first, then closes. **The guide is
 hand-written: when a feature or its button/label changes, update its entry in `user-guide.ts`.**
+
+### 확장 window (`extensions/ExtensionsDialog.tsx`, opened through `src/renderer/extensions-open.ts`)
+
+One large modal for what extends Claude — the owner's picture: CLAUDE.md = post-it, skills = manuals in a drawer, hooks =
+automatic sensors, MCP = phone lines, plugins = kits bundling them; costs and safety matter. Sidebar **확장** (`faPuzzlePiece`,
+between 사용 가이드 and 설정) opens it over the tab view like the guide (same `guideHeader`/`guideClose`, chats keep running,
+Esc or the scrim closes). Left nav: 플러그인 · 스킬 · 훅 · 대화 시작 비용 (each with a one-line hint from the picture above); the
+header shows the folder the folder-dependent tabs describe = the **active tab's cwd** (`MiddleName`). Narrower than 720 px the
+nav shrinks to icons.
+
+- **Opening contract** — `openExtensions(tab: "plugins" | "skills" | "hooks" | "cost", focus?: string)`: module-level listeners
+  like `jump-setting.ts`; the shell (`useExtensionsRequest`) opens the window or, if open, switches it. `focus` = what to find in
+  that tab — plugins: a plugin id `name@marketplace` or name; skills: the name Claude invokes (`plugin:skill` for plugin
+  skills, bare for personal/project ones); hooks: a plugin id; cost: unused. Every call has a new `seq`, so the same focus
+  again re-finds it. The sidebar reopens the last viewed tab (`lastExtensionsTab`).
+- **Tab bodies** are separate components in `src/renderer/pages/main/extensions/` — `PluginsTab`, `SkillsTab`, `HooksTab`,
+  `CostTab` — each `(props: ExtensionsTabProps) = {tabId, cwd, focus?}`. The body is keyed by tab + request seq + tabId + cwd, so
+  it remounts (fresh data) when another tab/folder is shown or a new request arrives; keep caches in main or module scope.
+- **Host** (`extensions-host.ts`, `useExtensionsHost()`): `close()`, `openMcp()` (close + the cwd bar's MCP popover, for a
+  server's [로그인]), `openInstructions()` (close + the 지침 panel). Inner overlays (confirm boxes, search fields) take Esc first:
+  listen on `window` in the **capture** phase and `preventDefault()` — the window ignores a prevented Esc.
+- Styles live in `extensions/extensions.module.scss` (not the shared `chat.page.module.scss`), tab-specific parts below the
+  shell's.
 
 ### Send queue, notifications, copy, code blocks (renderer)
 

@@ -15,6 +15,7 @@ import {
     faLayerGroup,
     faMagnifyingGlass,
     faPenToSquare,
+    faPuzzlePiece,
     faShield,
     faShieldHalved,
     faTrash,
@@ -37,6 +38,9 @@ import {FilesPanel} from "./FilesPanel";
 import {InstructionsPanel} from "./InstructionsPanel";
 import {MemoryToasts} from "./MemoryToast";
 import {PreviewPanel} from "./HtmlPreview";
+import {ExtensionsDialog} from "./extensions/ExtensionsDialog";
+import type {ExtensionsHost} from "./extensions/extensions-host";
+import {lastExtensionsTab, openExtensions, useExtensionsRequest} from "../../extensions-open";
 import type {PreviewRequest} from "../../tab-context";
 import {FILES_PANEL_MIN_WIDTH, readPref, writePref} from "./files-panel-prefs";
 import {isImeComposing, type PromptHooks} from "./ChatInput";
@@ -282,6 +286,8 @@ const ChatPage = () => {
     // 설정 (사이드바 "설정", 사용 가이드 밑) — 사용 가이드처럼 탭 화면 위에 덮어 연다
     const [settingsOpen, setSettingsOpen] = useState(false);
     const closeSettings = useCallback(() => setSettingsOpen(false), []);
+    // 확장 창 (사이드바 "확장" 또는 어디서든 openExtensions) — 사용 가이드처럼 탭 화면 위에 덮어 연다
+    const [extRequest, closeExtensions] = useExtensionsRequest();
     // 입력창의 /usage·/cost — 헤더의 탭별 사용량을 연다
     const [usageOpenSeq, setUsageOpenSeq] = useState(0);
     // 입력창의 /mcp — 작업 폴더 줄의 MCP 목록을 연다
@@ -1070,6 +1076,25 @@ const ChatPage = () => {
     // MCP 팝업의 ↻·다시 연결 결과 — 누른 탭의 목록으로 (그사이 탭을 바꿨어도)
     const patchMcp = useCallback((id: string, list: McpServer[]) => patchTab(id, {mcp: list}), [patchTab]);
 
+    // 확장 창 안에서 창 바깥을 여는 길 — MCP 목록(로그인), 지침 패널. 창을 닫고 보고 있는 탭에서 연다.
+    const extensionsHost = useMemo<ExtensionsHost>(
+        () => ({
+            close: closeExtensions,
+            openMcp: () => {
+                closeExtensions();
+                setMcpOpenSeq((n) => n + 1);
+            },
+            openInstructions: () => {
+                closeExtensions();
+                setInstrOpen(true);
+                setAgentView(null);
+                setPreviewView(null);
+                setBgView(null);
+            },
+        }),
+        [closeExtensions]
+    );
+
     const model = active?.model ?? "";
     const currentModel = models.find((m) => m.id === model);
     // 예전 대화의 구버전 모델처럼 목록에 없으면 effort/fast 지원 여부를 모르니 막지 않는다
@@ -1248,6 +1273,16 @@ const ChatPage = () => {
                     >
                         <FontAwesomeIcon icon={faCircleQuestion} className={cx("navIcon")} />
                         사용 가이드
+                    </div>
+                    <div
+                        className={cx("navItem")}
+                        onClick={() => {
+                            openExtensions(lastExtensionsTab());
+                            setSidebarOpen(false);
+                        }}
+                    >
+                        <FontAwesomeIcon icon={faPuzzlePiece} className={cx("navIcon")} />
+                        확장
                     </div>
                     <div
                         className={cx("navItem")}
@@ -1681,6 +1716,7 @@ const ChatPage = () => {
 
             {guideOpen && <UserGuide onClose={closeGuide} />}
             {settingsOpen && <SettingsDialog onClose={closeSettings} />}
+            {extRequest && active && <ExtensionsDialog tabId={active.id} cwd={active.cwd} request={extRequest} host={extensionsHost} />}
 
             {/* Claude CLI 찾기 모달 */}
             {claudeMissing && (
