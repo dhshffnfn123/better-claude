@@ -564,6 +564,52 @@ interface SkillCreateRequest {
 
 type SkillCreateResult = {ok: true; path: string; name: string} | {ok: false; error: string};
 
+// ── 확장 창: 훅 탭 (main/services/hooks.ts와 같은 모양) ──
+// kind: user(개인 settings.json) | project(.claude/settings.json) | local(.claude/settings.local.json — 이 레포에서 나만)
+//       | managed(관리자) | plugin | session(이 대화) | flag(실행 옵션) | other
+type HookSourceKind = "user" | "project" | "local" | "managed" | "plugin" | "session" | "flag" | "other";
+
+interface HookRow {
+    event: string;
+    matcher: string; // '' = 모든 경우
+    source: string;
+    kind: HookSourceKind;
+    sourceLabel: string;
+    plugin?: string; // 플러그인 id(이름@마켓플레이스)
+    type: string; // command | prompt | agent | http | mcp_tool …
+    text: string; // 실제로 도는 명령·프롬프트·URL
+    statusMessage?: string;
+    condition?: string;
+    timeout?: number; // 초
+    once?: boolean;
+    async?: boolean;
+    disabled?: boolean;
+    file?: string;
+}
+
+interface HookEvent {
+    name: string;
+    summary: string;
+    supportsMatcher: boolean;
+    count: number;
+}
+
+type HooksList =
+    | {
+          ok: true;
+          via: "cli" | "files"; // files = CLI에게 못 물어 설정 파일을 직접 읽었다
+          cwd: string;
+          events: HookEvent[];
+          hooks: HookRow[];
+          policy?: {allDisabled: boolean; disabledByPolicy: boolean; managedOnly: boolean; pluginOnly: boolean; policyUnreadable?: boolean};
+          safeMode?: string;
+          bareMode?: string;
+          errors: string[];
+          files: {kind: "user" | "project" | "local" | "managed"; path: string; exists: boolean}[];
+          note?: string;
+      }
+    | {ok: false; error: string};
+
 // ── 탭 ──
 // 탭에 대화를 열 때 넘기는 것 (빠진 건 main이 기본값·지금 값으로 채운다)
 interface TabInit {
@@ -715,6 +761,9 @@ interface Window {
         writeSkillFile: (tabId: string, path: string, content: string, baseMtime: number | null, force?: boolean) => Promise<SkillFileWrite>;
         createSkill: (tabId: string, req: SkillCreateRequest) => Promise<SkillCreateResult>;
         revealSkill: (tabId: string, path: string) => Promise<boolean>;
+        // 확장 창의 훅 탭 — 이 폴더에서 도는 훅 (읽기만) / 그 훅이 적힌 파일을 Finder에서 (마지막 목록에 낸 파일만)
+        listHooks: (tabId: string) => Promise<HooksList>;
+        revealHookFile: (tabId: string, path: string) => Promise<boolean>;
         getMcpStatus: (tabId: string, refresh?: boolean) => Promise<McpServer[]>;
         // MCP 서버 로그인 — 답은 로그인 주소를 연 뒤의 상태(waiting·claudeai·error), 이후 진행은 onMcpLogin
         mcpLogin: (tabId: string, name: string) => Promise<McpLoginState>;

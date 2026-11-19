@@ -16,6 +16,7 @@ import {explainMcpLoginError, isOpenableAuthUrl, TERMINAL_LOGIN_HINT} from "./ma
 import type {McpAuthMethods, McpAuthReply, McpLoginError} from "./main/services/mcp-login";
 import type {GitChange, GitStatusResult} from "./main/services/git-changes";
 import * as skills from "./main/services/skills";
+import * as hooks from "./main/services/hooks";
 import type {
     McpServerStatus,
     ModelInfo,
@@ -4476,6 +4477,21 @@ ipcMain.handle("skills:write", (event, tabId: string, p: unknown, content: unkno
 );
 ipcMain.handle("skills:create", (event, tabId: string, req: unknown) => skills.createSkill(skillsHost(tabFor(event, tabId)), req));
 ipcMain.handle("skills:reveal", (_event, tabId: string, p: unknown) => skills.revealSkillPath(tabId, p));
+
+// ── 확장 창: 훅 탭 (src/main/services/hooks.ts) — 읽기만. 목록은 이 폴더에 띄운 쉬는 CLI의 get_hooks_listing ──
+ipcMain.handle("hooks:list", (event, tabId: string) => {
+    const tab = tabFor(event, tabId);
+    const cwd = tab.cwd;
+    return hooks.listHooks({
+        tabId: tab.id,
+        cwd,
+        query: async () => {
+            const claudePath = resolveClaudePath();
+            return claudePath ? openIdleQuery({pathToClaudeCodeExecutable: claudePath, cwd}) : null;
+        },
+    });
+});
+ipcMain.handle("hooks:reveal", (_event, tabId: string, p: unknown) => hooks.revealHookFile(tabId, p));
 
 ipcMain.handle("mcp:status", (event, tabId: string, refresh?: boolean) => loadMcpStatus(tabFor(event, tabId), refresh === true));
 

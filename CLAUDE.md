@@ -1152,6 +1152,36 @@ Measured with CLI 2.1.325 / SDK 0.3.319:
 - Verified in the dev app with a real Haiku turn (`/start-banana` → Claude calls `Skill({skill: "banana-word"})`): chip at
   send time, activity-panel row during the turn, reply row, both again after an app restart; 보기 on each opens that skill.
 
+**훅 tab** (`HooksTab.tsx`, main `hooks:list|reveal`, `src/main/services/hooks.ts`) — read-only:
+
+- **Source = the CLI's `/hooks` listing**: control request `get_hooks_listing`, sent through the undeclared
+  `Query.getHooksListing()` in `sdk.mjs` (SDK 0.3.319; narrow `HooksListingMethod` type + `typeof` guard, like
+  `mcpAuthenticate`; an SDK without that method → the Query's own undeclared `request({subtype: "get_hooks_listing"})`) on a
+  fresh idle query in the tab's cwd — the current files, not what a live process loaded. Rows:
+  `{event, matcher ('' = none), source (userSettings / projectSettings / localSettings / policySettings / pluginHook /
+  sessionHook …), sourceLabel, pluginName, type (command / prompt / agent / http / mcp_tool), displayText (= statusMessage when
+  set), commandText, timeout, statusMessage, runsInBackground (async), runsOnce, condition, disabled}`; `events` in lifecycle
+  order with the CLI's summaries; `policy`, `safeMode`, `bareMode`; `errors` = settings files that failed to parse — their hooks
+  are dropped (a broken `settings.local.json` → "Invalid or malformed JSON", that hook gone). `pluginName` is the plugin **id**
+  (`hookplug@ext2-market`); `sourceLabel` always says "~/.claude/settings.json", even under `CLAUDE_CONFIG_DIR`.
+- **Which files** (read from the CLI's code, verified): personal `<config>/settings.json`; project = **`<cwd>/.claude/settings.json`
+  — the cwd itself, not the repo root** (hooks at the root listed nothing from a subfolder cwd, while that root's
+  `settings.local.json` was read); 이 레포에서 나만 = `<canonical git root>/.claude/settings.local.json` (the main checkout's root
+  for a worktree; the cwd when that root is home); managed `/Library/Application Support/ClaudeCode/managed-settings.json`;
+  plugins = enabled plugins' `<installPath>/hooks/hooks.json`. `settingsFiles()` computes them (the footer list and each card's
+  파일 → Finder); `hooks:reveal` only shows files from the tab's last list.
+- **Fallback** when the SDK/CLI lacks the request (or "Unsupported control request"): the same files parsed directly + enabled
+  plugins' hooks, with a banner that it may differ. Forced with conditional breakpoints: without `getHooksListing` the `request`
+  path still got the CLI's list; without both, the files gave the same 8 hooks in the same event order as the CLI's list.
+- UI: warning banner (stronger when project/plugin hooks exist — "다른 사람이 넣었을 수 있습니다"), read-only note, policy /
+  safe-mode / parse-error banners; per event the Korean moment ("도구를 쓰기 직전") + event name + CLI summary; a card = matcher
+  (모든 도구 / 모든 경우, SessionStart's startup → 새로 시작 …), type (명령 실행 / 모델에게 묻기 …), source badge (개인 · 이 레포에서
+  나만 accent, 프로젝트 outlined warning, 플러그인 purple, 관리자 muted), the command/prompt in mono (3-line clamp — the toggle shows
+  only when the text really overflows), status message / timeout / async / once / condition. `focus` = plugin id → that plugin's
+  hooks only (matched on the name before `@`) with 모두 보기; a plugin without hooks says so. Empty state explains what hooks are.
+- Verified with an isolated config + a local test plugin: 8 hooks from user, project, local and plugin sources, plugin focus,
+  figma (no hooks), a broken settings file, the fallback, reveal (and `/etc/hosts` refused), light and dark.
+
 **대화 시작 비용 tab** (`CostTab.tsx`, main `extensions:start_cost`): how many tokens a fresh conversation in this folder uses
 before anything is said, and from what. It is the 지침 panel's measurement (`measureInstructions`, same cache key cwd + model +
 system prompts), which now keeps the whole `getContextUsage({detail: "full"})` answer: `categories` (`id`/`kind` — classify

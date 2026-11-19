@@ -113,6 +113,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
         ipcRenderer.invoke("skills:write", tabId, path, content, baseMtime, force === true),
     createSkill: (tabId: string, req: object) => ipcRenderer.invoke("skills:create", tabId, req),
     revealSkill: (tabId: string, path: string) => ipcRenderer.invoke("skills:reveal", tabId, path),
+    // 확장 창의 훅 탭 — 이 탭 폴더에서 도는 훅 (읽기만), 그 훅이 적힌 파일을 Finder에서 보기
+    listHooks: (tabId: string) => ipcRenderer.invoke("hooks:list", tabId),
+    revealHookFile: (tabId: string, path: string) => ipcRenderer.invoke("hooks:reveal", tabId, path),
     getMcpStatus: (tabId: string, refresh?: boolean) => ipcRenderer.invoke("mcp:status", tabId, refresh ?? false),
     // MCP 서버 로그인(OAuth) — 그 탭의 작업 폴더에서 시작한다. 진행 상태는 onMcpLogin으로 온다(토큰은 탭과 무관해 앱 전체 이벤트).
     mcpLogin: (tabId: string, name: string) => ipcRenderer.invoke("mcp:login", tabId, name),
