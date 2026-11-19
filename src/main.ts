@@ -1513,7 +1513,8 @@ async function loadChangedFilesFromSession(tab: ChatTab, sid: string): Promise<b
             if (e.type === "user" && !e.parent_tool_use_id) {
                 const c = (e.message as {content?: unknown} | undefined)?.content;
                 const isPrompt = typeof c === "string" || (Array.isArray(c) && !c.some((b) => (b as {type?: string})?.type === "tool_result"));
-                if (isPrompt) tab.fileTurn += 1;
+                // 응답 도중 끼워진 작업 완료 알림은 새 턴이 아니다 (답이 끝난 뒤 온 알림은 CLI의 후속 턴 — 실시간도 센다)
+                if (isPrompt && taskNotificationKind(e) !== "queued") tab.fileTurn += 1;
             }
             trackFileEdits(tab, e, entryTime(e));
             // 슬래시 명령의 출력 줄("<local-command-stdout>Compacted")은 CLI가 result를 낸 뒤에 적어서 앱이 통계를
@@ -2564,6 +2565,17 @@ function compactSummaryText(content: unknown): string | null {
     return cleanCompactSummary(text) || text.trim();
 }
 
+// 백그라운드 작업이 끝났다는 CLI의 알림(<task-notification>…). 기록에는 사용자 메시지 자리에 적히지만 사람이 쓴 글이
+// 아니다 — 글이 아니라 기록의 표시(origin.kind)로 가려낸다(태그를 언급한 진짜 메시지를 먹지 않게). 실측(CLI 2.1.296~325,
+// 소유자 기록 11건): 답이 끝난 뒤 온 알림은 CLI가 스스로 시작한 후속 턴의 첫 항목이고("turn" — 실시간에는 chat:turn_start로
+// 새 답변이 된다), 응답 도중 끝난 작업의 알림은 도구 결과 뒤 다음 요청에 끼워진다(isQueuedCommand, "queued" — 같은 턴이
+// 이어진다). subkind가 있는 것(예약 작업이 보낸 프롬프트, 다른 세션이 보낸 글 등)은 백그라운드 알림이 아니라 그대로 둔다.
+function taskNotificationKind(entry: SessionMessage): "turn" | "queued" | null {
+    const e = entry as {origin?: {kind?: unknown; subkind?: unknown} | null; isQueuedCommand?: unknown};
+    if (e.origin?.kind !== "task-notification" || e.origin.subkind !== undefined) return null;
+    return e.isQueuedCommand === true ? "queued" : "turn";
+}
+
 // 슬래시 명령 실행은 기록에 <command-name>/x</command-name><command-args>…</command-args>로 남는다
 function describeCommandEntry(text: string): string | null {
     const name = text.match(/<command-name>([\s\S]*?)<\/command-name>/)?.[1]?.trim();
@@ -2682,6 +2694,19 @@ function sessionToMessages(
         }
 
         if (entry.type !== "user") continue;
+
+        // 백그라운드 작업 완료 알림 — "나" 말풍선이 아니다(예전에는 <task-notification> XML이 그대로 내 메시지로 보였다).
+        // 답이 끝난 뒤 온 것: 지금 답변을 닫고, CLI가 이어서 한 답은 새 답변으로(실시간과 같은 모양). 그 답의 입력 토큰은
+        // 내 메시지 것이 아니라 아무 데도 붙이지 않는다(실시간도 후속 턴은 답변에만 붙인다). 응답 도중 끼워진 것: 같은 답변이 이어진다.
+        const notification = taskNotificationKind(entry);
+        if (notification) {
+            compactReply = null;
+            if (notification === "turn") {
+                closeAssistant();
+                turnUser = null;
+            }
+            continue;
+        }
 
         // 도구 결과 — 앞선 도구 호출에 붙인다
         let hasToolResult = false;

@@ -657,6 +657,20 @@ and has a 선택 mode: check conversations (모두 선택 = everything currently
 (how many, how many are open in tabs and will be cleared, background tasks that will end) and deletes
 them one by one with the same rules as a single delete.
 
+**Background-task notifications in loaded sessions are not "나" messages.** When a background task ends, the CLI
+writes its `<task-notification>…</task-notification>` block as a user-role entry; reopened conversations showed it as the
+owner's own bubble with raw XML. `taskNotificationKind` recognises it by the transcript flag, never by text:
+`getSessionMessages` passes the entry's `origin` through (`{kind: "task-notification", producer, runId}`, older CLIs
+`{kind: "task-notification"}`), so a real message that merely mentions the tag stays a message; entries with an
+`origin.subkind` (a scheduled task's stored prompt, a peer session's message) are left alone. Two shapes, measured on the
+owner's transcripts (11 notifications, CLI 2.1.296–2.1.325): after a reply had ended (prev = assistant text) the notification
+is the first entry of the follow-up turn the CLI started itself → `sessionToMessages` closes the reply and the next entries
+form a new reply, exactly as live (`chat:turn_start`); its input tokens go nowhere (live shows them on no user message either).
+A task that ended mid-turn is delivered after a tool result as `isQueuedCommand: true` → skipped, the reply continues (live:
+same turn). `loadChangedFilesFromSession` counts only the first kind as a new turn (`beginTurn` does the same live). Verified
+with `loadSessionMessages` on four real transcripts (no notification bubbles; split replies where the CLI started a turn,
+none where it was queued) and a fake transcript (a typed message quoting the tag stays a bubble).
+
 **Token badges on loaded messages** ("N tokens" next to 나 / Claude): live turns take them from
 `result.usage` (input → the user message, output → the reply). `sessionToMessages` rebuilds the same
 numbers from each response's `message.usage` in the transcript — the sum over a turn's responses equals
