@@ -32,6 +32,7 @@ import {
     faVolumeHigh,
     faXmark,
 } from "@fortawesome/free-solid-svg-icons";
+import {faFigma} from "@fortawesome/free-brands-svg-icons";
 import styles from "./chat.page.module.scss";
 import {isImeComposing} from "./ChatInput";
 import {GUIDE, type GuideItem} from "./user-guide";
@@ -70,6 +71,7 @@ const ICONS: Record<string, IconDefinition> = {
     plug: faPlug,
     brain: faBrain,
     puzzle: faPuzzlePiece,
+    figma: faFigma,
 };
 
 // [[키]] → 키 모양, {i:이름} → 아이콘, `코드` → 코드 글씨

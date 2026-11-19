@@ -34,6 +34,7 @@ import {Collapsible} from "./Collapsible";
 import {MiddleName} from "./MiddleName";
 import {type AttachmentParts, parseAttachments, tildePath} from "../../attachments";
 import {SkillChip} from "./SkillRef";
+import {toolImageName, useMcpDisplayVersion} from "../../mcp-tool-display";
 
 const cx = classNames.bind(styles);
 
@@ -355,6 +356,8 @@ function useReplyImages(msg: Message, live: boolean): Map<number, SegImages> {
         // refs는 sig가 같으면 내용도 같다 — 배열 자체가 아니라 sig로 다시 묻는다
     }, [tabId, sig, live]);
 
+    // 그림 이름이 도구 줄 꾸미기를 따른다(Figma 노드 1:23) — 설정을 바꾸면 다시 짓는다
+    const displayVersion = useMcpDisplayVersion();
     return useMemo(() => {
         const out = new Map<number, SegImages>();
         if (!segments) return out;
@@ -379,7 +382,7 @@ function useReplyImages(msg: Message, live: boolean): Map<number, SegImages> {
             if (seg.kind !== "tool") return;
             const fp = toolFilePath(seg.tool);
             (seg.tool.images ?? []).forEach((src, j) =>
-                add(i, {key: `result-${j}`, src, name: fp ? baseNameOf(fp) : `${seg.tool.name} 결과`, path: fp, full: true})
+                add(i, {key: `result-${j}`, src, name: fp ? baseNameOf(fp) : toolImageName(seg.tool.name, seg.tool.input), path: fp, full: true})
             );
             if (seg.tool.imagesOmitted) add(i, null, seg.tool.imagesOmitted);
             fromRefs(i);
@@ -388,7 +391,7 @@ function useReplyImages(msg: Message, live: boolean): Map<number, SegImages> {
             if (seg.kind === "text") fromRefs(i);
         });
         return out;
-    }, [segments, bySeg, resolved]);
+    }, [segments, bySeg, resolved, displayVersion]);
 }
 
 function ImageStrip({images, omitted, indent, onOpen}: SegImages & {indent: boolean; onOpen?: OpenImage}) {

@@ -68,6 +68,7 @@ interface LoadedMessage {
                   images?: string[]; // 도구 결과에 든 그림 (data URL)
                   imagesOmitted?: number; // 오래돼 싣지 않은 그림 수
                   startedAt?: number;
+                  resultLinks?: string[]; // 결과에 나온 Figma 파일 주소
               };
           }
         | ({kind: "compact"} & CompactInfo)
@@ -672,7 +673,8 @@ interface TabEventMap {
     error: ChatNoticeData;
     usage: {inputTokens: number; outputTokens: number};
     toolUse: {id: string; name: string; input: unknown; parentToolUseId?: string};
-    toolResult: {id: string; isError: boolean; content: string; images?: string[]; parentToolUseId?: string};
+    // links: 결과 글 전체에서 찾은 Figma 파일 주소 (content는 앞부분만이라 뒤쪽 주소를 놓친다)
+    toolResult: {id: string; isError: boolean; content: string; images?: string[]; links?: string[]; parentToolUseId?: string};
     turnUuid: {uuid: string}; // 방금 보낸 사용자 메시지의 uuid (파일 되돌리기 기준점)
     turnStart: undefined; // 백그라운드 작업이 끝나 CLI가 스스로 시작한 턴
     permissionRequest: PermissionRequestData;

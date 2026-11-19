@@ -319,6 +319,33 @@ export const GUIDE: GuideSection[] = [
         ],
     },
     {
+        id: "figma",
+        title: "Figma",
+        icon: "figma",
+        intro: "Figma 플러그인(MCP)을 쓸 때 앱이 더 보여 주는 것들입니다. 사이드바 설정에서 한 번에 끌 수 있습니다.",
+        items: [
+            {
+                title: "MCP · Figma 도구 줄",
+                body: "Claude가 MCP 도구를 쓰면 답변에 \"서버 · 도구\"로 짧게 보입니다(예: notion · notion-search). Figma 도구는 Figma 로고와 한국어 이름 — 디자인 정보 읽기, 화면 캡처, 변수·토큰 읽기, 파일 수정, FigJam 다이어그램 … — 과 노드 번호로 보입니다.",
+                how: [
+                    "\"Figma에서 열기\"를 누르면 Claude가 본 그 노드가 브라우저(Figma 앱이 있으면 앱)에서 열립니다",
+                    "FigJam 다이어그램·새 파일처럼 Claude가 만든 것은 \"만든 보드 열기\" · \"만든 파일 열기\"",
+                    "Figma 화면 캡처는 그 줄 아래 그림으로 보이고, 누르면 크게 봅니다",
+                ],
+                since: "v5",
+            },
+            {
+                title: "Figma 기능 켜기 · 끄기",
+                body: "사이드바 {i:gear} 설정 → Figma → \"Figma 기능\". 끄면 앱의 Figma 화면만 숨기고 도구 줄은 기본 모양(\"figma · get_screenshot\")으로 돌아갑니다.",
+                how: [
+                    "Figma 플러그인·MCP 서버는 그대로입니다 — Claude는 계속 Figma 도구를 씁니다",
+                    "모든 탭에 바로 적용되고, 앱을 다시 켜도 그대로입니다 (기본은 켬)",
+                ],
+                since: "v5",
+            },
+        ],
+    },
+    {
         id: "history",
         title: "대화 기록",
         icon: "history",
@@ -355,6 +382,7 @@ export const GUIDE: GuideSection[] = [
                 how: [
                     "\"답변 처음으로\" 버튼 기준 — 보고 있는 답변 / 마지막 답변",
                     "기억 알림 — Claude가 기억해 둔 것을 창 가운데에 잠깐 보여 줄지 (기본은 켜짐)",
+                    "Figma 기능 — 앱의 Figma 화면을 켜고 끄기 (기본은 켜짐)",
                     "바꾸면 모든 탭에 바로 적용되고, 다시 켜도 그대로입니다",
                 ],
                 since: "v5",

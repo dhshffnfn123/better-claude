@@ -1004,12 +1004,40 @@ previewed (they need a build).
   min(80vw, 960px, 80vh × ar)`) — a fixed box letterboxed it and the checkerboard bands looked like transparent
   margins in the picture. Verified: 2:1 → 960×480, 1:3 → 221×662, a 24 px icon → 662×662.
 
+### Figma (`src/shared/figma.ts`, `src/shared/mcp-tools.ts`, `figma-*.ts` in the renderer)
+
+The official Figma plugin (`figma@claude-plugins-official`, server `plugin:figma:figma` → remote `mcp.figma.com/mcp`)
+gives Claude Figma tools; the app adds UI around them. No real Figma call was made while building any of it (not
+logged in, no seat) — everything below was verified with fake transcripts and events injected from the main inspector.
+
+- **One switch for all of it**: 사이드바 설정 → Figma → "Figma 기능" (`src/renderer/figma-setting.ts`, localStorage
+  `better-claude:figma-features`, default on, `useFigmaFeatures()` + `figmaFeaturesOn()`/`onFigmaFeaturesChange()` for
+  non-hook code). Off hides only the app's Figma UI and applies to every tab at once (verified on → off → on, also across
+  a reload); the plugin/MCP keeps working and Claude keeps calling it.
+- **MCP tool rows** — two layers. Generic (`src/shared/mcp-tools.ts` + `src/renderer/mcp-tool-display.ts`, no server
+  knowledge): `mcp__<server>__<tool>` (the CLI replaces characters outside `[a-zA-Z0-9_-]` with `_`, so
+  `plugin:figma:figma` → `plugin_figma_figma`) → "서버 · 도구" (`plugin_<p>_<s>` with p = s shows once: `figma`,
+  `context7`) + an input summary (query/url/path/name/… first, never multi-line code). Decorators register by id
+  (`registerMcpToolDecorator`) and patch title/detail/icon/links/image name; `useMcpDisplayVersion()` re-renders rows when
+  a decorator's output changes (the switch). Figma layer (`figma-tool-display.ts`, imported once by
+  `renderer/main.tsx`): Figma logo (`FigmaLogo.tsx` = the plugin's full-colour icon) + "Figma · 디자인 정보 읽기" etc.
+  (labels in `FIGMA_TOOLS`), "노드 12:34" instead of the meaningless file key, "Figma에서 열기" =
+  `https://www.figma.com/design/<fileKey>?node-id=12-34` (`/board/` for FigJam tools), and for write tools a "만든 보드
+  열기"/"만든 파일 열기" from a Figma file URL in the result. Result URLs: main scans the *whole* tool-result text
+  (`resultFigmaLinks` → `chat:tool_result.links`, `LoadedTool.resultLinks`) because the preview is only 500 chars; asset
+  URLs (`figma.com/api/mcp/asset/…`) are not file URLs and are skipped; links in read-tool results (e.g. a library list)
+  are not "made" and are not shown. Links are `<a target=_blank>` → the link guard → `shell.openExternal` (verified with
+  `openExternal` stubbed). MCP image results (`get_screenshot`) already showed as thumbnails — both result shapes, the
+  Anthropic `{source: {base64}}` and MCP `{data, mimeType}`, verified live and loaded; the thumbnail is named "Figma 노드
+  12:34" (`imageName`).
+
 ### 사용 가이드 (`UserGuide.tsx`, content in `user-guide.ts`)
 
 Sidebar "사용 가이드" (under 새 대화; the sidebar items have icons — 새 대화, 사용 가이드, 확장, 설정) opens a modal over
 the tab view — chats keep running underneath. **설정** (last, `SettingsDialog.tsx`, same header as the guide) holds
 general settings that have no header button of their own — for now the 답변 처음으로 target and the 기억 알림 switch
-(the switch component is `Switch` from `NotificationSettings.tsx`). Left: contents
+(the switch component is `Switch` from `NotificationSettings.tsx`) in "대화 화면", and the Figma section (see Figma).
+Left: contents
 (sections with item counts, follows scrolling); right: one card per feature (설명 + 쓰는 방법 lines); top: search over
 title/body/how lines. Text markup: `[[⌘T]]` = keycap, `{i:shield}` = the app's own icon (`ICONS` in `UserGuide.tsx`),
 backticks = code. `since: "v5"` shows a version badge. Esc clears the search first, then closes. **The guide is

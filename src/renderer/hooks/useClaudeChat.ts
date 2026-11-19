@@ -55,6 +55,7 @@ export interface ToolActivity {
     images?: string[]; // 도구 결과에 든 그림 (Read로 연 그림, 스크린샷 등 — data URL)
     imagesOmitted?: number; // 불러온 대화에서 오래돼 싣지 않은 그림 수
     startedAt?: number; // 도구를 부른 시각 — 이 도구가 만든 그림을 파일 수정 시각으로 가려낸다
+    resultLinks?: string[]; // 도구 결과에 나온 Figma 파일 주소 (main이 결과 글 전체에서 찾는다 — 미리보기는 앞부분뿐)
 }
 
 export type CompactSegment = {kind: "compact"} & CompactInfo;
@@ -322,11 +323,12 @@ export function useClaudeChat(tabId: string, callbacks: ChatCallbacks = {}) {
             flush();
         });
 
-        const removeToolResult = onTab("toolResult", tabId, ({id, isError, content, images}) => {
+        const removeToolResult = onTab("toolResult", tabId, ({id, isError, content, images, links}) => {
             const patch = {
                 status: (isError ? "error" : "done") as ToolActivity["status"],
                 resultPreview: content,
                 images,
+                resultLinks: links,
             };
             toolsRef.current = toolsRef.current.map((t) => (t.id === id ? {...t, ...patch} : t));
             setTools(toolsRef.current);

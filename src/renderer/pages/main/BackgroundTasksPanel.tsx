@@ -25,6 +25,7 @@ import {PromptMarkdown} from "./MessageItem";
 import {ImageViewer} from "./Lightbox";
 import {TabIdContext} from "../../tab-context";
 import {terminalText} from "../../terminal-text";
+import {toolShortName, useMcpDisplayVersion} from "../../mcp-tool-display";
 
 const cx = classNames.bind(styles);
 
@@ -392,6 +393,7 @@ function LogView({tabId, taskId, running, onStop}: {tabId: string; taskId: strin
 
 // 에이전트가 최근에 쓴 도구
 function ToolSteps({steps}: {steps?: ToolStep[]}) {
+    useMcpDisplayVersion(); // 도구 이름 꾸미기(Figma)가 설정으로 바뀌면 다시 그린다
     if (!steps || steps.length === 0) return null;
     return (
         <div className={cx("bgSteps")}>
@@ -402,7 +404,9 @@ function ToolSteps({steps}: {steps?: ToolStep[]}) {
                         spin={st.status === "running"}
                         className={cx("bgStepIcon")}
                     />
-                    <span className={cx("bgStepName")}>{st.name}</span>
+                    <span className={cx("bgStepName")} title={st.name}>
+                        {toolShortName(st.name)}
+                    </span>
                     {st.target && (
                         <span className={cx("bgStepTarget")} title={st.target}>
                             {middleTruncate(st.target, 80)}

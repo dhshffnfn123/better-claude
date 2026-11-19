@@ -14,6 +14,7 @@ import {imageDataUrl, imageFile, imageThumbnail, sniffImage, toolResultImages} f
 import {openInIde, pickIde} from "./main/services/jetbrains";
 import {explainMcpLoginError, isOpenableAuthUrl, TERMINAL_LOGIN_HINT} from "./main/services/mcp-login";
 import type {McpAuthMethods, McpAuthReply, McpLoginError} from "./main/services/mcp-login";
+import {figmaLinksIn} from "./shared/figma";
 import type {GitChange, GitStatusResult} from "./main/services/git-changes";
 import * as skills from "./main/services/skills";
 import * as hooks from "./main/services/hooks";
@@ -923,6 +924,13 @@ function formatQuestionAnswers(questions: AskQuestion[], answers: string[][]): s
 // 도구 결과 미리보기 — 화면에는 앞부분만 보낸다. 질문의 답(위 형식)은 질문 카드가 통째로 다시 읽으므로 넉넉히.
 function toolResultPreview(text: string): string {
     return text.slice(0, text.startsWith(QUESTION_ANSWER_PREFIX) ? 4000 : 500);
+}
+
+// 도구 결과 글 전체에 나온 Figma 파일 주소 (새로 만든 FigJam 보드 등) — 미리보기(앞 500자)에는 빠질 수 있다.
+// 화면은 Figma 도구 줄에서만 "열기"로 보인다.
+function resultFigmaLinks(text: string): string[] | undefined {
+    const links = figmaLinksIn(text, 3).map((l) => l.url);
+    return links.length > 0 ? links : undefined;
 }
 
 type PendingPermission = (result: PermissionResult) => void;
@@ -2543,6 +2551,7 @@ interface LoadedTool {
     images?: string[]; // 도구 결과에 든 그림 (data URL)
     imagesOmitted?: number; // 오래돼 싣지 않은 그림 수 (LOADED_IMAGE_BUDGET)
     startedAt?: number; // 도구를 부른 시각 — 이 도구가 만든 그림을 가려낼 때(파일 수정 시각과 비교)
+    resultLinks?: string[]; // 결과에 나온 Figma 파일 주소 (resultFigmaLinks)
 }
 
 // compact: 대화 압축(/compact 또는 컨텍스트가 차서 자동) — 앞 대화가 이 요약으로 바뀌었다
@@ -2765,9 +2774,11 @@ function sessionToMessages(
                 hasToolResult = true;
                 const tool = tools.get(b.tool_use_id);
                 if (tool) {
+                    const text = toolResultDisplayText(b.content);
                     tool.status = b.is_error ? "error" : "done";
-                    tool.resultPreview = toolResultPreview(toolResultDisplayText(b.content));
+                    tool.resultPreview = toolResultPreview(text);
                     tool.images = toolResultImages(b.content);
+                    tool.resultLinks = resultFigmaLinks(text);
                 }
             }
         }
@@ -2923,12 +2934,14 @@ function handleSdkMessage(tab: ChatTab, msg: SDKMessage, notify: (n: ChatNotice)
         }
         for (const block of blocks) {
             if (block.type === "tool_result" && block.tool_use_id) {
+                const text = toolResultDisplayText(block.content);
                 send(tab, "chat:tool_result", {
                     id: block.tool_use_id,
                     isError: !!block.is_error,
-                    content: toolResultPreview(toolResultDisplayText(block.content)),
+                    content: toolResultPreview(text),
                     // 서브에이전트 도구는 진행 패널에만 보이므로 그림을 싣지 않는다
                     images: parentToolUseId ? undefined : toolResultImages(block.content),
+                    links: resultFigmaLinks(text),
                     parentToolUseId,
                 });
             }

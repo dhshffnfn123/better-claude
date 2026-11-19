@@ -17,6 +17,8 @@ import {BackgroundLinksContext} from "../../tab-context";
 import {launchedInBackground} from "./background-tasks";
 import {BackgroundBadge} from "./BackgroundDock";
 import {openExtensions} from "../../extensions-open";
+import {mcpToolDisplay, useMcpDisplayVersion} from "../../mcp-tool-display";
+import {McpToolLinks, McpToolName} from "./McpToolParts";
 
 const cx = classNames.bind(styles);
 const sk = classNames.bind(skillStyles);
@@ -223,6 +225,13 @@ export function ToolRow({tool, defaultExpanded = false, onOpen}: {tool: ToolActi
     const bgLinks = useContext(BackgroundLinksContext);
     const bgLink = bgLinks?.byToolUse.get(tool.id) ?? null;
     const bgLaunched = status === "done" && (bgLink !== null || launchedInBackground(tool.name, tool.input));
+    // MCP 도구(mcp__서버__도구) — "서버 · 도구" + 입력 요약 (서버별 꾸미기는 mcp-tool-display.ts에 등록된 것)
+    const displayVersion = useMcpDisplayVersion();
+    const mcp = useMemo(
+        () => mcpToolDisplay(tool.name, tool.input, tool.resultLinks, tool.resultPreview),
+        // displayVersion: 꾸미기 결과가 바뀌면(설정에서 Figma 기능을 끄고 켬) 다시 계산
+        [tool.name, tool.input, tool.resultLinks, tool.resultPreview, displayVersion]
+    );
     const rawInput = isQuestion
         ? questionsOf(tool.input)
               .map((q) => q.question)
@@ -231,7 +240,9 @@ export function ToolRow({tool, defaultExpanded = false, onOpen}: {tool: ToolActi
           ? agentLabel(tool.input)
           : skill
             ? [skill.name, skill.args].filter(Boolean).join(" · ")
-            : rawToolInput(tool.input);
+            : mcp
+              ? mcp.detail
+              : rawToolInput(tool.input);
     const bgRunning = bgLaunched && !!bgLink?.running;
     const icon =
         status === "running" || bgRunning
@@ -264,10 +275,15 @@ export function ToolRow({tool, defaultExpanded = false, onOpen}: {tool: ToolActi
                     spin={status === "running" || bgRunning}
                     className={cx("toolIcon")}
                 />
-                <span className={cx("toolName")}>
-                    {skill && <FontAwesomeIcon icon={faBook} className={sk("skillToolIcon")} />}
-                    {isQuestion ? "질문" : isAgent ? "에이전트" : skill ? "스킬" : tool.name}
-                </span>
+                {/* MCP 도구(mcp__…)는 꾸민 이름 — Skill·질문·에이전트는 MCP가 아니라 둘이 겹치지 않는다 */}
+                {mcp && !isQuestion ? (
+                    <McpToolName display={mcp} rawName={tool.name} />
+                ) : (
+                    <span className={cx("toolName")}>
+                        {skill && <FontAwesomeIcon icon={faBook} className={sk("skillToolIcon")} />}
+                        {isQuestion ? "질문" : isAgent ? "에이전트" : skill ? "스킬" : tool.name}
+                    </span>
+                )}
                 <span className={cx("toolInput")} title={rawInput || undefined}>
                     {skill ? (
                         <>
@@ -278,6 +294,7 @@ export function ToolRow({tool, defaultExpanded = false, onOpen}: {tool: ToolActi
                         middleTruncate(rawInput)
                     )}
                 </span>
+                {mcp && <McpToolLinks display={mcp} />}
                 {bgLaunched && <BackgroundBadge link={bgLink} onOpen={bgLinks?.open} />}
                 {!expandable && open && (
                     <span className={cx("toolOpenHint")}>

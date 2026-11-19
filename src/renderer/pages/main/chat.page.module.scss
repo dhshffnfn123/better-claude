@@ -2511,6 +2511,47 @@
   word-break: break-all;
 }
 
+// MCP 도구 이름 (McpToolParts) — "notion · notion-search", 꾸미기가 있으면 아이콘 + 그 이름 (Figma 로고 + "Figma · 화면 캡처")
+.mcpToolName {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.mcpToolIcon {
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+// 줄 오른쪽 끝의 열기 링크 — "Figma에서 열기 ↗" / "만든 보드 열기 ↗" (기본 브라우저·Figma 앱으로 연다)
+.mcpToolLinks {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 10px;
+  padding-left: 8px;
+  margin-left: auto;
+}
+
+.mcpToolLink {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--c-link);
+  text-decoration: none;
+  white-space: nowrap;
+
+  &:hover {
+    text-decoration: underline;
+  }
+
+  svg {
+    font-size: 8.5px;
+  }
+}
+
 .thinkingSection {
   padding-top: 4px;
   border-top: 1px dashed var(--c-divider);
@@ -7102,6 +7143,13 @@
   color: var(--c-text-muted);
 }
 
+// 둘째 묶음부터 구분선 (대화 화면 · Figma)
+.settingsSection + .settingsSection {
+  padding-top: 18px;
+  margin-top: 20px;
+  border-top: 1px solid var(--c-divider);
+}
+
 .settingsLabel {
   font-size: 14px;
   font-weight: 600;
@@ -7204,7 +7252,7 @@
   color: var(--c-text-muted);
 }
 
-// 켜고 끄는 설정 한 줄 (이름·설명 + 스위치) — 앞 설정과 사이를 둔다
+// 켜고 끄는 설정 한 줄 (이름·설명 + 스위치 — 기억 알림, Figma 기능) — 앞 설정과 사이를 둔다
 .settingsSwitchRow {
   display: flex;
   gap: 16px;
@@ -7215,6 +7263,11 @@
   .settingsHint {
     margin-bottom: 0;
   }
+}
+
+// 묶음 제목 바로 밑이면(Figma 묶음의 첫 줄) 사이를 두지 않는다
+.settingsSectionTitle + .settingsSwitchRow {
+  margin-top: 0;
 }
 
 .settingsSwitchText {

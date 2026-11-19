@@ -6,6 +6,7 @@ import styles from "./chat.page.module.scss";
 import {Switch} from "./NotificationSettings";
 import {type JumpMode, useJumpMode} from "../../jump-setting";
 import {useMemoryToastEnabled} from "../../memory-toast-setting";
+import {useFigmaFeatures} from "../../figma-setting";
 
 const cx = classNames.bind(styles);
 
@@ -28,6 +29,7 @@ const JUMP_CHOICES: {value: JumpMode; title: string; desc: string}[] = [
 export function SettingsDialog({onClose}: {onClose: () => void}) {
     const [jump, setJump] = useJumpMode();
     const [memoryToast, setMemoryToast] = useMemoryToastEnabled();
+    const [figmaOn, setFigmaOn] = useFigmaFeatures();
 
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
@@ -81,6 +83,19 @@ export function SettingsDialog({onClose}: {onClose: () => void}) {
                                 <p className={cx("settingsHint")}>Claude가 무언가를 기억해 두면 창 가운데에 그 내용을 잠깐 띄웁니다.</p>
                             </div>
                             <Switch checked={memoryToast} onChange={setMemoryToast} label="기억 알림" />
+                        </div>
+                    </section>
+                    <section className={cx("settingsSection")}>
+                        <h3 className={cx("settingsSectionTitle")}>Figma</h3>
+                        <div className={cx("settingsSwitchRow")}>
+                            <div className={cx("settingsSwitchText")}>
+                                <div className={cx("settingsLabel")}>Figma 기능</div>
+                                <p className={cx("settingsHint")}>
+                                    끄면 앱의 Figma 화면(도구 줄 꾸미기·링크 카드·호출 수·화면 대조)만 숨깁니다 — Figma 플러그인·MCP는 그대로
+                                    동작합니다.
+                                </p>
+                            </div>
+                            <Switch checked={figmaOn} onChange={setFigmaOn} label="Figma 기능" />
                         </div>
                     </section>
                     <p className={cx("settingsNote")}>바꾸면 모든 탭에 바로 적용되고, 앱을 다시 켜도 그대로입니다.</p>
