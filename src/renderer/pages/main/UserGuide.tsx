@@ -20,6 +20,7 @@ import {
     faMagnifyingGlass,
     faPaperclip,
     faPen,
+    faPlug,
     faRotateLeft,
     faRotateRight,
     faShield,
@@ -64,6 +65,7 @@ const ICONS: Record<string, IconDefinition> = {
     pen: faPen,
     chart: faChartSimple,
     gear: faGear,
+    plug: faPlug,
 };
 
 // [[키]] → 키 모양, {i:이름} → 아이콘, `코드` → 코드 글씨

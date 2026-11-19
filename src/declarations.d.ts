@@ -79,8 +79,26 @@ interface McpServer {
     status: "connected" | "failed" | "needs-auth" | "pending" | "disabled";
     error?: string;
     scope?: string;
+    // 연결 방식: http | sse | stdio | claudeai-proxy(claude.ai 커넥터) | sdk
+    transport: string;
     toolCount: number;
 }
+
+// MCP 서버 로그인 진행 (서버 이름별, 앱 전체) — main의 mcp:login 이벤트
+// starting = CLI를 띄워 로그인 주소를 받는 중, waiting = 브라우저에서 허용을 기다림, claudeai = claude.ai 설정을 열었다(거기서 연결),
+// done = 로그인했다, error = 실패(error = 짧은 한국어, detail = CLI 원문), cancelled = 취소했다
+type McpLoginPhase = "starting" | "waiting" | "claudeai" | "done" | "error" | "cancelled";
+
+interface McpLoginState {
+    name: string;
+    phase: McpLoginPhase;
+    seq: number; // 바뀔 때마다 오른다 — 늦게 온 옛 상태를 버린다
+    error?: string;
+    detail?: string;
+    unavailable?: boolean; // 이 SDK·CLI로는 앱에서 로그인할 수 없다 — 터미널 안내
+}
+
+type McpLogoutResult = {ok: true} | {ok: false; error: string; detail?: string; unavailable?: boolean};
 
 interface AskQuestionOption {
     label: string;
@@ -524,6 +542,14 @@ interface Window {
         gitDiff: (tabId: string, path: string) => Promise<GitDiffResult>;
         listCommands: (tabId: string) => Promise<SlashCommand[]>;
         getMcpStatus: (tabId: string, refresh?: boolean) => Promise<McpServer[]>;
+        // MCP 서버 로그인 — 답은 로그인 주소를 연 뒤의 상태(waiting·claudeai·error), 이후 진행은 onMcpLogin
+        mcpLogin: (tabId: string, name: string) => Promise<McpLoginState>;
+        cancelMcpLogin: (name: string) => Promise<void>;
+        getMcpLoginStates: () => Promise<McpLoginState[]>;
+        onMcpLogin: (callback: (state: McpLoginState) => void) => () => void;
+        // 목록을 못 받으면 null
+        reconnectMcp: (tabId: string, name: string) => Promise<McpServer[] | null>;
+        mcpLogout: (tabId: string, name: string) => Promise<McpLogoutResult>;
 
         getBackgroundOutput: (tabId: string, taskId: string, maxBytes?: number) => Promise<BackgroundOutput | null>;
         stopBackgroundTask: (tabId: string, taskId: string) => Promise<void>;

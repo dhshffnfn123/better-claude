@@ -15,8 +15,6 @@ import {
     faLayerGroup,
     faMagnifyingGlass,
     faPenToSquare,
-    faPlug,
-    faRotateRight,
     faShield,
     faShieldHalved,
     faTrash,
@@ -34,6 +32,7 @@ import {BackgroundPanel} from "./BackgroundTasksPanel";
 import {UserGuide} from "./UserGuide";
 import {SettingsDialog} from "./SettingsDialog";
 import {UsageMeter} from "./UsageMeter";
+import {McpStatus} from "./McpStatus";
 import {FilesPanel} from "./FilesPanel";
 import {InstructionsPanel} from "./InstructionsPanel";
 import {PreviewPanel} from "./HtmlPreview";
@@ -103,14 +102,6 @@ function formatResetTime(epochSec?: number): string {
         minute: "2-digit",
     });
 }
-
-const MCP_STATUS_LABELS: Record<string, string> = {
-    connected: "연결됨",
-    failed: "실패",
-    "needs-auth": "인증 필요",
-    pending: "연결 중",
-    disabled: "꺼짐",
-};
 
 function formatTokens(n: number): string {
     if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -264,14 +255,12 @@ const ChatPage = () => {
     const [sessionQuery, setSessionQuery] = useState("");
     const [selecting, setSelecting] = useState(false);
     const [selectedSids, setSelectedSids] = useState<Set<string>>(() => new Set());
-    const [mcpOpen, setMcpOpen] = useState(false);
     // 사용 가이드 (사이드바 "사용 가이드") — 탭 화면 위에 덮어 연다
     const [guideOpen, setGuideOpen] = useState(false);
     const closeGuide = useCallback(() => setGuideOpen(false), []);
     // 설정 (사이드바 "설정", 사용 가이드 밑) — 사용 가이드처럼 탭 화면 위에 덮어 연다
     const [settingsOpen, setSettingsOpen] = useState(false);
     const closeSettings = useCallback(() => setSettingsOpen(false), []);
-    const [mcpRefreshing, setMcpRefreshing] = useState(false);
     const [models, setModels] = useState<ModelOption[]>(FALLBACK_MODELS);
     // 백그라운드 작업 패널 — 작업 파일 패널 자리. 연 탭에서만 보이고, taskId = 보고 있는 작업(null이면 첫 작업)
     const [bgView, setBgView] = useState<{tabId: string; sessionId: string | null; taskId: string | null} | null>(null);
@@ -510,11 +499,6 @@ const ChatPage = () => {
         // 본 탭은 "새 응답" 표시를 지운다
         patchTab(activeId, {unseen: false});
     }, [ready, activeId, openNonce, ensureOpened, patchTab]);
-
-    // 탭을 바꾸면 이전 탭의 팝업은 닫는다 (백그라운드 패널은 연 탭에서만 보이므로 그대로 둔다)
-    useEffect(() => {
-        setMcpOpen(false);
-    }, [activeId]);
 
     // ── 열린 탭 저장 (앱을 다시 켜면 그대로 연다) ──
     const savedShape = useMemo(
@@ -1035,14 +1019,8 @@ const ChatPage = () => {
         writePref("filesPanel.width", String(filesWidth));
     }, [filesWidth]);
 
-    const handleRefreshMcp = async () => {
-        if (!active) return;
-        const id = active.id;
-        setMcpRefreshing(true);
-        const list = await window.electronAPI.getMcpStatus(id, true);
-        patchTab(id, {mcp: list});
-        setMcpRefreshing(false);
-    };
+    // MCP 팝업의 ↻·다시 연결 결과 — 누른 탭의 목록으로 (그사이 탭을 바꿨어도)
+    const patchMcp = useCallback((id: string, list: McpServer[]) => patchTab(id, {mcp: list}), [patchTab]);
 
     const model = active?.model ?? "";
     const currentModel = models.find((m) => m.id === model);
@@ -1372,60 +1350,7 @@ const ChatPage = () => {
                             </option>
                         ))}
                     </select>
-                    {mcpServers.length > 0 && (
-                        <span className={cx("mcpWrap")}>
-                            <button
-                                className={cx("sessionStat", "mcpStat", {
-                                    sessionStatWarn: mcpServers.some((m) => m.status === "needs-auth" || m.status === "pending"),
-                                    sessionStatDanger: mcpServers.some((m) => m.status === "failed"),
-                                })}
-                                onClick={() => setMcpOpen((open) => !open)}
-                                title="MCP 서버 상태"
-                            >
-                                <FontAwesomeIcon icon={faPlug} />
-                                MCP {mcpServers.filter((m) => m.status === "connected").length}/{mcpServers.length}
-                            </button>
-                            {mcpOpen && (
-                                <>
-                                    <div className={cx("mcpBackdrop")} onClick={() => setMcpOpen(false)} />
-                                    <div className={cx("mcpPopover")}>
-                                        <div className={cx("mcpPopoverHeader")}>
-                                            MCP 서버
-                                            <button
-                                                className={cx("mcpRefresh")}
-                                                onClick={handleRefreshMcp}
-                                                disabled={mcpRefreshing}
-                                                title="다시 확인"
-                                            >
-                                                <FontAwesomeIcon icon={faRotateRight} spin={mcpRefreshing} />
-                                            </button>
-                                        </div>
-                                        {mcpServers.map((m) => (
-                                            <div key={m.name} className={cx("mcpRow")}>
-                                                <span className={cx("mcpDot", `mcpDot-${m.status}`)} />
-                                                <span className={cx("mcpName")}>{m.name}</span>
-                                                <span className={cx("mcpMeta")}>
-                                                    {MCP_STATUS_LABELS[m.status] ?? m.status}
-                                                    {m.status === "connected" && ` · 도구 ${m.toolCount}`}
-                                                    {m.scope && ` · ${m.scope}`}
-                                                </span>
-                                                {m.error && <span className={cx("mcpError")}>{m.error}</span>}
-                                                {/* 앱(SDK)에는 MCP 인증·켜기 기능이 없어 터미널에서 해야 한다 */}
-                                                {m.status === "needs-auth" && (
-                                                    <span className={cx("mcpHint")}>
-                                                        터미널에서 claude를 실행해 /mcp로 인증한 뒤, 위의 ↻로 다시 확인하세요.
-                                                    </span>
-                                                )}
-                                                {m.status === "disabled" && (
-                                                    <span className={cx("mcpHint")}>터미널에서 claude를 실행해 /mcp로 켤 수 있습니다.</span>
-                                                )}
-                                            </div>
-                                        ))}
-                                    </div>
-                                </>
-                            )}
-                        </span>
-                    )}
+                    <McpStatus tabId={active.id} servers={mcpServers} onList={patchMcp} />
                     {rateLimits
                         .filter((w) => typeof w.utilization === "number")
                         .map((w) => {

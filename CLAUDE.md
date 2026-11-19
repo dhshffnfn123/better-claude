@@ -63,6 +63,17 @@ main via `--inspect`):
   and smooth scrolling stall — scroll-driven UI looks broken in tests. `setBackgroundThrottling(false)`
   did not survive a reload; `W.setAlwaysOnTop(true, "floating"); W.showInactive()` (from the main
   debugger) brings it forward without taking keyboard focus.
+- **Main's module scope from the inspector**: `Runtime.evaluate` only sees globals, but a *conditional* breakpoint
+  (`Debugger.setBreakpointByUrl` on `.vite/build/main.js`, condition `(<side effect>, false)`) runs inside the function
+  without pausing — e.g. `(globalThis.__x = {tabs, folderInfo}, false)` in an IPC handler you then trigger, or
+  `(flow.deadline = 0, false)` to test a timeout. Remove the breakpoint afterwards. Main rebuilds on save but keeps
+  running the old bundle until restarted (the forge `rs` needs stdin, which the `sleep |` pipe holds) — restart the app.
+- **MCP login tests**: never against the owner's config (no `CLAUDE_CONFIG_DIR` = their keychain item). Start the app
+  with `CLAUDE_CONFIG_DIR=<isolated dir>`, register a local fake OAuth MCP server there (`claude mcp add` with the same
+  variable), and swap `require("electron").shell.openExternal` in main (the bundle calls `electron.shell.openExternal`
+  at call time) to capture the URL; finish the login by fetching it (302 → the CLI's callback). The test token lands in
+  a separate keychain item (`Claude Code-credentials-<hash>`, see "MCP server login") — report its name to the owner
+  rather than deleting keychain items yourself.
 
 **Typecheck with `npx -p typescript@5.6.3 tsc --noEmit -p .`, not the project's own `tsc`.** The pinned
 TypeScript 4.5 cannot parse current `.d.ts` files in `node_modules`, and when there are syntax errors
@@ -634,6 +645,60 @@ Commands (skills, plugins, MCP prompts), models and MCP status come from an idle
 nothing is `pending` (≤10s). Cached per cwd, failures are not cached. While a live session exists its
 `supportedCommands()` / `mcpServerStatus()` are used instead, MCP status is refreshed after every turn,
 and `commands_changed` system messages are pushed as `chat:commands`.
+
+### MCP server login (`McpStatus.tsx`, main "MCP 서버 로그인", `src/main/services/mcp-login.ts`)
+
+The cwd bar's "MCP n/m" popover (moved out of `chat.page.tsx` into `McpStatus.tsx`) logs in to any OAuth MCP server
+(Notion, Figma, Linear, claude.ai connectors) — it used to say "터미널에서 claude를 실행해 /mcp로 인증한 뒤 ↻". Rows:
+`needs-auth` → [로그인], `failed` → [다시 연결], `connected` http/sse → [로그아웃] (confirm first). Everything below was
+measured with CLI 2.1.325 / SDK 0.3.319 against a fake OAuth MCP server, in an isolated `CLAUDE_CONFIG_DIR`.
+
+- **The SDK methods are undeclared**: `Query` has `mcpAuthenticate(name, redirectUri?, {redirectUriOnly?})`,
+  `mcpClearAuth(name)`, `mcpSubmitOAuthCallbackUrl(name, url)` in `sdk.mjs` but not in `sdk.d.ts` — `McpAuthMethods`
+  (narrow type) + `typeof … === "function"` guards. Missing → the old terminal hint (`unavailable`, no button until ↻).
+- **Flow**: a dedicated idle query in the tab's cwd per login, keyed globally by server name (`mcpLogins` — tokens are
+  not per folder; a second click joins). `mcpAuthenticate` replies after OAuth discovery + client registration with
+  `{authUrl, requiresUserAction: true, callbackExpected: true, redirectScheme: "localhost", state, callbackPort}`. **The
+  CLI does not open the browser in SDK mode** (`skipBrowserOpen: true`; only our fetch hit `/authorize`) → main opens it
+  with `shell.openExternal`, only https or http on loopback hosts (`isOpenableAuthUrl`). The CLI's callback listener
+  (`127.0.0.1:<callbackPort>`, `redirect_uri=http://localhost:<port>/callback`) lives in that CLI process, so the query
+  stays open until success / [취소] / 5 min (the CLI's own "Authentication timeout" is also 5 min); closing it kills the
+  listener (port → ECONNREFUSED — verified). On success the CLI stores the token and reconnects the server itself.
+- **Starting a login wipes the server's stored token first** (the flow's first step, "clear stored credentials"), so
+  cancelling a login on a stale "인증 필요" row would log out a working server. `runMcpLogin` waits for the server's own
+  status (`settledMcpStatus`) and stops with "done" when it is already connected.
+- **Success / failure**: `pollMcpLogin` reads `mcpServerStatus()` every 1.5 s — `connected` = success. A denial in the
+  browser leaves the status at `needs-auth` forever, so it also asks whether the CLI is still waiting:
+  `mcpSubmitOAuthCallbackUrl(name, "http://localhost/callback")` (no code, no error) is refused with "Invalid callback
+  URL: missing authorization code" while waiting — checked *before* the flow's submitter runs, so the login is not
+  touched — and with "No active OAuth flow for server" once the callback arrived or failed. The submitter goes away when
+  the callback arrives, *before* the token exchange, hence a 10 s grace (`MCP_LOGIN_END_GRACE_MS`) before "로그인을 마치지
+  못했습니다" (measured: connected 0.6 s after the callback).
+- **After a login / logout / claude.ai connect** (`refreshMcpEverywhere`): `folderInfo` is cleared and every known tab is
+  re-probed (`pushFolderInfo` — commands too: the server's MCP prompts come and go); tabs in the login's folder get the
+  auth query's list at once (no flicker); live sessions get `reconnectMcpServer(name)` — **another CLI process picks up
+  the new token on reconnect** (verified with a second process and with an app tab holding an injected live session;
+  after a logout the same reconnect turns it `needs-auth`). `reconnectMcpServer` throws when the result is not
+  `connected` ("Server status: needs-auth") — caught, the status is sent anyway.
+- **claude.ai connectors** reply `{authUrl, requiresUserAction: true, callbackExpected: false}` (from the CLI source):
+  main opens the URL and closes the query; the row says to finish on claude.ai and [다시 확인] = `mcp:reconnect` (live
+  session reconnect, else a re-probe). Not verified for real (the isolated config has no claude.ai login) — the UI path
+  was checked by patching the reply in the debugger.
+- **Logout** = `mcpClearAuth` on the tab's live session, else a short-lived idle query: the CLI revokes the tokens at the
+  server's `revocation_endpoint` (the fake server saw both revoked), deletes them and reconnects → `needs-auth`. Only
+  http/sse (`Cannot clear auth for server type "…"` otherwise). The storage is shared with the terminal `claude` — the
+  confirm says so.
+- **Where tokens live**: the CLI's secure storage — on macOS the keychain item `Claude Code-credentials` (key `mcpOAuth`,
+  the same item as the Claude login); the CLI read-modify-writes it, the app never touches it. With `CLAUDE_CONFIG_DIR`
+  set the item is `Claude Code-credentials-<first 8 hex of sha256(dir)>` — use that for tests.
+- **Errors** (`explainMcpLoginError`, CLI strings from its `mcp_authenticate` handler): `Server not found: X`,
+  `… blocked by enterprise managed policy`, `MCP server X is disabled — enable it (mcp_toggle) before authenticating`
+  ("꺼져 있습니다 — 터미널에서 /mcp로 켤 수 있습니다"), `… is not approved for this project …`, `Server type "stdio" does
+  not support OAuth authentication`, `Unsupported control request subtype` (→ terminal hint); others are shown as is.
+- **State** goes to every window as `mcp:login` (`{name, phase, seq}`, phases starting / waiting / claudeai / done /
+  error / cancelled — app-wide, not a tab event); `mcp:login_states` restores waiting rows after a reload (verified).
+  Renderer store `src/renderer/mcp-login.ts` (drops states with a lower `seq`, forgets "done" after 20 s, a connected
+  row forgets its finished state, ↻ forgets errors and the claude.ai hint). The chip spins while a login waits.
 
 ### Work files panel (`FilesPanel.tsx`, header folder-tree button)
 

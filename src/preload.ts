@@ -106,6 +106,18 @@ contextBridge.exposeInMainWorld("electronAPI", {
     gitDiff: (tabId: string, path: string) => ipcRenderer.invoke("git:diff", tabId, path),
     listCommands: (tabId: string) => ipcRenderer.invoke("commands:list", tabId),
     getMcpStatus: (tabId: string, refresh?: boolean) => ipcRenderer.invoke("mcp:status", tabId, refresh ?? false),
+    // MCP 서버 로그인(OAuth) — 그 탭의 작업 폴더에서 시작한다. 진행 상태는 onMcpLogin으로 온다(토큰은 탭과 무관해 앱 전체 이벤트).
+    mcpLogin: (tabId: string, name: string) => ipcRenderer.invoke("mcp:login", tabId, name),
+    cancelMcpLogin: (name: string) => ipcRenderer.invoke("mcp:login_cancel", name),
+    getMcpLoginStates: () => ipcRenderer.invoke("mcp:login_states"),
+    onMcpLogin: (callback: (state: McpLoginState) => void) => {
+        const handler = (_: unknown, state: McpLoginState) => callback(state);
+        ipcRenderer.on("mcp:login", handler);
+        return () => ipcRenderer.removeListener("mcp:login", handler);
+    },
+    // 실패한 서버 다시 연결 · claude.ai 커넥터 다시 확인 / 연결된 서버에서 로그아웃
+    reconnectMcp: (tabId: string, name: string) => ipcRenderer.invoke("mcp:reconnect", tabId, name),
+    mcpLogout: (tabId: string, name: string) => ipcRenderer.invoke("mcp:logout", tabId, name),
 
     // ── 백그라운드 작업 패널 (탭별): 셸 작업의 최근 출력, 작업 하나만 중지 ──
     getBackgroundOutput: (tabId: string, taskId: string, maxBytes?: number) =>

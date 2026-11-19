@@ -1255,8 +1255,8 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  width: 300px;
-  max-height: 320px;
+  width: 330px;
+  max-height: 360px;
   padding: 8px;
   overflow-y: auto;
   background-color: var(--c-elevated);
@@ -1289,9 +1289,10 @@
   }
 }
 
+// 이름 줄 오른쪽에 그 서버의 버튼(로그인·취소·다시 연결·로그아웃) — 아래 줄들은 버튼 칸까지 넓게 쓴다
 .mcpRow {
   display: grid;
-  grid-template-columns: 10px 1fr;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
   column-gap: 8px;
   align-items: center;
   padding: 6px;
@@ -1333,8 +1334,9 @@
 
 .mcpMeta,
 .mcpError,
-.mcpHint {
-  grid-column: 2;
+.mcpHint,
+.mcpProgress {
+  grid-column: 2 / -1;
   font-size: 11px;
   color: var(--c-text-muted);
 }
@@ -1351,6 +1353,64 @@
   color: var(--c-accent-text);
   background-color: var(--c-note-bg);
   border-radius: 5px;
+}
+
+// 로그인 진행 (준비 중 · 브라우저에서 허용을 기다리는 중 · 연결 확인 중)
+.mcpProgress {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 2px;
+  color: var(--c-accent-text);
+}
+
+.mcpAction {
+  grid-row: 1;
+  grid-column: 3;
+  min-width: 52px;
+  padding: 2px 9px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--c-text-2);
+  white-space: nowrap;
+  cursor: pointer;
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: 6px;
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.6;
+  }
+
+  &:hover:not(:disabled) {
+    color: var(--c-text);
+    background-color: var(--c-hover);
+  }
+}
+
+.mcpActionPrimary {
+  font-weight: 700;
+  color: var(--c-on-primary);
+  background-color: var(--c-primary);
+  border-color: transparent;
+
+  &:hover:not(:disabled) {
+    color: var(--c-on-primary);
+    background-color: var(--c-primary-hover);
+  }
+}
+
+// 로그아웃은 눈에 덜 띄게 — 올리면 위험 색
+.mcpActionQuiet {
+  color: var(--c-text-muted);
+  background: none;
+  border-color: transparent;
+
+  &:hover:not(:disabled) {
+    color: var(--c-danger);
+    background-color: var(--c-danger-soft);
+  }
 }
 
 .contextGauge {

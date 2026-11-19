@@ -11,6 +11,8 @@ import * as instr from "./main/services/instructions";
 import {installPreviewProtocol, MAX_PREVIEW_HTML, PREVIEW_SCHEME, registerDir, registerHtml, registerPreviewScheme} from "./main/services/previews";
 import {imageDataUrl, imageFile, imageThumbnail, sniffImage, toolResultImages} from "./main/services/images";
 import {openInIde, pickIde} from "./main/services/jetbrains";
+import {explainMcpLoginError, isOpenableAuthUrl, TERMINAL_LOGIN_HINT} from "./main/services/mcp-login";
+import type {McpAuthMethods, McpAuthReply, McpLoginError} from "./main/services/mcp-login";
 import type {GitChange, GitStatusResult} from "./main/services/git-changes";
 import type {
     McpServerStatus,
@@ -382,6 +384,8 @@ interface AppMcpServer {
     status: McpServerStatus["status"];
     error?: string;
     scope?: string;
+    // 연결 방식: http | sse | stdio | claudeai-proxy(claude.ai 커넥터) | sdk — 로그인·로그아웃 버튼을 고르는 데 쓴다
+    transport: string;
     toolCount: number;
 }
 
@@ -391,6 +395,7 @@ function toMcpList(status: McpServerStatus[] | null): AppMcpServer[] {
         status: m.status,
         error: m.error,
         scope: m.scope,
+        transport: m.config?.type ?? "stdio",
         toolCount: m.tools?.length ?? 0,
     }));
 }
@@ -430,6 +435,255 @@ function pushFolderInfo(tab: ChatTab) {
     void loadMcpStatus(tab).then((list) => {
         if (cwd === tab.cwd) send(tab, "chat:mcp", list);
     });
+}
+
+// ── MCP 서버 로그인 (OAuth) ──
+// "인증 필요"인 서버에 앱에서 바로 로그인한다(MCP 팝업의 [로그인]). 흐름 (CLI 2.1.325 실측):
+//   1. 그 탭의 작업 폴더에 로그인 전용 idle query를 띄우고 mcpAuthenticate(이름) — CLI가 OAuth 메타데이터를 찾고 클라이언트를
+//      등록한 뒤 인증 주소를 돌려준다. SDK 모드의 CLI는 브라우저를 열지 않는다(skipBrowserOpen: true) → 앱이 연다(한 번만).
+//   2. CLI는 127.0.0.1에 콜백 서버를 띄워 브라우저의 리디렉트를 기다린다 — 그래서 이 CLI 프로세스는 끝날 때까지 살아 있어야 한다.
+//      받으면 토큰을 저장하고(CLI 설정의 키체인 항목) 그 서버에 다시 연결한다.
+//   3. 앱은 그 query의 mcpServerStatus()를 1.5초마다 보고 connected가 되면 성공 — query를 닫고 다른 탭의 살아 있는 세션은
+//      그 서버만 다시 연결한다(다른 CLI 프로세스도 다시 연결하면 새 토큰을 읽는다 — 실측).
+// 토큰은 폴더와 무관하게 저장되므로 로그인은 서버 이름마다 하나만 돈다(mcpLogins). 상태는 모든 창에 보낸다(mcp:login).
+// claude.ai 커넥터는 주소(claude.ai 설정)만 열고 끝낸다 — 연결은 claude.ai에서 하고, 사용자가 [다시 확인]을 누른다.
+type McpLoginPhase = "starting" | "waiting" | "claudeai" | "done" | "error" | "cancelled";
+
+interface McpLoginState extends Partial<McpLoginError> {
+    name: string;
+    phase: McpLoginPhase;
+    seq: number; // 바뀔 때마다 오른다 — 렌더러가 늦게 온 옛 상태를 버린다
+}
+
+interface McpLogin {
+    name: string;
+    cwd: string;
+    state: McpLoginState;
+    started: Promise<McpLoginState>; // mcpAuthenticate의 답까지 (같은 서버를 또 누르면 이걸 같이 기다린다)
+    idle: {q: Query; close: () => void} | null;
+    closed: boolean;
+    deadline: number;
+    timer: ReturnType<typeof setTimeout> | null;
+    sawUnconnected: boolean; // 로그인 전 상태(인증 필요 등)를 봤다 — 처음부터 연결돼 있던 서버를 성공으로 착각하지 않게
+    endedAt: number | null; // CLI의 로그인이 끝났다(콜백을 받았거나 실패) — 이후에도 연결되지 않으면 실패
+    statusErrors: number;
+}
+
+const mcpLogins = new Map<string, McpLogin>();
+let mcpLoginSeq = 0;
+// CLI의 콜백 서버도 5분 뒤 "Authentication timeout"으로 끝난다
+const MCP_LOGIN_TIMEOUT_MS = 5 * 60_000;
+const MCP_LOGIN_POLL_MS = 1500;
+// 콜백을 받은 뒤 토큰 교환·다시 연결에 걸리는 시간 (실측 0.6초 남짓, 넉넉히). 브라우저에서 거절하면 이만큼 뒤에 실패로 보인다.
+const MCP_LOGIN_END_GRACE_MS = 10_000;
+
+function broadcastMcpLogin(state: McpLoginState) {
+    for (const w of BrowserWindow.getAllWindows()) {
+        if (!w.isDestroyed()) w.webContents.send("mcp:login", state);
+    }
+}
+
+function setMcpLoginState(flow: McpLogin, patch: Partial<McpLoginState>): McpLoginState {
+    flow.state = {name: flow.name, phase: flow.state.phase, ...patch, seq: ++mcpLoginSeq};
+    broadcastMcpLogin(flow.state);
+    return flow.state;
+}
+
+// 로그인을 끝낸다(성공·실패·취소) — CLI를 닫으면 콜백 서버도 같이 꺼진다(실측: 그 포트가 ECONNREFUSED)
+function endMcpLogin(flow: McpLogin, patch: Partial<McpLoginState>): McpLoginState {
+    if (flow.closed) return flow.state;
+    flow.closed = true;
+    if (flow.timer) clearTimeout(flow.timer);
+    flow.timer = null;
+    flow.idle?.close();
+    flow.idle = null;
+    if (mcpLogins.get(flow.name) === flow) mcpLogins.delete(flow.name);
+    return setMcpLoginState(flow, patch);
+}
+
+function startMcpLogin(tab: ChatTab, name: string): Promise<McpLoginState> {
+    const running = mcpLogins.get(name);
+    if (running) return running.state.phase === "starting" ? running.started : Promise.resolve(running.state);
+    const claudePath = resolveClaudePath();
+    if (!claudePath) {
+        const state: McpLoginState = {name, phase: "error", seq: ++mcpLoginSeq, error: "Claude CLI를 찾지 못했습니다"};
+        broadcastMcpLogin(state);
+        return Promise.resolve(state);
+    }
+    const state: McpLoginState = {name, phase: "starting", seq: ++mcpLoginSeq};
+    const flow: McpLogin = {
+        name,
+        cwd: tab.cwd,
+        state,
+        started: Promise.resolve(state),
+        idle: null,
+        closed: false,
+        deadline: Date.now() + MCP_LOGIN_TIMEOUT_MS,
+        timer: null,
+        sawUnconnected: false,
+        endedAt: null,
+        statusErrors: 0,
+    };
+    mcpLogins.set(name, flow);
+    broadcastMcpLogin(state);
+    flow.started = runMcpLogin(flow, claudePath);
+    return flow.started;
+}
+
+async function runMcpLogin(flow: McpLogin, claudePath: string): Promise<McpLoginState> {
+    try {
+        const idle = await openIdleQuery({pathToClaudeCodeExecutable: claudePath, cwd: flow.cwd});
+        if (flow.closed) {
+            idle.close(); // 띄우는 사이 취소했다
+            return flow.state;
+        }
+        flow.idle = idle;
+        await withTimeout(idle.q.initializationResult(), 30_000);
+        // 그새 다른 곳(터미널의 /mcp 등)에서 로그인해 이미 연결됐으면 시작하지 않는다 — 로그인을 시작하면 CLI가 그 서버의
+        // 저장된 토큰부터 지우므로(OAuth 흐름의 첫 단계), 여기서 취소하면 멀쩡한 로그인이 사라진다
+        const before = await settledMcpStatus(idle.q, flow.name);
+        if (flow.closed) return flow.state;
+        if (before.me?.status === "connected") {
+            refreshMcpEverywhere(flow.name, {cwd: flow.cwd, list: before.list});
+            return endMcpLogin(flow, {phase: "done"});
+        }
+        if (before.me) flow.sawUnconnected = true;
+        const api = idle.q as unknown as McpAuthMethods;
+        if (typeof api.mcpAuthenticate !== "function") {
+            return endMcpLogin(flow, {phase: "error", error: TERMINAL_LOGIN_HINT, unavailable: true});
+        }
+        // 답이 오기 전에 OAuth 메타데이터 조회·클라이언트 등록을 한다 — 서버가 느리면 몇 초 걸린다
+        const reply = await withTimeout(api.mcpAuthenticate(flow.name), 60_000);
+        if (flow.closed) return flow.state;
+        return afterMcpAuthReply(flow, reply ?? {});
+    } catch (e) {
+        if (flow.closed) return flow.state; // 취소로 CLI가 닫혀 생긴 오류
+        return endMcpLogin(flow, {phase: "error", ...explainMcpLoginError((e as Error)?.message ?? String(e))});
+    }
+}
+
+// 막 띄운 CLI는 서버마다 연결을 시도하는 중(pending)이다 — 그 서버의 결과가 나올 때까지 잠깐 기다린다
+async function settledMcpStatus(q: Query, name: string): Promise<{list: McpServerStatus[]; me?: McpServerStatus}> {
+    const deadline = Date.now() + 8000;
+    for (;;) {
+        const list = await withTimeout(q.mcpServerStatus(), 5000);
+        const me = list.find((m) => m.name === name);
+        if (me?.status !== "pending" || Date.now() > deadline) return {list, me};
+        await new Promise((r) => setTimeout(r, 400));
+    }
+}
+
+function afterMcpAuthReply(flow: McpLogin, reply: McpAuthReply): McpLoginState {
+    const url = typeof reply.authUrl === "string" ? reply.authUrl : "";
+    if (url) {
+        if (!isOpenableAuthUrl(url)) {
+            return endMcpLogin(flow, {
+                phase: "error",
+                error: "https가 아닌 로그인 주소라 열지 않았습니다",
+                detail: url.slice(0, 300),
+            });
+        }
+        shell.openExternal(url).catch((e) => console.error("[mcp] 로그인 주소를 열지 못했습니다", e));
+    }
+    // claude.ai 커넥터 — 기다릴 콜백이 없다. 연결은 claude.ai에서 마치고 사용자가 [다시 확인]을 누른다.
+    if (url && reply.callbackExpected === false) return endMcpLogin(flow, {phase: "claudeai"});
+    // 브라우저에서 허용하면 CLI가 콜백을 받아 연결한다 — 연결됨이 될 때까지 지켜본다
+    // (주소 없이 온 답 = 사용자 확인 없이 토큰을 받았다 — 같은 방법으로 확인한다)
+    setMcpLoginState(flow, {phase: "waiting"});
+    flow.timer = setTimeout(() => void pollMcpLogin(flow), url ? MCP_LOGIN_POLL_MS : 300);
+    return flow.state;
+}
+
+// CLI가 아직 콜백을 기다리는지 — 코드도 오류도 없는 주소를 콜백으로 넣어 본다. 기다리는 중이면 "Invalid callback URL: missing
+// authorization code"로 거절하고(진행 중인 로그인은 건드리지 않는다 — 콜백 처리기를 부르기 전에 거른다), 끝났으면(콜백을 받았거나
+// 실패) "No active OAuth flow for server"라고 답한다(실측). 브라우저에서 거절하면 상태는 계속 "인증 필요"라 이걸로 실패를 안다.
+async function mcpLoginEnded(q: Query, name: string): Promise<boolean> {
+    const api = q as unknown as McpAuthMethods;
+    if (typeof api.mcpSubmitOAuthCallbackUrl !== "function") return false;
+    try {
+        await withTimeout(api.mcpSubmitOAuthCallbackUrl(name, "http://localhost/callback"), 5000);
+        return false;
+    } catch (e) {
+        return /No active OAuth flow/i.test((e as Error)?.message ?? "");
+    }
+}
+
+async function pollMcpLogin(flow: McpLogin) {
+    flow.timer = null;
+    const q = flow.idle?.q;
+    if (flow.closed || !q) return;
+    if (Date.now() > flow.deadline) {
+        endMcpLogin(flow, {phase: "error", error: "5분 안에 로그인을 마치지 않아 취소했습니다"});
+        return;
+    }
+    let list: McpServerStatus[] | null = null;
+    try {
+        list = await withTimeout(q.mcpServerStatus(), 5000);
+        flow.statusErrors = 0;
+    } catch (e) {
+        if (flow.closed) return;
+        if (++flow.statusErrors >= 3) {
+            endMcpLogin(flow, {phase: "error", error: "Claude CLI가 응답하지 않아 로그인을 멈췄습니다", detail: (e as Error)?.message});
+            return;
+        }
+    }
+    if (flow.closed) return;
+    const me = list?.find((m) => m.name === flow.name);
+    if (me && me.status !== "connected") flow.sawUnconnected = true;
+    if (list && me?.status === "connected" && (flow.sawUnconnected || flow.endedAt)) {
+        // 그 폴더 탭들의 목록을 먼저 바꾸고 "done"을 보낸다 — 줄이 "인증 필요"로 잠깐 돌아갔다 바뀌지 않게
+        refreshMcpEverywhere(flow.name, {cwd: flow.cwd, list});
+        endMcpLogin(flow, {phase: "done"});
+        return;
+    }
+    if (!flow.endedAt && (await mcpLoginEnded(q, flow.name))) flow.endedAt = Date.now();
+    if (flow.closed) return;
+    if (flow.endedAt) {
+        if (me?.status === "failed") {
+            endMcpLogin(flow, {phase: "error", error: "로그인은 됐지만 서버에 연결하지 못했습니다", detail: me.error});
+            return;
+        }
+        if (Date.now() - flow.endedAt > MCP_LOGIN_END_GRACE_MS) {
+            endMcpLogin(flow, {
+                phase: "error",
+                error: "로그인을 마치지 못했습니다 — 브라우저에서 거절했거나 서버가 받아 주지 않았습니다",
+            });
+            return;
+        }
+    }
+    flow.timer = setTimeout(() => void pollMcpLogin(flow), MCP_LOGIN_POLL_MS);
+}
+
+// 서버의 로그인 정보가 바뀌었다(로그인·로그아웃·claude.ai 연결). 토큰은 폴더와 무관하므로 모든 폴더의 CLI 정보를 버리고 다시
+// 살펴본다(폴더마다 CLI 하나 — 그 서버의 MCP 프롬프트가 명령 목록에 들고 나므로 명령도 같이). 방금 확인한 폴더(fresh)의 탭에는
+// 그 목록을 먼저 보낸다 — 다시 살펴보는 몇 초 동안 줄이 옛 상태로 남지 않게. 살아 있는 세션은 그 서버만 다시 연결한다.
+// except = 이미 스스로 다시 연결한 세션(로그아웃을 한 세션) — 다시 연결하지 않고 목록만 보낸다.
+function refreshMcpEverywhere(name: string, fresh: {cwd: string; list: McpServerStatus[]} | null, except?: LiveSession) {
+    folderInfo.clear();
+    // 다른 서버가 아직 연결 중인 목록은 보내지 않는다 — 잠깐 "연결 중"으로 보였다가 돌아온다(다시 살펴본 목록이 곧 온다)
+    if (fresh?.list.some((m) => m.status === "pending")) fresh = null;
+    for (const tab of tabs.values()) {
+        const s = tab.live;
+        if (s && !s.inputEnded && !s.stopped && s !== except) {
+            void reconnectLiveMcp(s, name);
+            continue;
+        }
+        if (fresh && tab.cwd === fresh.cwd) send(tab, "chat:mcp", toMcpList(fresh.list));
+        pushFolderInfo(tab);
+    }
+}
+
+// 살아 있는 세션(응답 중이거나 백그라운드 작업이 도는 탭)이 그 서버를 쓰면 다시 연결한다 — 재시작 없이 새 토큰을 쓰게(로그인),
+// 지운 토큰을 더는 쓰지 않게(로그아웃). 다른 CLI 프로세스도 다시 연결하면 저장소에서 새 토큰을 읽는다(실측). 연결되지 않으면
+// 예외가 난다("Server status: needs-auth") — 상태는 그대로 보낸다.
+async function reconnectLiveMcp(s: LiveSession, name: string) {
+    try {
+        const list = await withTimeout(s.q.mcpServerStatus(), 5000);
+        if (list.some((m) => m.name === name)) await withTimeout(s.q.reconnectMcpServer(name), 30_000);
+    } catch (e) {
+        console.error("[mcp] 다시 연결 실패", name, (e as Error)?.message);
+    }
+    if (!s.stopped) pushFolderInfo(s.tab);
 }
 
 // 별칭(opus/sonnet…)이 아니라 실제 모델 ID로 비교한다
@@ -3623,6 +3877,85 @@ ipcMain.handle("prompts:remove", (_event, index: number) => {
 ipcMain.handle("commands:list", (event, tabId: string) => loadCommands(tabFor(event, tabId)));
 
 ipcMain.handle("mcp:status", (event, tabId: string, refresh?: boolean) => loadMcpStatus(tabFor(event, tabId), refresh === true));
+
+// ── MCP 서버 로그인·다시 연결·로그아웃 (MCP 팝업) — 로그인 진행 상태는 mcp:login 이벤트로 모든 창에 간다 ──
+ipcMain.handle("mcp:login", (event, tabId: string, name: unknown): Promise<McpLoginState> => {
+    if (typeof name !== "string" || !name) {
+        return Promise.resolve({name: "", phase: "error", seq: ++mcpLoginSeq, error: "서버 이름이 없습니다"});
+    }
+    return startMcpLogin(tabFor(event, tabId), name);
+});
+
+ipcMain.handle("mcp:login_cancel", (_event, name: unknown) => {
+    const flow = typeof name === "string" ? mcpLogins.get(name) : undefined;
+    if (flow) endMcpLogin(flow, {phase: "cancelled"});
+});
+
+// 화면을 새로 띄웠을 때(새로고침) 진행 중인 로그인
+ipcMain.handle("mcp:login_states", () => [...mcpLogins.values()].map((f) => f.state));
+
+// [다시 연결](실패한 서버)·[다시 확인](claude.ai 커넥터): 살아 있는 세션이 있으면 그 세션에서 다시 연결하고, 없으면 폴더를
+// 다시 살펴본다(새 CLI가 처음부터 연결한다). 목록을 못 받으면 null — 렌더러는 보던 목록을 그대로 둔다.
+ipcMain.handle("mcp:reconnect", async (event, tabId: string, name: unknown): Promise<AppMcpServer[] | null> => {
+    const tab = tabFor(event, tabId);
+    const cwd = tab.cwd;
+    if (typeof name !== "string" || !name) return null;
+    const s = tab.live && !tab.live.inputEnded && !tab.live.stopped ? tab.live : null;
+    let status: McpServerStatus[] | null = null;
+    if (s) {
+        // 연결되지 않으면 예외가 난다("Server status: failed") — 이유는 목록의 error에 있다
+        await withTimeout(s.q.reconnectMcpServer(name), 30_000).catch((e) => console.error("[mcp] 다시 연결 실패", name, (e as Error)?.message));
+        status = await withTimeout(s.q.mcpServerStatus(), 5000).catch(() => null);
+    }
+    if (!status) status = await probeFolder(cwd, true).mcp;
+    if (!status) return null;
+    const me = status.find((m) => m.name === name);
+    // claude.ai에서 연결을 마쳤다 — 로그인처럼 다른 폴더·탭의 목록과 세션에도 반영한다
+    if (me?.status === "connected" && me.config?.type === "claudeai-proxy") refreshMcpEverywhere(name, {cwd, list: status}, s ?? undefined);
+    const list = toMcpList(status);
+    if (cwd === tab.cwd) send(tab, "chat:mcp", list);
+    return list;
+});
+
+// [로그아웃](연결된 HTTP·SSE 서버): CLI가 저장한 토큰을 지운다(서버가 토큰 폐기 주소를 알리면 폐기도 요청한다 — 실측).
+// 터미널의 claude와 같은 저장소라 거기서도 로그아웃된다. 살아 있는 세션이 있으면 그 세션에서(그 세션은 스스로 다시 연결해
+// "인증 필요"가 된다), 없으면 그 폴더에 잠깐 띄운 CLI에서 한다.
+ipcMain.handle("mcp:logout", async (event, tabId: string, name: unknown): Promise<{ok: true} | ({ok: false} & McpLoginError)> => {
+    const tab = tabFor(event, tabId);
+    if (typeof name !== "string" || !name) return {ok: false, error: "서버 이름이 없습니다"};
+    const cwd = tab.cwd;
+    const s = tab.live && !tab.live.inputEnded && !tab.live.stopped ? tab.live : null;
+    let idle: {q: Query; close: () => void} | null = null;
+    try {
+        let q: Query;
+        if (s) {
+            q = s.q;
+        } else {
+            const claudePath = resolveClaudePath();
+            if (!claudePath) return {ok: false, error: "Claude CLI를 찾지 못했습니다"};
+            idle = await openIdleQuery({pathToClaudeCodeExecutable: claudePath, cwd});
+            q = idle.q;
+            await withTimeout(q.initializationResult(), 30_000);
+        }
+        const api = q as unknown as McpAuthMethods;
+        if (typeof api.mcpClearAuth !== "function") {
+            return {ok: false, error: "이 버전에서는 앱에서 로그아웃할 수 없습니다 — 터미널에서 /mcp로 하세요", unavailable: true};
+        }
+        await withTimeout(api.mcpClearAuth(name), 30_000);
+        const list = await withTimeout(q.mcpServerStatus(), 5000).catch(() => null);
+        refreshMcpEverywhere(name, list ? {cwd, list} : null, s ?? undefined);
+        return {ok: true};
+    } catch (e) {
+        return {ok: false, ...explainMcpLoginError((e as Error)?.message ?? String(e))};
+    } finally {
+        idle?.close();
+    }
+});
+
+// 앱을 끄면 기다리던 로그인도 끝낸다 — CLI와 그 콜백 서버를 남기지 않게
+app.on("will-quit", () => {
+    for (const flow of [...mcpLogins.values()]) endMcpLogin(flow, {phase: "cancelled"});
+});
 
 ipcMain.handle("files:search", (event, tabId: string, query: string) => searchFilesInCwd(tabFor(event, tabId).cwd, query ?? ""));
 
