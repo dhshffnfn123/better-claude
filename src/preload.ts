@@ -125,6 +125,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
         return () => ipcRenderer.removeListener("chat:rate_limits", handler);
     },
     copyText: (text: string) => ipcRenderer.invoke("clipboard:write", text),
+    writeClipboardImage: (dataUrl: string) => ipcRenderer.invoke("clipboard:write_image", dataUrl),
     // macOS 알림 (언제 띄울지는 렌더러가 정한다)
     showNotification: (n: {title: string; body: string; tabId?: string}) => ipcRenderer.invoke("notify:show", n),
     onNotificationClick: (callback: (tabId: string) => void) => {

@@ -4,6 +4,7 @@ import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 import {
     faArrowDown,
     faArrowUp,
+    faAt,
     faCircleExclamation,
     faClockRotateLeft,
     faPaperclip,
@@ -21,13 +22,15 @@ import {
     type BackgroundLink,
     type BackgroundLinks,
     BackgroundLinksContext,
+    FILE_DRAG_TYPE,
     ImageViewerContext,
     PreviewOpenContext,
     type PreviewRequest,
     TabIdContext,
 } from "../../tab-context";
 import {BackgroundDock} from "./BackgroundDock";
-import {Lightbox} from "./Lightbox";
+import {useLightbox} from "./Lightbox";
+import {useJumpMode} from "../../jump-setting";
 import {ActivityPanel, middleTruncate} from "./ActivityPanel";
 import {QuestionModal} from "./QuestionModal";
 
@@ -141,27 +144,34 @@ function ChatTabViewBase({
     const [rewind, setRewind] = useState<RewindState | null>(null);
     const rootRef = useRef<HTMLDivElement>(null);
     // 파일을 탭 화면 어디에 끌어다 놓아도 입력창에 붙인다 (스크린샷을 대화 영역에 놓는 일이 많다)
-    const [dragging, setDragging] = useState(false);
+    // 끌어 오는 중인 것: Finder의 파일(첨부) / 작업 파일 패널의 파일(@로 넣기)
+    const [dragging, setDragging] = useState<"attach" | "mention" | null>(null);
     const dragDepthRef = useRef(0);
     const addFilesRef = useRef<((files: File[]) => void) | null>(null);
     const registerAddFiles = useCallback((add: ((files: File[]) => void) | null) => {
         addFilesRef.current = add;
     }, []);
-    // 글자·링크를 끄는 건 받지 않는다 — 파일만
-    const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes("Files");
+    // 작업 파일 패널에서 끈 파일 → @로 넣기 (FILE_DRAG_TYPE)
+    const addMentionRef = useRef<((path: string) => void) | null>(null);
+    const registerAddMention = useCallback((add: ((path: string) => void) | null) => {
+        addMentionRef.current = add;
+    }, []);
+    // 글자·링크를 끄는 건 받지 않는다 — Finder의 파일(첨부)과 작업 파일 패널의 파일(@)만
+    const isPanelFile = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes(FILE_DRAG_TYPE);
+    const hasFiles = (e: React.DragEvent) => isPanelFile(e) || Array.from(e.dataTransfer.types).includes("Files");
     const dragHandlers = {
         onDragEnter: (e: React.DragEvent) => {
             if (!hasFiles(e)) return;
             e.preventDefault();
             dragDepthRef.current += 1;
-            setDragging(true);
+            setDragging(isPanelFile(e) ? "mention" : "attach");
         },
         // 안쪽 요소로 옮겨 갈 때도 leave가 온다 — 들어온 횟수를 세어 바깥으로 완전히 나갔을 때만 끈다
         onDragLeave: (e: React.DragEvent) => {
             if (!hasFiles(e)) return;
             e.preventDefault();
             dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
-            if (dragDepthRef.current === 0) setDragging(false);
+            if (dragDepthRef.current === 0) setDragging(null);
         },
         onDragOver: (e: React.DragEvent) => {
             if (!hasFiles(e)) return;
@@ -172,28 +182,51 @@ function ChatTabViewBase({
             if (!hasFiles(e)) return;
             e.preventDefault();
             dragDepthRef.current = 0;
-            setDragging(false);
-            addFilesRef.current?.(Array.from(e.dataTransfer.files));
+            setDragging(null);
+            const mention = e.dataTransfer.getData(FILE_DRAG_TYPE);
+            if (mention) addMentionRef.current?.(mention);
+            else addFilesRef.current?.(Array.from(e.dataTransfer.files));
         },
     };
     const [showScrollBottom, setShowScrollBottom] = useState(false);
     // 지금 읽고 있는(화면 맨 위에 걸친) Claude 답변 — 시작이 위로 가려져 있을 때만 값이 있다
-    const [jumpTargetId, setJumpTargetId] = useState<number | null>(null);
-    const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
+    // "답변 처음으로" 대상 — down: 그 답변이 화면 아래에 있다(설정이 "마지막 답변"이고 위로 올려 보는 중)
+    const [jumpTarget, setJumpTarget] = useState<{id: number; down: boolean} | null>(null);
+    const [jumpMode] = useJumpMode();
     // 다른 대화로 바뀔 때마다 올린다 — 입력창이 대기 중인 메시지를 새 대화로 보내지 않게
     const [conversationSeq, setConversationSeq] = useState(0);
     const messageListRef = useRef<HTMLDivElement>(null);
+    // 그림 크게 보기 — 앞뒤로 넘기는 범위는 이 탭의 메시지 목록
+    const {open: openImage, lightbox} = useLightbox(messageListRef, tabId);
     const isAtBottomRef = useRef(true);
     // 숨겼다 다시 보일 때 되돌릴 스크롤 위치
     const scrollTopRef = useRef(0);
 
-    // 화면 맨 위 경계에 걸친 메시지를 찾아(메시지는 위에서 아래 순서라 이진 탐색), 그게 시작이 가려진
-    // Claude 답변이면 "답변 처음으로" 대상으로 둔다. 스크롤 이벤트는 한 프레임에 한 번이라 바로 잰다.
+    // "답변 처음으로" 대상 정하기 (설정 → 답변 처음으로 버튼 기준). 스크롤 이벤트는 한 프레임에 한 번이라 바로 잰다.
+    // 보고 있는 답변(기본): 화면 맨 위 경계에 걸친 메시지를 찾아(메시지는 위에서 아래 순서라 이진 탐색), 그게 시작이
+    // 가려진 Claude 답변이면 그 답변. 마지막 답변: 가장 최근 Claude 답변(첫 인사말 빼고)의 첫 줄이 화면 위나 아래로
+    // 벗어나 있으면 그 답변 — 아래에 있으면(위로 올려 예전 대화를 보는 중) 버튼이 ↓로 바뀐다.
     const updateJumpTarget = useCallback(() => {
         const list = messageListRef.current;
         if (!list) return;
         const items = list.querySelectorAll<HTMLElement>(":scope > [data-msg-id]");
-        const listTop = list.getBoundingClientRect().top;
+        const box = list.getBoundingClientRect();
+        const listTop = box.top;
+        if (jumpMode === "last") {
+            let last: HTMLElement | null = null;
+            for (let i = items.length - 1; i >= 0 && !last; i--) {
+                if (items[i].dataset.role === "assistant" && items[i].dataset.greeting === undefined) last = items[i];
+            }
+            let target: {id: number; down: boolean} | null = null;
+            if (last) {
+                const r = last.getBoundingClientRect();
+                const id = Number(last.dataset.msgId);
+                if (r.top < listTop - JUMP_HIDDEN_PX) target = {id, down: false};
+                else if (r.top > box.bottom - JUMP_REMAINING_PX) target = {id, down: true};
+            }
+            setJumpTarget((prev) => (prev?.id === target?.id && prev?.down === target?.down ? prev : target));
+            return;
+        }
         let lo = 0;
         let hi = items.length - 1;
         let found = -1;
@@ -214,8 +247,8 @@ function ChatTabViewBase({
                 next = Number(item.dataset.msgId);
             }
         }
-        setJumpTargetId((prev) => (prev === next ? prev : next));
-    }, []);
+        setJumpTarget((prev) => (next === null ? null : prev?.id === next && !prev.down ? prev : {id: next, down: false}));
+    }, [jumpMode]);
 
     // ⌘F 찾기 (FindBar.tsx) — 탭마다 따로 열고, 검색어도 탭마다 남는다
     const [findOpen, setFindOpen] = useState(false);
@@ -283,8 +316,6 @@ function ChatTabViewBase({
         el.scrollTop = isAtBottomRef.current ? el.scrollHeight : scrollTopRef.current;
         updateJumpTarget();
     }, [active, updateJumpTarget]);
-
-    const closeLightbox = useCallback(() => setLightboxSrc(null), []);
 
     // 재생성·편집은 세션을 이어갈 지점이 바뀌어 CLI를 새로 띄운다 — 백그라운드 작업도 종료된다
     const confirmStopBackground = (action: string) =>
@@ -390,8 +421,8 @@ function ChatTabViewBase({
     // 지금 읽는 답변의 첫 줄(머리줄)로 — 따라가기는 풀린다(위로 가므로)
     const jumpToReplyStart = () => {
         const list = messageListRef.current;
-        if (!list || jumpTargetId == null) return;
-        const item = list.querySelector<HTMLElement>(`:scope > [data-msg-id="${jumpTargetId}"]`);
+        if (!list || !jumpTarget) return;
+        const item = list.querySelector<HTMLElement>(`:scope > [data-msg-id="${jumpTarget.id}"]`);
         if (!item) return;
         isAtBottomRef.current = false;
         const top = list.scrollTop + item.getBoundingClientRect().top - list.getBoundingClientRect().top - JUMP_MARGIN_PX;
@@ -450,14 +481,14 @@ function ChatTabViewBase({
         <div className={cx("tabView", {tabViewHidden: !active})} aria-hidden={!active} ref={rootRef} {...dragHandlers}>
             {dragging && (
                 <div className={cx("dragOverlay")}>
-                    <FontAwesomeIcon icon={faPaperclip} />
-                    <span>여기에 놓으면 메시지에 첨부합니다</span>
+                    <FontAwesomeIcon icon={dragging === "mention" ? faAt : faPaperclip} />
+                    <span>{dragging === "mention" ? "여기에 놓으면 @로 넣습니다" : "여기에 놓으면 메시지에 첨부합니다"}</span>
                 </div>
             )}
             {/* 채팅 영역 */}
             <div className={cx("messageListWrap")}>
                 <TabIdContext.Provider value={tabId}>
-                <ImageViewerContext.Provider value={setLightboxSrc}>
+                <ImageViewerContext.Provider value={openImage}>
                 <PreviewOpenContext.Provider value={openPreview}>
                     <div
                         className={cx("messageList")}
@@ -471,7 +502,7 @@ function ChatTabViewBase({
                                 msg={msg}
                                 isStreaming={isThinking && i === messages.length - 1}
                                 isLive={isLoading && i === messages.length - 1}
-                                onImageClick={setLightboxSrc}
+                                onImageClick={openImage}
                                 onRegenerate={
                                     !isLoading && i === messages.length - 1 && msg.role === "assistant" && lastUserIdx >= 0
                                         ? handleRegenerate
@@ -523,15 +554,15 @@ function ChatTabViewBase({
                         onJump={releaseFollow}
                     />
                 )}
-                {/* 긴 답변을 읽다가(또는 다 읽고) 그 답변의 처음으로 */}
+                {/* 긴 답변을 읽다가(또는 다 읽고) 그 답변의 처음으로 — 기준은 설정(보고 있는 답변 / 마지막 답변) */}
                 <button
-                    className={cx("jumpReplyButton", {visible: jumpTargetId != null, jumpReplyButtonLow: findOpen})}
+                    className={cx("jumpReplyButton", {visible: jumpTarget != null, jumpReplyButtonLow: findOpen})}
                     onClick={jumpToReplyStart}
-                    aria-label="이 답변의 처음으로"
-                    tabIndex={jumpTargetId != null ? 0 : -1}
+                    aria-label={jumpMode === "last" ? "마지막 답변의 처음으로" : "이 답변의 처음으로"}
+                    tabIndex={jumpTarget ? 0 : -1}
                 >
-                    <FontAwesomeIcon icon={faArrowUp} />
-                    답변 처음으로
+                    <FontAwesomeIcon icon={jumpTarget?.down ? faArrowDown : faArrowUp} />
+                    {jumpMode === "last" ? "마지막 답변 처음으로" : "답변 처음으로"}
                 </button>
                 <button
                     className={cx("scrollBottomButton", {visible: showScrollBottom})}
@@ -567,6 +598,7 @@ function ChatTabViewBase({
                 resetSignal={conversationSeq}
                 promptHooks={promptHooks}
                 onRegisterAddFiles={registerAddFiles}
+                onRegisterAddMention={registerAddMention}
                 suggestion={suggestion}
                 onSuggestionUsed={clearSuggestion}
                 top={
@@ -583,7 +615,7 @@ function ChatTabViewBase({
             />
 
             {/* 이미지 라이트박스 */}
-            {lightboxSrc && <Lightbox src={lightboxSrc} onClose={closeLightbox} />}
+            {lightbox}
 
             {/* Claude의 선택지 질문 (AskUserQuestion) */}
             {questionRequest && (

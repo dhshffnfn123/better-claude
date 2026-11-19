@@ -1,4 +1,4 @@
-import type {ComponentProps, ReactNode} from "react";
+import type {ComponentProps, CSSProperties, ReactNode} from "react";
 import {useCallback, useEffect, useMemo, useRef, useState} from "react";
 import classNames from "classnames/bind";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
@@ -38,6 +38,9 @@ import type {ImagePayload, TurnEnd} from "../../hooks/useClaudeChat";
 import {readFileAsImagePayload} from "../../hooks/useClaudeChat";
 import {onTab} from "../../tab-events";
 import {useSuggestionsEnabled} from "../../suggestion-setting";
+import {buildAttachmentText, tildePath} from "../../attachments";
+import {MiddleName} from "./MiddleName";
+import {useLightbox} from "./Lightbox";
 
 const cx = classNames.bind(styles);
 
@@ -50,7 +53,7 @@ function detectMention(text: string, cursor: number): {query: string; start: num
     return {query, start: cursor - query.length - 1};
 }
 
-const fileBase = (p: string) => p.slice(p.lastIndexOf("/") + 1);
+export const fileBase = (p: string) => p.slice(p.lastIndexOf("/") + 1);
 const fileDir = (p: string) => {
     const i = p.lastIndexOf("/");
     return i < 0 ? "" : p.slice(0, i);
@@ -110,7 +113,14 @@ const DEFAULT_FILE_ICON: FileIcon = {icon: faFile, color: "#c9a84c"};
 
 // 색은 CSS 변수로 넘기고 실제 칠은 .mentionIcon/.mentionChipIcon이 테마에 맞춰 한다.
 // FontAwesomeIcon의 style 타입은 자기 변수(--fa-*)만 알아서 한 번 풀어서 넘긴다.
-function iconStyle(fi: FileIcon): ComponentProps<typeof FontAwesomeIcon>["style"] {
+// 아이콘이 아닌 상자(첨부 카드의 색 네모)에 같은 색 변수를 넘길 때
+export function iconVars(fi: FileIcon): CSSProperties {
+    const vars: Record<string, string> = {"--icon": fi.color};
+    if (fi.dark) vars["--icon-dark"] = fi.dark;
+    return vars as CSSProperties;
+}
+
+export function iconStyle(fi: FileIcon): ComponentProps<typeof FontAwesomeIcon>["style"] {
     const vars: Record<string, string> = {"--icon": fi.color};
     if (fi.dark) vars["--icon-dark"] = fi.dark;
     return vars as unknown as ComponentProps<typeof FontAwesomeIcon>["style"];
@@ -123,7 +133,7 @@ export function isImeComposing(e: React.KeyboardEvent): boolean {
     return e.nativeEvent.isComposing || e.keyCode === 229;
 }
 
-function iconForFile(p: string): FileIcon {
+export function iconForFile(p: string): FileIcon {
     const base = fileBase(p);
     const dot = base.lastIndexOf(".");
     const ext = dot > 0 ? base.slice(dot + 1).toLowerCase() : "";
@@ -155,28 +165,9 @@ function mergeDrafts(a: Draft, b: Draft): Draft {
     };
 }
 
-// 첨부·참조 파일 안내를 글 앞에 붙여 실제로 보낼 메시지를 만든다
+// 첨부·참조 파일 안내를 글 앞에 붙여 실제로 보낼 메시지를 만든다 (형식은 attachments.ts — 보낸 메시지에서 다시 읽어 카드로 그린다)
 function buildMessage(d: Draft): {text: string; images: ImagePayload[]} {
-    const parts: string[] = [];
-    if (d.files.length > 0) {
-        const withPath = d.files.filter((f) => f.path);
-        const withoutPath = d.files.filter((f) => !f.path);
-        if (withPath.length > 0) {
-            parts.push(
-                "첨부 파일 — 아래 경로의 파일을 Read 도구로 읽어주세요:\n" +
-                    withPath.map((f) => `- ${f.path}`).join("\n")
-            );
-        }
-        if (withoutPath.length > 0) {
-            parts.push(`[첨부(경로를 확인할 수 없어 읽을 수 없음): ${withoutPath.map((f) => f.name).join(", ")}]`);
-        }
-    }
-    if (d.mentions.length > 0) {
-        parts.push(
-            "참조 파일 — 아래 경로를 Read 도구로 읽어주세요:\n" +
-                d.mentions.map((p) => `- ${p}`).join("\n")
-        );
-    }
+    const parts = buildAttachmentText(d.files, d.mentions);
     const trimmed = d.input.trim();
     if (trimmed) parts.push(trimmed);
     return {text: parts.join("\n\n"), images: d.images};
@@ -204,6 +195,8 @@ interface Props {
     promptHooks?: PromptHooks;
     // 탭 화면에 끌어다 놓은 파일을 붙이는 함수를 넘긴다 (빠질 때 null)
     onRegisterAddFiles?: (add: ((files: File[]) => void) | null) => void;
+    // 작업 파일 패널에서 끌어 온 파일을 @로 넣는다 (ChatTabView가 받는다)
+    onRegisterAddMention?: (add: ((path: string) => void) | null) => void;
     // 답변이 끝난 뒤 CLI가 짐작한 다음 요청 — 입력창이 비어 있으면 흐리게 보이고 Tab으로 채운다
     suggestion?: string | null;
     onSuggestionUsed?: () => void;
@@ -227,6 +220,7 @@ export function ChatInput({
     resetSignal,
     promptHooks,
     onRegisterAddFiles,
+    onRegisterAddMention,
     suggestion,
     onSuggestionUsed,
     top,
@@ -235,6 +229,9 @@ export function ChatInput({
     const [input, setInput] = useState("");
     const [selectedImages, setSelectedImages] = useState<ImagePayload[]>([]);
     const [selectedFiles, setSelectedFiles] = useState<{name: string; path: string}[]>([]);
+    // 입력창 위 첨부 그림 크게 보기 (앞뒤 넘기기 범위 = 첨부 줄)
+    const attachStripRef = useRef<HTMLDivElement>(null);
+    const {open: openAttached, lightbox: attachedLightbox} = useLightbox(attachStripRef, tabId);
     const [prompts, setPrompts] = useState<string[]>([]);
     const [promptInputOpen, setPromptInputOpen] = useState(false);
     const [newPromptInput, setNewPromptInput] = useState("");
@@ -567,6 +564,15 @@ export function ChatInput({
         return () => onRegisterAddFiles(null);
     }, [onRegisterAddFiles, addFiles]);
 
+    useEffect(() => {
+        if (!onRegisterAddMention) return;
+        onRegisterAddMention((p) => {
+            setMentionedFiles((prev) => (prev.includes(p) ? prev : [...prev, p]));
+            textareaRef.current?.focus();
+        });
+        return () => onRegisterAddMention(null);
+    }, [onRegisterAddMention]);
+
     const removeImage = (index: number) => {
         setSelectedImages((prev) => prev.filter((_, i) => i !== index));
     };
@@ -601,6 +607,7 @@ export function ChatInput({
     return (
         <div className={cx("inputArea")}>
             {top}
+            {attachedLightbox}
             {promptInputOpen && (
                 <div className={cx("promptArea")}>
                     {prompts.length > 0 && (
@@ -666,24 +673,48 @@ export function ChatInput({
             )}
 
             {(selectedImages.length > 0 || selectedFiles.length > 0) && (
-                <div className={cx("imagePreviewStrip")}>
+                <div className={cx("imagePreviewStrip")} ref={attachStripRef}>
                     {selectedImages.map((img, i) => (
                         <div key={`img-${i}`} className={cx("imagePreviewItem")}>
-                            <img src={img.previewUrl} className={cx("imagePreviewThumb")} alt="" />
+                            {/* 보내기 전에도 눌러서 크게 (첨부한 그림끼리 앞뒤로 넘긴다) */}
+                            <img
+                                src={img.previewUrl}
+                                className={cx("imagePreviewThumb")}
+                                alt=""
+                                draggable={false}
+                                data-zoomable=""
+                                data-zoom-name={img.name ?? "첨부한 그림"}
+                                onClick={(e) => openAttached(img.previewUrl, e.currentTarget)}
+                                data-tooltip="눌러서 크게 보기"
+                            />
                             <button className={cx("imagePreviewRemove")} onClick={() => removeImage(i)}>
                                 <FontAwesomeIcon icon={faXmark} />
                             </button>
                         </div>
                     ))}
-                    {selectedFiles.map((f, i) => (
-                        <div key={`file-${i}`} className={cx("filePreviewItem")} title={f.name}>
-                            <FontAwesomeIcon icon={faPaperclip} className={cx("filePreviewIcon")} />
-                            <span className={cx("filePreviewName")}>{f.name}</span>
-                            <button className={cx("imagePreviewRemove")} onClick={() => removeFile(i)}>
-                                <FontAwesomeIcon icon={faXmark} />
-                            </button>
-                        </div>
-                    ))}
+                    {/* 첨부 파일 — 보낸 메시지의 파일 카드와 같은 모양 (종류별 색 아이콘 + 이름 + 폴더) */}
+                    {selectedFiles.map((f, i) => {
+                        const fi = iconForFile(f.name);
+                        const slash = f.path.lastIndexOf("/");
+                        return (
+                            <div key={`file-${i}`} className={cx("filePreviewItem")} data-tooltip={f.path ? tildePath(f.path) : f.name}>
+                                <span className={cx("attachCardIcon")} style={iconVars(fi)}>
+                                    <FontAwesomeIcon icon={fi.icon} />
+                                </span>
+                                <span className={cx("attachCardText")}>
+                                    <span className={cx("attachCardName")}>
+                                        <MiddleName name={f.name} />
+                                    </span>
+                                    <span className={cx("attachCardSub")}>
+                                        <MiddleName name={slash > 0 ? tildePath(f.path.slice(0, slash)) : "경로를 알 수 없음"} />
+                                    </span>
+                                </span>
+                                <button className={cx("imagePreviewRemove")} onClick={() => removeFile(i)} aria-label="첨부 빼기">
+                                    <FontAwesomeIcon icon={faXmark} />
+                                </button>
+                            </div>
+                        );
+                    })}
                 </div>
             )}
             {mentionedFiles.length > 0 && (

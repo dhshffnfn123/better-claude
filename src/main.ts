@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, Notification, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, nativeTheme, Notification, shell } from "electron";
 import { createMainWindow, windowBackground } from "./main/windows/create-main-window";
 import { installAppMenu } from "./main/menu";
 import {resetCache as resetClaudePathCache, resolveClaudePath, validateClaudeBinary} from "./main/services/claude-path";
@@ -2899,8 +2899,11 @@ ipcMain.handle("images:read", async (event, tabId: string, p: unknown): Promise<
     const img = await imageFile(p);
     return img ? imageDataUrl(img).catch(() => null) : null;
 });
+// 작업 폴더 안·Claude가 고친 파일, 그리고 이 탭의 답변에 나온 그림(크게 보기의 "Finder에서 보기")만
 ipcMain.handle("files:reveal", (event, tabId: string, p: string) => {
-    if (canViewPath(tabFor(event, tabId), p) && fs.existsSync(p)) shell.showItemInFolder(p);
+    const tab = tabFor(event, tabId);
+    if (typeof p !== "string" || !path.isAbsolute(p)) return;
+    if ((tab.imagePaths.has(p) || canViewPath(tab, p)) && fs.existsSync(p)) shell.showItemInFolder(p);
 });
 
 // ── 파일을 JetBrains IDE로 열기 (src/main/services/jetbrains.ts) ──
@@ -3348,6 +3351,7 @@ interface SavedTab {
     sessionId: string | null;
     cwd: string;
     title: string;
+    customTitle: string | null; // 사용자가 붙인 탭 이름
     model: string;
     effort: string;
     ultracode: boolean;
@@ -3375,6 +3379,7 @@ function cleanSavedTabs(raw: unknown): SavedTabs {
             sessionId: typeof t.sessionId === "string" && t.sessionId ? t.sessionId : null,
             cwd: typeof t.cwd === "string" ? t.cwd : "",
             title: typeof t.title === "string" ? t.title.slice(0, 200) : "",
+            customTitle: typeof t.customTitle === "string" && t.customTitle.trim() ? t.customTitle.trim().slice(0, 60) : null,
             model: typeof t.model === "string" ? t.model : defaults.model,
             effort: typeof t.effort === "string" ? t.effort : defaults.effort,
             ultracode: t.ultracode === true,
@@ -3655,6 +3660,15 @@ ipcMain.handle("claude:open_install_guide", async () => {
 ipcMain.handle("clipboard:write", (_event, text: unknown) => {
     if (typeof text !== "string") return false;
     clipboard.writeText(text);
+    return true;
+});
+
+// 그림 복사 (크게 보기) — 렌더러가 캔버스로 PNG를 만들어 넘긴다 (SVG·WebP도 붙여 넣을 수 있게)
+ipcMain.handle("clipboard:write_image", (_event, dataUrl: unknown) => {
+    if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/png;base64,")) return false;
+    const img = nativeImage.createFromDataURL(dataUrl);
+    if (img.isEmpty()) return false;
+    clipboard.writeImage(img);
     return true;
 });
 

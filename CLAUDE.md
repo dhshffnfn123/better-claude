@@ -478,7 +478,7 @@ Each tab is an independent conversation with its own CLI process, so several can
   permissions. The renderer asks first when the tab is responding or has background tasks; closing
   the last tab opens a fresh one with the same folder and settings.
 - **Persistence**: `userData/tabs.json` through json-store (`tabs:load` / `tabs:save`, `cleanSavedTabs`
-  validates, ≤50 tabs) = `{tabs: [{id, sessionId, cwd, title, model, effort, ultracode, fastMode}],
+  validates, ≤50 tabs) = `{tabs: [{id, sessionId, cwd, title, customTitle, model, effort, ultracode, fastMode}],
   activeId}`, saved 400 ms after a change. A restart brings back the tabs and the active one; the
   permission shield and running work do not survive.
 - **Settings are per tab.** A new tab inherits the current tab's folder and model/effort/ultracode/fast.
@@ -499,6 +499,16 @@ Each tab is an independent conversation with its own CLI process, so several can
   shrank to ~110px with room to spare) and shrink to 96px, then the list scrolls sideways with its
   scrollbar hidden: `useOverflowScroll` turns vertical wheel into horizontal scroll (Chromium does not
   do this by itself — verified) and fades the edge that hides tabs (`tabListFadeLeft/Right`, a mask).
+  **Drag to reorder**: HTML5 drag with its own type (`application/x-bc-tab`, so `ChatTabView`'s file drop ignores it);
+  the half of the tab under the pointer picks before/after (a gold bar, `tabDropBefore/After::before`), the empty strip
+  after the last tab = the end; `onMove(id, beforeId)` → the shell's `moveTab` reorders `TabMeta[]`, which is what
+  `tabs.json` saves, so the order survives a restart and ⌘1–9 follow it (verified: before a tab, to the end, saved).
+  **Tab names** (the owner: same-folder tabs were hard to tell apart): double-click a tab → its title becomes an input
+  (`TabTitleEditor`; Enter or blur saves, Esc cancels, empty or equal to the automatic title clears it). Stored as
+  `TabMeta.customTitle` next to the automatic `title` (first message → the CLI's session summary, which keeps updating
+  underneath), shown bold, used by the usage popover and the notification title ("이름 · 폴더"); the tab-only name never
+  renames the CLI session (the sidebar keeps its own title). Verified: save, Esc, clear, a reload, the close button's
+  double-click ignored. Blur saves — a test that typed through separate CDP calls lost the edit box to a window blur.
 - **Closing the window, reloading or quitting while work runs asks first** — decided in main, so it
   works even if the renderer is stuck. `busySummary()`: a tab is responding while a `chat:send` is in
   flight (`tab.sending`, covers spawning the CLI) or its live turn is active (CLI-started follow-ups
@@ -776,7 +786,9 @@ previewed (they need a build).
 
 ### 사용 가이드 (`UserGuide.tsx`, content in `user-guide.ts`)
 
-Sidebar "사용 가이드" (under 새 대화) opens a modal over the tab view — chats keep running underneath. Left: contents
+Sidebar "사용 가이드" (under 새 대화; the three sidebar items have icons — 새 대화, 사용 가이드, 설정) opens a modal over
+the tab view — chats keep running underneath. **설정** (below it, `SettingsDialog.tsx`, same header as the guide) holds
+general settings that have no header button of their own — for now the 답변 처음으로 target. Left: contents
 (sections with item counts, follows scrolling); right: one card per feature (설명 + 쓰는 방법 lines); top: search over
 title/body/how lines. Text markup: `[[⌘T]]` = keycap, `{i:shield}` = the app's own icon (`ICONS` in `UserGuide.tsx`),
 backticks = code. `since: "v5"` shows a version badge. Esc clears the search first, then closes. **The guide is
@@ -820,10 +832,30 @@ hand-written: when a feature or its button/label changes, update its entry in `u
   edge is found by binary search over `:scope > [data-msg-id]` (`MessageItem` sets `data-msg-id` /
   `data-role`). It is measured on scroll **and** after `messages` change / the tab becomes visible —
   right after a conversation loads, the scroll event can come before layout settles and the button
-  stayed hidden.
+  stayed hidden. **Its target is a setting** (사이드바 설정 → "답변 처음으로" 버튼 기준, `src/renderer/jump-setting.ts`,
+  localStorage `better-claude:jump-reply`, shared by every tab like `suggestion-setting.ts`): 보고 있는 답변 (`reading`,
+  default, the behaviour above) or 마지막 답변 (`last` — someone asked for it): the newest Claude reply (the greeting,
+  `data-greeting`, doesn't count) whenever its first line is off screen — above → ↑, below (scrolled up into older
+  replies) → ↓ — labelled "마지막 답변 처음으로"; none while that first line is visible. Verified both modes with two
+  long replies (from the middle of the first, from the bottom, at the second's start) and after a reload.
 - **Files dropped anywhere on the tab** (message list included, not just the input box) attach to the
   message: `ChatTabView` owns the drag handlers (depth counter for nested enter/leave, files only — text
-  drags are ignored) and calls the `addFiles` that `ChatInput` registers via `onRegisterAddFiles`.
+  drags are ignored) and calls the `addFiles` that `ChatInput` registers via `onRegisterAddFiles`. **A file dragged
+  from the files panel** (tree / Claude 수정 / Git rows are `draggable`) carries `FILE_DRAG_TYPE` = its cwd-relative path
+  (only that type — with `text/plain` the textarea would paste the path as text); the overlay says "@로 넣습니다" and the
+  drop adds an @ mention through `onRegisterAddMention`.
+- **Attachments in a sent message are cards** (`src/renderer/attachments.ts`): Claude still gets the same text in front
+  of the message ("첨부 파일 — 아래 경로의 파일을 Read 도구로 읽어주세요:" + `- path` lines, the @ "참조 파일" block, the
+  no-path note), built by `buildAttachmentText`; `parseAttachments` reads it back off the message so `UserContent` draws
+  file cards (type-coloured icon tile from `FILE_ICONS` via `iconVars`, name + `~` folder through `MiddleName`, "@ 참조"
+  tag, ⌘+click → IDE) above the bubble and only the typed text inside it. No separate storage: live and loaded
+  conversations look the same (verified after a reload). The input's file chips use the same card parts.
+- **Long content folds** (`Collapsible.tsx`): reply code blocks (`CODE_FOLD_PX` 360) and my messages (`USER_FOLD_PX`
+  300) taller than 1.3× that show only that height with a fade and "전체 보기 · N줄" / "전체 보기"; height is measured
+  (ResizeObserver on the content, so one long unbroken line counts; 0 while the tab is hidden), and folding back
+  scrolls the box into view. ⌘F expands a folded box holding the match (`EXPAND_EVENT` on `[data-collapsed]`) and
+  measures again on a **timer**, not rAF — an occluded window never runs rAF and the jump landed off screen.
+  Edit diffs keep their own 220px scroll box.
 - **⌘F find** (`FindBar.tsx`; 편집 menu: 찾기 ⌘F, 다음 ⌘G, 이전 ⇧⌘G → `menu:tab` "find…" → the active tab's
   `TabViewApi`). Searches only the visible tab's message list. Not `webContents.findInPage` — it also
   matches the find box's own text and searches the whole window. Text nodes are grouped by their block
@@ -861,8 +893,20 @@ hand-written: when a feature or its button/label changes, update its entry in `u
   first 4 KB); any location (Claude saves to /tmp, the Desktop…) — only image bytes are ever read.
   Thumbnails ≤1.5 MB go as is, larger ones are shrunk to 640 px with `nativeImage` (fallback: the original
   up to 8 MB); clicking loads the original (`images:read`: paths resolved for this tab or inside the files
-  panel's scope, ≤30 MB) into the lightbox (`Lightbox.tsx` — one component for replies, the agent panel and, via
-  `ImageViewer`, the files/지침 panels' markdown; ×, outside click or Esc closes). Tool-result previews now join text blocks instead of
+  panel's scope, ≤30 MB) into the lightbox (`useLightbox(rootRef, tabId)` in `Lightbox.tsx` — one for replies (root =
+  the tab's message list), the agent panel (its body), the input's attached images (the strip) and, via `ImageViewer`,
+  the files/지침 panels' markdown; ×, outside click or Esc closes). **Top bar**: name (`data-zoom-name`, path in
+  `data-zoom-path`) and size; **실제 크기** when the picture is shrunk (button or click the picture — the clicked point stays
+  under the pointer; drag to pan, a click without dragging fits again); **복사** draws it on a canvas → PNG →
+  `clipboard:write_image` (`nativeImage`; SVG scaled to 1600 px); **Finder** for pictures with a path (`files:reveal`
+  now also allows the tab's resolved image paths). Size/actual/copied are keyed by `src` instead of being reset in an
+  effect — a data-URL picture finished loading before the effect ran and the measured size was wiped (reproduced). **‹ › / ←→ step through the root's other images**: every element that opens the lightbox carries
+  `data-zoomable` and passes itself (`OpenImage(src, from)`); the list = the root's visible `[data-zoomable]` in document
+  order, with an "N / M" counter (no arrows for a single image; at the ends the arrow is dimmed, not hidden — a hidden
+  one let the click fall through to the scrim and close). Stepping = `el.click()` on the neighbour, so each image's
+  own open path (thumbnail → original from main, SVG as is) is reused; its thumbnail shows first, and `wantRef` drops
+  a slower original of an image already stepped past. Verified: 4 images in a reply (← → keys, buttons, a 2.3 MB
+  original), the files panel's README (its 2 images only). Tool-result previews now join text blocks instead of
   `JSON.stringify`-ing the array (the image base64 used to be the preview). Loaded conversations keep
   result images for the newest 40 tools / 40 M chars (`limitLoadedImages`); older ones show a count. Files
   panel: image files render as images (size, dimensions; click toggles actual size only when shrunk), svg

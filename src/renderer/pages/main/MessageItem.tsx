@@ -23,13 +23,16 @@ import {copyText} from "../../clipboard";
 import {highlightLanguage} from "../../highlight";
 import {editorHint, looksLikeFilePath, openFileRef, resolveFileRef} from "../../file-links";
 import {imageRefKey, imageRefsInText, isImagePath, resolveImageRefs} from "../../image-refs";
-import {ImageViewerContext, ReplyLiveContext, TabIdContext} from "../../tab-context";
+import {ImageViewerContext, type OpenImage, ReplyLiveContext, TabIdContext} from "../../tab-context";
 import {QUESTION_TOOL} from "../../question-answers";
 import {remarkHtmlAsText, remarkSoftBreaks} from "../../remark-prompt";
 import {isAgentTool, middleTruncate, ToolRow} from "./ActivityPanel";
 import {QuestionCard} from "./QuestionCard";
 import {BgToggle, CodePreview, HtmlFileCard, htmlFileOf, OpenLargeButton, type PreviewBg, previewKindOf} from "./HtmlPreview";
-import {isImeComposing} from "./ChatInput";
+import {fileBase, iconForFile, iconVars, isImeComposing} from "./ChatInput";
+import {Collapsible} from "./Collapsible";
+import {MiddleName} from "./MiddleName";
+import {type AttachmentParts, parseAttachments, tildePath} from "../../attachments";
 
 const cx = classNames.bind(styles);
 
@@ -61,6 +64,14 @@ function textOf(node: ReactNode): string {
 }
 
 // 코드 블록(```): 언어 표시 + 복사 버튼 + 문법 색상. 답이 흘러 들어오는 동안에는 글자가 바뀐 블록만 다시 칠한다.
+// 긴 내용을 접는 높이 — 코드는 약 19줄, 내 메시지는 약 13줄 (그 1.3배를 넘을 때만 접는다)
+const CODE_FOLD_PX = 360;
+const USER_FOLD_PX = 300;
+
+function lineCount(text: string): number {
+    return text.replace(/\n$/, "").split("\n").length;
+}
+
 function CodeBlock({lang, code}: {lang?: string; code: string}) {
     // HTML·SVG 블록은 그려진 모습으로 볼 수 있다(HtmlPreview). 답이 끝나면 미리보기가 기본 — 받는 중에는 블록이
     // 덜 쓰였을 수 있어 코드로 둔다. 사용자가 고른 쪽은 그대로 둔다.
@@ -103,10 +114,12 @@ function CodeBlock({lang, code}: {lang?: string; code: string}) {
             {kind && mode === "preview" ? (
                 <CodePreview kind={kind} code={code} bg={bg} live={live} />
             ) : (
-                // highlight.js가 글자를 이스케이프해 만든 HTML이다
-                <pre className={cx("codeBlockPre")}>
-                    <code dangerouslySetInnerHTML={{__html: html}} />
-                </pre>
+                // 길면 접는다 (Collapsible) — highlight.js가 글자를 이스케이프해 만든 HTML이다
+                <Collapsible max={CODE_FOLD_PX} label={`전체 보기 · ${lineCount(code)}줄`} toggleClassName="codeCollapseToggle">
+                    <pre className={cx("codeBlockPre")}>
+                        <code dangerouslySetInnerHTML={{__html: html}} />
+                    </pre>
+                </Collapsible>
             )}
         </div>
     );
@@ -213,7 +226,13 @@ function MarkdownImage({src, alt}: {src: string; alt: string}) {
             alt={alt}
             draggable={false}
             data-tooltip={middleTruncate(path, 90)}
-            onClick={() => void fullImageSrc(tabId, thumb, path, !!full).then((u) => openImage?.(u))}
+            data-zoomable={openImage ? "" : undefined}
+            data-zoom-name={alt || fileBase(path)}
+            data-zoom-path={path}
+            onClick={(e) => {
+                const el = e.currentTarget;
+                void fullImageSrc(tabId, thumb, path, !!full).then((u) => openImage?.(u, el));
+            }}
         />
     );
 }
@@ -371,7 +390,7 @@ function useReplyImages(msg: Message, live: boolean): Map<number, SegImages> {
     }, [segments, bySeg, resolved]);
 }
 
-function ImageStrip({images, omitted, indent, onOpen}: SegImages & {indent: boolean; onOpen?: (src: string) => void}) {
+function ImageStrip({images, omitted, indent, onOpen}: SegImages & {indent: boolean; onOpen?: OpenImage}) {
     const tabId = useContext(TabIdContext);
     const [all, setAll] = useState(false);
     const list = all ? images : images.slice(0, STRIP_MAX);
@@ -381,7 +400,13 @@ function ImageStrip({images, omitted, indent, onOpen}: SegImages & {indent: bool
                 <button
                     key={im.key}
                     className={cx("imageThumb")}
-                    onClick={() => void fullImageSrc(tabId, im.src, im.path, im.full).then((u) => onOpen?.(u))}
+                    data-zoomable={onOpen ? "" : undefined}
+                    data-zoom-name={im.name}
+                    data-zoom-path={im.path}
+                    onClick={(e) => {
+                        const el = e.currentTarget;
+                        void fullImageSrc(tabId, im.src, im.path, im.full).then((u) => onOpen?.(u, el));
+                    }}
                     data-tooltip={middleTruncate(im.path ?? im.name, 90)}
                 >
                     {/* 끌어서 놓으면 탭의 파일 놓기로 첨부될 수 있어 막는다 */}
@@ -395,6 +420,83 @@ function ImageStrip({images, omitted, indent, onOpen}: SegImages & {indent: bool
                 </button>
             )}
             {omitted > 0 && <span className={cx("imageOmitted")}>그림 {omitted}개 — 오래된 그림이라 싣지 않았습니다</span>}
+        </div>
+    );
+}
+
+// 내 메시지 — 글 앞에 붙은 첨부 안내("첨부 파일 — …" + 경로 줄들)는 파일 카드로, 긴 글은 접어서 (attachments.ts)
+function UserContent({content}: {content: string}) {
+    const parsed = useMemo(() => parseAttachments(content), [content]);
+    const text = parsed ? parsed.text : content;
+    return (
+        <>
+            {parsed && <AttachmentCards parts={parsed.parts} />}
+            {text.trim() && (
+                <div className={cx("bubble")}>
+                    <Collapsible max={USER_FOLD_PX} label="전체 보기" toggleClassName="bubbleCollapseToggle">
+                        {text.split("\n").map((line, i, arr) => (
+                            <span key={i}>
+                                {line}
+                                {i < arr.length - 1 && <br />}
+                            </span>
+                        ))}
+                    </Collapsible>
+                </div>
+            )}
+        </>
+    );
+}
+
+function AttachmentCards({parts}: {parts: AttachmentParts}) {
+    return (
+        <div className={cx("attachCards")}>
+            {parts.files.map((p) => (
+                <AttachmentCard key={`f:${p}`} path={p} kind="file" />
+            ))}
+            {parts.mentions.map((p) => (
+                <AttachmentCard key={`m:${p}`} path={p} kind="mention" />
+            ))}
+            {parts.noPath.map((n) => (
+                <AttachmentCard key={`n:${n}`} path={n} kind="missing" />
+            ))}
+        </div>
+    );
+}
+
+// 파일 한 장: 종류별 색 아이콘 + 이름 + 폴더. @로 넣은 파일은 "@" 표시. ⌘+클릭으로 IDE에서 연다(답변 속 경로와 같다).
+function AttachmentCard({path, kind}: {path: string; kind: "file" | "mention" | "missing"}) {
+    const tabId = useContext(TabIdContext);
+    const [target, setTarget] = useState<EditorTarget | null>(null);
+    const fi = iconForFile(path);
+    const slash = path.lastIndexOf("/");
+    const dir = kind === "missing" ? "" : slash > 0 ? tildePath(path.slice(0, slash)) : slash === 0 ? "/" : "";
+    const sub = kind === "missing" ? "경로를 알 수 없어 보내지 못했습니다" : dir || "작업 폴더";
+    const where = kind === "missing" ? fileBase(path) : tildePath(path);
+    return (
+        <div
+            className={cx("attachCard", {attachCardMissing: kind === "missing"})}
+            onMouseEnter={() => {
+                if (tabId && !target && kind !== "missing") void resolveFileRef(tabId, path).then(setTarget);
+            }}
+            onClick={(e) => {
+                if (!e.metaKey || !tabId || kind === "missing") return;
+                e.preventDefault();
+                void openFileRef(tabId, path).then(setTarget);
+            }}
+            data-tooltip={target?.ok ? `${where} — ${editorHint(target, true)}` : where}
+        >
+            <span className={cx("attachCardIcon")} style={iconVars(fi)}>
+                <FontAwesomeIcon icon={fi.icon} />
+            </span>
+            <span className={cx("attachCardText")}>
+                <span className={cx("attachCardName")}>
+                    <MiddleName name={fileBase(path)} />
+                </span>
+                <span className={cx("attachCardSub")}>
+                    {kind === "mention" && <span className={cx("attachCardTag")}>@ 참조</span>}
+                    <MiddleName name={sub} />
+                </span>
+            </span>
         </div>
     );
 }
@@ -438,7 +540,7 @@ interface Props {
     msg: Message;
     isStreaming: boolean;
     isLive?: boolean; // 이 답변을 지금 받는 중 (그림 경로를 턴이 끝날 때 한 번 더 확인한다)
-    onImageClick?: (src: string) => void;
+    onImageClick?: OpenImage;
     onRegenerate?: () => void;
     onEditResend?: (text: string) => void;
     onRewindFiles?: (uuid: string) => void;
@@ -589,7 +691,12 @@ function MessageItemBase({
         // data-msg-id·data-role: 탭 화면이 "지금 읽는 답변"을 찾는 데 쓴다 (답변 처음으로 버튼)
         // dimmed: 위 메시지를 고치는 중 — 보내면 버려질 메시지
         <ReplyLiveContext.Provider value={isLive}>
-        <div className={cx("messageWrapper", msg.role, {messageDimmed: dimmed})} data-msg-id={msg.id} data-role={msg.role}>
+        <div
+            className={cx("messageWrapper", msg.role, {messageDimmed: dimmed})}
+            data-msg-id={msg.id}
+            data-role={msg.role}
+            data-greeting={msg.greeting ? "" : undefined}
+        >
             {/* 구분선이 든 답변은 폭을 끝까지 쓴다 — 내용 폭에 맞춰 줄면 구분선이 짧게 끊긴다 */}
             <div className={cx("messageInner", {messageInnerWide: hasCompact})}>
                 <div className={cx("sender")}>
@@ -613,7 +720,9 @@ function MessageItemBase({
                                 src={src}
                                 className={cx("messageBubbleImage")}
                                 alt=""
-                                onClick={() => onImageClick?.(src)}
+                                data-zoomable={onImageClick ? "" : undefined}
+                                data-zoom-name="첨부한 그림"
+                                onClick={(e) => onImageClick?.(src, e.currentTarget)}
                             />
                         ))}
                     </div>
@@ -663,14 +772,7 @@ function MessageItemBase({
                             </div>
                         </div>
                     ) : (
-                        <div className={cx("bubble")}>
-                            {msg.content.split("\n").map((line, i, arr) => (
-                                <span key={i}>
-                                    {line}
-                                    {i < arr.length - 1 && <br />}
-                                </span>
-                            ))}
-                        </div>
+                        <UserContent content={msg.content} />
                     )
                 ) : msg.segments && msg.segments.length > 0 ? (
                     // 어시스턴트: 텍스트 말풍선과 도구를 발생 순서대로 분리 렌더

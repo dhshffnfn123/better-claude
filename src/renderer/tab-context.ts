@@ -3,8 +3,17 @@ import {createContext} from "react";
 // 지금 그리는 탭의 id — 답변 속 파일 경로를 그 탭의 작업 폴더 기준으로 IDE에서 열 때 쓴다 (ChatTabView가 넣는다)
 export const TabIdContext = createContext<string>("");
 
-// 그림 확대 창 열기 (ChatTabView의 확대 창) — 답변 속 마크다운 그림처럼 MessageItem 밖에서 그려지는 것이 쓴다
-export const ImageViewerContext = createContext<((src: string) => void) | null>(null);
+// 그림 확대 창 열기 (Lightbox.tsx의 useLightbox) — from = 누른 그림 요소(앞뒤 그림으로 넘길 때의 기준).
+// 누르면 크게 보는 요소에는 data-zoomable(ZOOMABLE)을 붙인다 — 그래야 확대 창에서 앞뒤로 넘어올 수 있다.
+export type OpenImage = (src: string, from?: HTMLElement | null) => void;
+export const ImageViewerContext = createContext<OpenImage | null>(null);
+
+// 접힌 긴 내용(Collapsible)을 펼치라는 DOM 이벤트 — ⌘F 찾기가 접힌 곳에서 찾았을 때 그 상자(data-collapsed)에 보낸다
+export const EXPAND_EVENT = "bc-expand";
+
+// 작업 파일 패널에서 파일을 끌 때의 자료 종류 — 탭 화면(입력창)에 놓으면 @로 넣는다. 값 = 작업 폴더 기준 상대 경로(밖이면 절대 경로).
+// 글자(text/plain)로 싣지 않는다: 그러면 입력창이 경로를 글로 끼워 넣는다.
+export const FILE_DRAG_TYPE = "application/x-bc-path";
 
 // HTML 미리보기를 오른쪽 패널에 크게 연다 (셸이 그린다 — ChatTabView가 넣는다). 없으면 "크게 보기"를 숨긴다.
 // html·svg = 답변 속 코드 블록 글, file = Claude가 만든 .html 파일 (main이 주소를 내준다)

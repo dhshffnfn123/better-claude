@@ -15,6 +15,7 @@ import {
     faCopy,
     faEye,
     faFolderTree,
+    faGear,
     faLayerGroup,
     faMagnifyingGlass,
     faPaperclip,
@@ -62,6 +63,7 @@ const ICONS: Record<string, IconDefinition> = {
     retry: faRotateRight,
     pen: faPen,
     chart: faChartSimple,
+    gear: faGear,
 };
 
 // [[키]] → 키 모양, {i:이름} → 아이콘, `코드` → 코드 글씨

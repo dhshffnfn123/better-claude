@@ -415,6 +415,7 @@ interface SavedTab {
     sessionId: string | null;
     cwd: string;
     title: string;
+    customTitle?: string | null; // 사용자가 붙인 탭 이름 (탭을 더블클릭) — 있으면 자동 제목 대신 보인다
     model: string;
     effort: string;
     ultracode: boolean;
@@ -531,6 +532,7 @@ interface Window {
         getRateLimits: () => Promise<RateLimitWindow[]>;
         onRateLimits: (callback: (limits: RateLimitWindow[]) => void) => () => void;
         copyText: (text: string) => Promise<boolean>;
+        writeClipboardImage: (dataUrl: string) => Promise<boolean>;
         showNotification: (n: {title: string; body: string; tabId?: string}) => Promise<boolean>;
         // 탭이 낸 macOS 알림을 눌렀다 → 그 탭으로
         onNotificationClick: (callback: (tabId: string) => void) => () => void;

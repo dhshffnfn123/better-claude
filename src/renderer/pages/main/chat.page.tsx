@@ -7,11 +7,14 @@ import {
     faBolt,
     faBookOpen,
     faCheck,
+    faCircleQuestion,
     faFolder,
     faFolderTree,
+    faGear,
     faHourglassHalf,
     faLayerGroup,
     faMagnifyingGlass,
+    faPenToSquare,
     faPlug,
     faRotateRight,
     faShield,
@@ -29,6 +32,7 @@ import {ThemeSettings} from "./ThemeSettings";
 import {AgentPanel} from "./AgentPanel";
 import {BackgroundPanel} from "./BackgroundTasksPanel";
 import {UserGuide} from "./UserGuide";
+import {SettingsDialog} from "./SettingsDialog";
 import {UsageMeter} from "./UsageMeter";
 import {FilesPanel} from "./FilesPanel";
 import {InstructionsPanel} from "./InstructionsPanel";
@@ -121,7 +125,8 @@ const EMPTY_CHANGED: ChangedFilesState = {turn: 0, files: []};
 
 interface TabMeta {
     id: string;
-    title: string;
+    title: string; // 자동 제목: 첫 메시지 → CLI가 지은 대화 요약
+    customTitle: string | null; // 사용자가 붙인 이름 (탭을 더블클릭) — 있으면 자동 제목 대신 보인다
     sessionId: string | null;
     cwd: string;
     model: string; // ""이면 아직 모름 — main이 기본값으로 연 뒤 채운다
@@ -179,6 +184,7 @@ function makeTab(id: string, init: Partial<TabMeta> = {}): TabMeta {
     return {
         id,
         title: NEW_TAB_TITLE,
+        customTitle: null,
         sessionId: null,
         cwd: "",
         model: "",
@@ -262,6 +268,9 @@ const ChatPage = () => {
     // 사용 가이드 (사이드바 "사용 가이드") — 탭 화면 위에 덮어 연다
     const [guideOpen, setGuideOpen] = useState(false);
     const closeGuide = useCallback(() => setGuideOpen(false), []);
+    // 설정 (사이드바 "설정", 사용 가이드 밑) — 사용 가이드처럼 탭 화면 위에 덮어 연다
+    const [settingsOpen, setSettingsOpen] = useState(false);
+    const closeSettings = useCallback(() => setSettingsOpen(false), []);
     const [mcpRefreshing, setMcpRefreshing] = useState(false);
     const [models, setModels] = useState<ModelOption[]>(FALLBACK_MODELS);
     // 백그라운드 작업 패널 — 작업 파일 패널 자리. 연 탭에서만 보이고, taskId = 보고 있는 작업(null이면 첫 작업)
@@ -335,7 +344,12 @@ const ChatPage = () => {
     const callbacksFor = (id: string): ChatCallbacks => {
         let cb = callbacksCache.current.get(id);
         if (cb) return cb;
-        const folderTitle = () => folderName(tabsRef.current.find((t) => t.id === id)?.cwd ?? "") || "Better Claude";
+        // 알림 제목: 폴더 이름 (탭 이름을 붙였으면 "이름 · 폴더" — 어느 탭인지 알게)
+        const folderTitle = () => {
+            const t = tabsRef.current.find((x) => x.id === id);
+            const folder = folderName(t?.cwd ?? "") || "Better Claude";
+            return t?.customTitle ? `${t.customTitle} · ${folder}` : folder;
+        };
         cb = {
             onLoadingChange: (loading) => patchTab(id, {isLoading: loading}),
             onAttention: (kind, summary) => {
@@ -378,6 +392,7 @@ const ChatPage = () => {
                     saved.tabs.map((s) =>
                         makeTab(s.id, {
                             title: s.title || NEW_TAB_TITLE,
+                            customTitle: s.customTitle ?? null,
                             sessionId: s.sessionId,
                             cwd: s.cwd,
                             model: s.model,
@@ -510,6 +525,7 @@ const ChatPage = () => {
                     sessionId: t.sessionId,
                     cwd: t.cwd,
                     title: t.title,
+                    customTitle: t.customTitle,
                     model: t.model,
                     effort: t.effort,
                     ultracode: t.ultracode,
@@ -539,6 +555,24 @@ const ChatPage = () => {
         const t = makeTab(newTabId(), inheritFrom(base));
         setTabs((prev) => [...prev, t]);
         setActiveId(t.id);
+    }, []);
+
+    // 탭 이름 붙이기 (TabStrip에서 탭을 더블클릭) — null이면 자동 제목으로 돌아간다. tabs.json에 같이 저장된다.
+    const renameTab = useCallback((id: string, name: string | null) => {
+        setTabs((prev) => prev.map((t) => (t.id === id && t.customTitle !== name ? {...t, customTitle: name} : t)));
+    }, []);
+
+    // 탭 끌어 옮기기 (TabStrip) — beforeId 앞으로, null이면 맨 끝. 순서는 tabs.json에 그대로 저장된다(⌘숫자도 따라간다).
+    const moveTab = useCallback((id: string, beforeId: string | null) => {
+        setTabs((prev) => {
+            const moving = prev.find((t) => t.id === id);
+            if (!moving || id === beforeId) return prev;
+            const rest = prev.filter((t) => t.id !== id);
+            const at = beforeId ? rest.findIndex((t) => t.id === beforeId) : rest.length;
+            if (at < 0) return prev;
+            const next = [...rest.slice(0, at), moving, ...rest.slice(at)];
+            return next.every((t, i) => t === prev[i]) ? prev : next;
+        });
     }, []);
 
     const closeTab = useCallback((id: string) => {
@@ -1039,6 +1073,7 @@ const ChatPage = () => {
                             setSidebarOpen(false);
                         }}
                     >
+                        <FontAwesomeIcon icon={faPenToSquare} className={cx("navIcon")} />
                         새 대화 (새 탭)
                     </div>
                     <div
@@ -1048,7 +1083,18 @@ const ChatPage = () => {
                             setSidebarOpen(false);
                         }}
                     >
+                        <FontAwesomeIcon icon={faCircleQuestion} className={cx("navIcon")} />
                         사용 가이드
+                    </div>
+                    <div
+                        className={cx("navItem")}
+                        onClick={() => {
+                            setSettingsOpen(true);
+                            setSidebarOpen(false);
+                        }}
+                    >
+                        <FontAwesomeIcon icon={faGear} className={cx("navIcon")} />
+                        설정
                     </div>
                 </nav>
                 {sessions.length > 0 && (
@@ -1167,7 +1213,7 @@ const ChatPage = () => {
                 <UsageMeter
                     tabs={tabs.map((t) => ({
                         id: t.id,
-                        title: t.title,
+                        title: t.customTitle ?? t.title,
                         folder: folderName(t.cwd),
                         sessionId: t.sessionId,
                         usage: t.usage,
@@ -1234,7 +1280,9 @@ const ChatPage = () => {
                 <TabStrip
                     tabs={tabs.map((t) => ({
                         id: t.id,
-                        title: t.title,
+                        title: t.customTitle ?? t.title,
+                        autoTitle: t.title,
+                        named: t.customTitle != null,
                         folder: folderName(t.cwd),
                         cwd: t.cwd,
                         isLoading: t.isLoading,
@@ -1246,6 +1294,8 @@ const ChatPage = () => {
                     onSelect={setActiveId}
                     onClose={closeTab}
                     onNew={newTab}
+                    onMove={moveTab}
+                    onRename={renameTab}
                 />
             )}
 
@@ -1506,6 +1556,7 @@ const ChatPage = () => {
             </div>
 
             {guideOpen && <UserGuide onClose={closeGuide} />}
+            {settingsOpen && <SettingsDialog onClose={closeSettings} />}
 
             {/* Claude CLI 찾기 모달 */}
             {claudeMissing && (

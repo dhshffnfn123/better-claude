@@ -163,7 +163,9 @@ export function SvgPreview({code, bg, large = false}: {code: string; bg: Preview
                 alt="SVG 미리보기"
                 className={cx("previewSvg")}
                 onError={() => setBroken(src)}
-                onClick={large || !openImage ? undefined : () => openImage(src)}
+                data-zoomable={large || !openImage ? undefined : ""}
+                data-zoom-name="SVG 미리보기"
+                onClick={large || !openImage ? undefined : (e) => openImage(src, e.currentTarget)}
                 title={large || !openImage ? undefined : "눌러서 크게 보기"}
             />
         </div>

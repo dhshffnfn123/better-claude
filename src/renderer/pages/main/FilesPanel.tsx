@@ -1,4 +1,4 @@
-import type {ReactElement} from "react";
+import type {DragEvent, ReactElement} from "react";
 import {useCallback, useEffect, useMemo, useRef, useState} from "react";
 import classNames from "classnames/bind";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
@@ -24,7 +24,7 @@ import {FILES_PANEL_MIN_WIDTH, readPref, writePref} from "./files-panel-prefs";
 import {Markdown} from "./MessageItem";
 import {ImageViewer} from "./Lightbox";
 import {PreviewFrame} from "./HtmlPreview";
-import {TabIdContext} from "../../tab-context";
+import {FILE_DRAG_TYPE, TabIdContext} from "../../tab-context";
 
 const cx = classNames.bind(styles);
 
@@ -470,7 +470,7 @@ function FileViewer({tabId, filePath, cwd, info, gitEntry, gitVersion, preferTab
                     )}
                     {view?.truncated && !showImage && <div className={cx("viewerNotice")}>파일이 커서 앞부분 1MB만 보여줍니다</div>}
                     {showDoc && docKind === "markdown" && view?.text != null && (
-                        <ImageViewer>
+                        <ImageViewer tabId={tabId}>
                             <div className={cx("fileMarkdownScroll")}>
                                 <div className={cx("bubble", "markdown", "instrMarkdown")}>
                                     <TabIdContext.Provider value={tabId}>
@@ -740,6 +740,12 @@ export function FilesPanel({tabId, cwd, changed, refreshKey, width, onResize, on
 
     const pad = (depth: number) => ({paddingLeft: 8 + depth * INDENT});
 
+    // 파일 줄을 입력창으로 끌어 놓으면 @로 넣는다 (ChatTabView가 받는다) — @멘션처럼 작업 폴더 기준 상대 경로로
+    const dragFile = (filePath: string) => (e: DragEvent<HTMLDivElement>) => {
+        e.dataTransfer.setData(FILE_DRAG_TYPE, relPath(cwd, filePath));
+        e.dataTransfer.effectAllowed = "copy";
+    };
+
     const fileRow = (key: string, filePath: string, name: string, depth: number, tail?: number) => {
         const info = changedMap.get(filePath);
         const recent = !!info && info.lastTurn === changed.turn;
@@ -753,11 +759,13 @@ export function FilesPanel({tabId, cwd, changed, refreshKey, width, onResize, on
                 })}
                 style={pad(depth)}
                 onClick={() => select(filePath)}
-                title={
+                draggable
+                onDragStart={dragFile(filePath)}
+                title={`${
                     info
                         ? `${filePath}\nClaude가 이 대화에서 ${info.edits}번 수정${recent ? " · 방금 응답에서 바뀜" : ""}`
                         : filePath
-                }
+                }\n입력창에 끌어 놓으면 @로 넣습니다`}
             >
                 <span className={cx("treeChevron")} />
                 <FontAwesomeIcon icon={faFile} className={cx("treeIcon")} />
@@ -850,6 +858,8 @@ export function FilesPanel({tabId, cwd, changed, refreshKey, width, onResize, on
             className={cx("treeRow", {treeRowSelected: selected === f.path, treeRowGone: f.kind === "deleted"})}
             style={pad(depth)}
             onClick={() => select(f.path)}
+            draggable={f.kind !== "deleted"}
+            onDragStart={f.kind !== "deleted" ? dragFile(f.path) : undefined}
             title={gitTitle(f, cwd)}
         >
             <span className={cx("treeChevron")} />

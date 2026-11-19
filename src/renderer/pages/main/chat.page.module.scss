@@ -58,6 +58,9 @@
 }
 
 .navItem {
+  display: flex;
+  gap: 12px;
+  align-items: center;
   padding: 12px 24px;
   font-size: 14px;
   cursor: pointer;
@@ -66,6 +69,13 @@
   &:hover {
     background-color: var(--c-sidebar-hover);
   }
+}
+
+// 사이드바 메뉴 아이콘 (새 대화 · 사용 가이드 · 설정)
+.navIcon {
+  width: 16px;
+  font-size: 14px;
+  color: var(--c-sidebar-muted);
 }
 
 .convListSection {
@@ -1737,7 +1747,8 @@
 .imageThumbImg,
 .mdImage,
 .imageViewImg,
-.lightboxImage {
+.lightboxImage,
+.lightboxImageActual {
   background-color: var(--c-img-check-a);
   background-image: conic-gradient(var(--c-img-check-b) 25%, transparent 0 50%, var(--c-img-check-b) 0 75%, transparent 0);
   background-size: 14px 14px;
@@ -3138,9 +3149,15 @@
   display: block;
   width: 64px;
   height: 64px;
+  cursor: zoom-in;
   object-fit: cover;
   border: 1px solid var(--c-border);
   border-radius: 8px;
+  transition: opacity 0.12s ease;
+
+  &:hover {
+    opacity: 0.85;
+  }
 }
 
 .imagePreviewRemove {
@@ -3169,27 +3186,14 @@
   position: relative;
   display: flex;
   flex-shrink: 0;
-  gap: 6px;
+  gap: 10px;
   align-items: center;
+  width: 220px;
   height: 64px;
-  padding: 0 14px;
-  font-size: 12px;
-  color: var(--c-text);
+  padding: 0 12px 0 10px;
   background-color: var(--c-attach-bg);
   border: 1px solid var(--c-border);
   border-radius: 8px;
-}
-
-.filePreviewIcon {
-  font-size: 11px;
-  color: var(--c-text-muted);
-}
-
-.filePreviewName {
-  max-width: 180px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .mentionChipStrip {
@@ -3316,6 +3320,93 @@
   }
 }
 
+// 내 메시지에 붙인 파일 (MessageItem의 AttachmentCards) — 보낸 글 앞의 "첨부 파일 — …" 안내를 카드로
+.attachCards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+  margin-bottom: 6px;
+}
+
+.attachCard {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  width: 240px;
+  max-width: 100%;
+  padding: 8px 12px 8px 8px;
+  cursor: default;
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: 12px;
+}
+
+// 파일 종류 색(--icon·--icon-dark, ChatInput의 FILE_ICONS)을 옅게 깐 네모 위에 아이콘
+.attachCardIcon {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  font-size: 16px;
+  color: var(--icon);
+  background-color: color-mix(in sRGB, var(--icon) 14%, transparent);
+  border-radius: 9px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .attachCardIcon {
+    color: var(--icon-dark, var(--icon));
+    background-color: color-mix(in sRGB, var(--icon-dark, var(--icon)) 20%, transparent);
+  }
+}
+
+.attachCardText {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.attachCardName {
+  display: flex;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--c-text);
+}
+
+.attachCardSub {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--c-text-muted);
+}
+
+.attachCardTag {
+  flex-shrink: 0;
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--c-accent-soft-text);
+  background-color: var(--c-accent-soft);
+  border-radius: 4px;
+}
+
+// 경로를 몰라 보내지 못한 첨부
+.attachCardMissing {
+  border-style: dashed;
+
+  .attachCardSub {
+    color: var(--c-danger);
+  }
+}
+
 .lightboxOverlay {
   position: fixed;
   inset: 0;
@@ -3328,32 +3419,95 @@
   background-color: var(--c-lightbox-scrim);
 }
 
+// 위 줄(이름·버튼)과 아래 번호에 가리지 않게
 .lightboxImage {
-  max-width: 92vw;
-  max-height: 92vh;
+  max-width: calc(100vw - 80px);
+  max-height: calc(100vh - 140px);
   cursor: default;
   object-fit: contain;
   border-radius: 8px;
   box-shadow: var(--sh-lightbox);
 }
 
+// 줄여서 보는 중 — 누르면 실제 크기
+.lightboxImageZoomable {
+  cursor: zoom-in;
+}
+
 // SVG는 따로 크기가 없으면 300×150으로 그려진다 — 확대 창에서는 그림 비율(--ar = 가로/세로, 불러온 뒤 정해짐)대로
 // 화면에 맞게 키운다. 상자를 고정 크기로 두면 남는 곳이 체크무늬 띠가 되어 그림에 투명한 여백이 있는 것처럼 보였다.
 .lightboxImageSvg {
-  width: min(80vw, 960px, calc(80vh * var(--ar, 2)));
+  width: min(80vw, 960px, calc((100vh - 140px) * var(--ar, 2)));
   height: auto;
 }
 
-.lightboxClose {
+// 실제 크기 — 끌어서 옮긴다. 작은 쪽은 가운데(margin: auto), 큰 쪽은 스크롤
+.lightboxScroll {
   position: absolute;
-  top: 20px;
-  right: 24px;
+  inset: 0;
+  z-index: 1;
   display: flex;
+  padding: 72px 24px 24px;
+  overflow: auto;
+  cursor: grab;
+
+  &:active {
+    cursor: grabbing;
+  }
+}
+
+.lightboxImageActual {
+  flex-shrink: 0;
+  max-width: none;
+  margin: auto;
+  user-select: none;
+  border-radius: 4px;
+  box-shadow: var(--sh-lightbox);
+}
+
+// 위 줄: 이름·크기 + 실제 크기 / 복사 / Finder / 닫기
+.lightboxBar {
+  position: absolute;
+  top: 16px;
+  right: 20px;
+  left: 20px;
+  z-index: 2;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  cursor: default;
+}
+
+.lightboxCaption {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  color: var(--c-lightbox-fg);
+}
+
+.lightboxName {
+  display: flex;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.lightboxDims {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+}
+
+.lightboxBtn {
+  display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
-  font-size: 20px;
+  width: 38px;
+  height: 38px;
+  font-size: 16px;
   color: var(--c-lightbox-fg);
   cursor: pointer;
   background-color: var(--c-lightbox-btn);
@@ -3364,6 +3518,67 @@
   &:hover {
     background-color: var(--c-lightbox-btn-hover);
   }
+}
+
+// 앞뒤 그림으로 넘기기 (‹ ›, 아래 "3 / 7") — 그림이 화살표와 겹치지 않게 조금 좁게
+.lightboxHasNav .lightboxImage {
+  max-width: calc(100vw - 150px);
+}
+
+.lightboxNav {
+  position: absolute;
+  top: 50%;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  font-size: 18px;
+  color: var(--c-lightbox-fg);
+  cursor: pointer;
+  background-color: var(--c-lightbox-btn);
+  border: none;
+  border-radius: 50%;
+  transition: background-color 0.12s ease, opacity 0.12s ease;
+  transform: translateY(-50%);
+
+  &:hover {
+    background-color: var(--c-lightbox-btn-hover);
+  }
+}
+
+.lightboxPrev {
+  left: 20px;
+}
+
+.lightboxNext {
+  right: 20px;
+}
+
+// 끝 — 숨기지 않고 흐리게 (숨기면 그 자리를 누른 것이 바깥 클릭이 되어 창이 닫힌다)
+.lightboxNav.lightboxNavOff {
+  cursor: default;
+  opacity: 0.25;
+
+  &:hover {
+    background-color: var(--c-lightbox-btn);
+  }
+}
+
+.lightboxCount {
+  position: absolute;
+  bottom: 22px;
+  left: 50%;
+  z-index: 2;
+  padding: 4px 12px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--c-lightbox-fg);
+  cursor: default;
+  background-color: var(--c-lightbox-btn);
+  border-radius: 999px;
+  transform: translateX(-50%);
 }
 
 // 입력창 + 그 위에 겹쳐 그리는 다음 요청 추천(.suggestGhost)
@@ -4556,6 +4771,49 @@
   }
 }
 
+// 긴 내용 접기 (Collapsible) — 접힌 동안 아래를 흐리게
+.collapseBoxClosed {
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 56px), transparent);
+}
+
+.collapseToggle {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  cursor: pointer;
+  background: none;
+  border: none;
+}
+
+// 코드 블록 아래 막대
+.codeCollapseToggle {
+  justify-content: center;
+  width: 100%;
+  padding: 6px 0;
+  font-size: 11.5px;
+  color: var(--c-code-copy);
+  background-color: var(--c-code-head-bg);
+
+  &:hover {
+    color: var(--c-code-copy-hover);
+  }
+}
+
+// 내 메시지 말풍선 안
+.bubbleCollapseToggle {
+  padding: 4px 0 0;
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: inherit;
+  opacity: 0.75;
+
+  &:hover {
+    opacity: 1;
+  }
+}
+
 .bubble.markdown .codeBlock pre {
   margin: 0;
   border-radius: 0;
@@ -5183,6 +5441,30 @@
   background-color: var(--c-toolbar-bg);
 }
 
+// 탭 끌어 옮기기 (TabStrip) — 끄는 탭은 흐리게, 놓일 자리에 세로 줄
+.tabDragging {
+  opacity: 0.45;
+}
+
+.tabDropBefore::before,
+.tabDropAfter::before {
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  width: 3px;
+  content: "";
+  background-color: var(--c-accent);
+  border-radius: 2px;
+}
+
+.tabDropBefore::before {
+  left: -2px;
+}
+
+.tabDropAfter::before {
+  right: -2px;
+}
+
 // 폴더 이름이 길면 가운데를 줄인다 — 끝 몇 글자는 늘 보이게 (TabStrip의 FolderName)
 .tabFolder {
   display: flex;
@@ -5208,6 +5490,25 @@
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+// 사용자가 붙인 탭 이름 — 자동 제목과 구별되게 조금 굵게
+.tabTitleNamed {
+  font-weight: 600;
+}
+
+// 탭 이름 고치는 칸 (탭을 더블클릭)
+.tabTitleInput {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 0 6px;
+  font: inherit;
+  color: var(--c-text);
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-accent);
+  border-radius: 5px;
+  outline: none;
 }
 
 .tabClose {
@@ -6640,4 +6941,139 @@
     flex: 1;
     min-height: 0;
   }
+}
+
+// 설정 창 (SettingsDialog — 사이드바 "설정") — 머리줄은 사용 가이드 창과 같은 guideHeader
+.settingsDialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  width: min(520px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  overflow: hidden;
+  background-color: var(--c-surface);
+  border-radius: 14px;
+  box-shadow: var(--sh-modal);
+  transform: translate(-50%, -50%);
+}
+
+.settingsSpacer {
+  flex: 1;
+}
+
+.settingsBody {
+  padding: 18px 22px 20px;
+  overflow-y: auto;
+}
+
+.settingsSectionTitle {
+  margin: 0 0 12px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--c-text-muted);
+}
+
+.settingsLabel {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--c-text);
+}
+
+.settingsHint {
+  margin: 4px 0 12px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--c-text-muted);
+}
+
+.settingsChoices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+// 고르는 칸 (라디오) — 고른 칸은 강조색 테두리와 채운 동그라미
+.settingsChoice {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  font: inherit;
+  color: var(--c-text);
+  text-align: left;
+  cursor: pointer;
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: 10px;
+  transition: border-color 0.12s ease, background-color 0.12s ease;
+
+  &:hover {
+    background-color: var(--c-hover);
+  }
+}
+
+.settingsChoiceOn {
+  border-color: var(--c-accent);
+  box-shadow: inset 0 0 0 1px var(--c-accent);
+}
+
+.settingsRadio {
+  position: relative;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  border: 2px solid var(--c-border-strong);
+  border-radius: 50%;
+}
+
+.settingsChoiceOn .settingsRadio {
+  border-color: var(--c-accent);
+
+  &::after {
+    position: absolute;
+    inset: 2px;
+    content: "";
+    background-color: var(--c-accent);
+    border-radius: 50%;
+  }
+}
+
+.settingsChoiceText {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.settingsChoiceTitle {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.settingsDefault {
+  padding: 0 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--c-text-muted);
+  background-color: var(--c-tint);
+  border-radius: 4px;
+}
+
+.settingsChoiceDesc {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--c-text-muted);
+}
+
+.settingsNote {
+  margin: 16px 0 0;
+  font-size: 11.5px;
+  color: var(--c-text-muted);
 }

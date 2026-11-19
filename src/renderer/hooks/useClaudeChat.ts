@@ -5,6 +5,7 @@ export interface ImagePayload {
     previewUrl: string;
     data: string;      // base64
     mediaType: string;
+    name?: string; // 파일 이름 — 보내기 전 크게 보기에 보인다 (main으로는 data·mediaType만 간다)
 }
 
 export async function readFileAsImagePayload(file: File): Promise<ImagePayload> {
@@ -15,7 +16,7 @@ export async function readFileAsImagePayload(file: File): Promise<ImagePayload> 
         reader.onerror = reject;
         reader.readAsDataURL(file);
     });
-    return { previewUrl, data, mediaType: file.type || "image/png" };
+    return { previewUrl, data, mediaType: file.type || "image/png", name: file.name || undefined };
 }
 
 export interface Message {

@@ -734,7 +734,7 @@ function InstructionFileView({tabId, file, tokens, pathChars, onBack, onClose, o
                                 </div>
                             )}
                             {shown.trim() ? (
-                                <ImageViewer>
+                                <ImageViewer tabId={tabId}>
                                     <div className={cx("bubble", "markdown", "instrMarkdown")}>
                                         <MarkdownView text={shown} tabId={tabId} baseDir={file.path.slice(0, file.path.lastIndexOf("/"))} />
                                     </div>

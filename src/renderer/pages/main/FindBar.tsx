@@ -4,6 +4,7 @@ import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 import {faChevronDown, faChevronUp, faXmark} from "@fortawesome/free-solid-svg-icons";
 import styles from "./chat.page.module.scss";
 import {isImeComposing} from "./ChatInput";
+import {EXPAND_EVENT} from "../../tab-context";
 
 const cx = classNames.bind(styles);
 
@@ -115,6 +116,14 @@ export function FindBar({listRef, active, contentKey, focusSeq, step, onClose, o
         (range: Range | undefined) => {
             const list = listRef.current;
             if (!list || !range) return;
+            // 접힌 긴 코드·메시지 안이면 먼저 펼치고, 다시 그려진 뒤에 잰다 (접힌 채로 재면 펼친 뒤 화면 밖이 된다)
+            const collapsed = range.startContainer.parentElement?.closest("[data-collapsed]");
+            if (collapsed) {
+                collapsed.dispatchEvent(new Event(EXPAND_EVENT));
+                // rAF가 아닌 타이머 — 창이 가려져 있으면 rAF는 오지 않는다 (React는 그 사이 다시 그린다)
+                window.setTimeout(() => reveal(range), 30);
+                return;
+            }
             const rect = range.getBoundingClientRect();
             const box = list.getBoundingClientRect();
             if (rect.top < box.top + 48 || rect.bottom > box.bottom - 24) {

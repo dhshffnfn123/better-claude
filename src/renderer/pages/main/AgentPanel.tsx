@@ -6,7 +6,7 @@ import styles from "./chat.page.module.scss";
 import type {Message, ToolActivity} from "../../hooks/useClaudeChat";
 import {ImageViewerContext, TabIdContext} from "../../tab-context";
 import {MessageItem, PromptMarkdown} from "./MessageItem";
-import {Lightbox} from "./Lightbox";
+import {useLightbox} from "./Lightbox";
 import {FILES_PANEL_MIN_WIDTH} from "./files-panel-prefs";
 
 const cx = classNames.bind(styles);
@@ -69,9 +69,9 @@ export function AgentPanel({tabId, stack, width, onResize, onClose, onOpenNested
     const ref = stack[stack.length - 1];
     const refKey = `${ref.toolUseId ?? ""}|${ref.agentId ?? ""}`;
     const [view, setView] = useState<AgentViewResult | null>(null);
-    const [lightbox, setLightbox] = useState<string | null>(null);
-    const closeLightbox = useCallback(() => setLightbox(null), []);
     const bodyRef = useRef<HTMLDivElement>(null);
+    // 그림 크게 보기 — 앞뒤로 넘기는 범위는 이 패널 본문
+    const {open: openImage, lightbox} = useLightbox(bodyRef, tabId);
     // 실행 중인 에이전트는 바닥을 따라간다 (사용자가 위로 올리면 멈춘다). 끝난 에이전트는 지시부터 읽게 맨 위에서.
     const followRef = useRef(false);
     const placedRef = useRef(false);
@@ -184,7 +184,7 @@ export function AgentPanel({tabId, stack, width, onResize, onClose, onOpenNested
             </div>
             <div className={cx("agentBody")} ref={bodyRef} onScroll={onScroll}>
                 <TabIdContext.Provider value={tabId}>
-                    <ImageViewerContext.Provider value={setLightbox}>
+                    <ImageViewerContext.Provider value={openImage}>
                         {!view && <div className={cx("viewerNotice")}>불러오는 중…</div>}
                         {view?.ok === false && <div className={cx("viewerNotice")}>{view.error}</div>}
                         {messages.map((m, i) =>
@@ -197,7 +197,7 @@ export function AgentPanel({tabId, stack, width, onResize, onClose, onOpenNested
                                     isStreaming={false}
                                     senderLabel={label}
                                     markReport={!running && i === lastAssistant}
-                                    onImageClick={setLightbox}
+                                    onImageClick={openImage}
                                     onOpenAgent={openNested}
                                 />
                             )
@@ -210,7 +210,7 @@ export function AgentPanel({tabId, stack, width, onResize, onClose, onOpenNested
                     </ImageViewerContext.Provider>
                 </TabIdContext.Provider>
             </div>
-            {lightbox && <Lightbox src={lightbox} onClose={closeLightbox} />}
+            {lightbox}
         </aside>
     );
 }

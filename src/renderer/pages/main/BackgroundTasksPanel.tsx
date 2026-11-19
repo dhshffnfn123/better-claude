@@ -258,7 +258,7 @@ function TaskDetail({
             {run?.prompt && (
                 <details className={cx("bgpPrompt")}>
                     <summary>받은 지시 보기</summary>
-                    <ImageViewer>
+                    <ImageViewer tabId={tabId}>
                         <div className={cx("bgpPromptBody")}>
                             <TabIdContext.Provider value={tabId}>
                                 <PromptMarkdown text={run.prompt} />
