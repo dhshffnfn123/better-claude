@@ -1090,6 +1090,26 @@ says settings are shared with the terminal's claude. Measured with CLI 2.1.325:
   script and, as soon as `BrowserWindow.getAllWindows()` has the window, `setFocusable(false)` + `app.hide()` (macOS gives the
   previous app back) + `showInactive()`; `setActivationPolicy("accessory")` alone did not help.
 
+**대화 시작 비용 tab** (`CostTab.tsx`, main `extensions:start_cost`): how many tokens a fresh conversation in this folder uses
+before anything is said, and from what. It is the 지침 panel's measurement (`measureInstructions`, same cache key cwd + model +
+system prompts), which now keeps the whole `getContextUsage({detail: "full"})` answer: `categories` (`id`/`kind` — classify
+on those, not the English name), `memoryFiles`, `skills.skillFrontmatter` (`name` is what Claude invokes — `figma:figma-use`
+for plugin skills — with `source` plugin / userSettings / projectSettings / built-in and `pluginId`), `mcpTools` (`serverName`
+normalized: `plugin_tiny-mcp_tiny`; `isLoaded: false` = deferred), `mcpInstructions`, `agents` (`pluginId`). **MCP tools need
+the servers connected first**: a freshly spawned CLI answers while its servers are still `pending` and reports no MCP tools
+(measured), so this tab asks with `settle` = `initializationResult()` + `settleMcp` (≤10 s) and keeps that measurement in the
+cache (`mcpSettled`; the chip and the panel reuse it, an unsettled one is re-measured for the tab). Shown: the total ("컨텍스트
+창 N의 x%", model, time), bars for the `used` categories sorted by size (the empty conversation's 10-token "Messages" row is
+hidden), the `deferred` sum as a note ("필요할 때만 불러오는 도구 … 빠져 있습니다" — MCP tools are deferred by default, measured),
+then memory files (→ `host.openInstructions()`), skills grouped by plugin / 내 스킬 / 이 프로젝트 / 기본 (a plugin group →
+`openExtensions("plugins", pluginId)`, a skill → `openExtensions("skills", name)`), MCP servers with their status at
+measuring time (`plugin:<name>:…` → the plugins tab; `needs-auth` servers listed as "빠져 있음" with a link to the MCP list) and
+agents. It says the value is measured by the token-count API, not estimated (`full: false` → "어림값"). Without a login (the
+isolated test config) the CLI still answers "full" but with its own estimates (CLAUDE.md 40,703 vs 47,744 measured with the
+owner's login) — the note can't tell those apart. Verified with the owner's config (read-only: 61,704 tokens, CLAUDE.md 77 %,
+figma skills 2,525, two needs-auth servers) and the isolated one (plugin, project and built-in skill groups, a connected stdio
+MCP server with one deferred tool, a project agent; every link).
+
 ### Send queue, notifications, copy, code blocks (renderer)
 
 - **Typing while Claude responds** (`ChatInput.tsx`): the textarea stays enabled; Enter while loading

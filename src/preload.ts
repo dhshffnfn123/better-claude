@@ -127,6 +127,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     runPluginOp: (tabId: string, op: object) => ipcRenderer.invoke("plugins:run", tabId, op),
     getPluginBusy: () => ipcRenderer.invoke("plugins:busy"),
     cancelPluginOp: () => ipcRenderer.invoke("plugins:cancel"),
+    // 확장 창 "대화 시작 비용" — 새 대화가 처음부터 쓰는 토큰과 내역 (지침 패널과 같은 측정, MCP 연결을 기다린 것)
+    getStartCost: (tabId: string, refresh?: boolean) => ipcRenderer.invoke("extensions:start_cost", tabId, refresh === true),
 
     // ── 백그라운드 작업 패널 (탭별): 셸 작업의 최근 출력, 작업 하나만 중지 ──
     getBackgroundOutput: (tabId: string, taskId: string, maxBytes?: number) =>

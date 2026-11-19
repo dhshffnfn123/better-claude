@@ -293,6 +293,29 @@ type PluginOpResult =
           confirm?: {command: string; mode?: string; sha256: string};
       };
 
+// ── 확장 창: 대화 시작 비용 (main의 extensions:start_cost — getContextUsage("full")) ──
+// categories.kind: used = 시작부터 컨텍스트에 든다, deferred = 필요할 때만 불러오는 도구(시작 비용 아님), buffer·free = 여유분
+// skills.source: plugin | userSettings(내 스킬) | projectSettings(이 프로젝트) | built-in … — 플러그인 스킬은 "플러그인:스킬" 이름
+interface StartCost {
+    ok: true;
+    cwd: string;
+    model: string;
+    total: number;
+    max: number;
+    measuredAt: number;
+    full: boolean; // 토큰 세기 API로 셌다 (false = 어림값)
+    mcpSettled: boolean; // MCP 서버 연결이 끝난 뒤 쟀다
+    categories: {id?: string; name: string; tokens: number; kind: string}[];
+    memoryFiles: {path: string; type: string; tokens: number}[];
+    skills: {name: string; source: string; pluginName?: string; pluginId?: string; path?: string; tokens: number}[];
+    mcpTools: {name: string; serverName: string; tokens: number; loaded: boolean}[]; // serverName은 정규화된 이름(plugin_figma_figma)
+    mcpInstructions: {serverName: string; tokens: number}[];
+    agents: {agentType: string; source: string; pluginId?: string; path?: string; tokens: number}[];
+    mcpServers: {name: string; status: string; scope?: string}[]; // 잴 때의 MCP 상태 (plugin:figma:figma …)
+}
+
+type StartCostResult = StartCost | {ok: false; error: string};
+
 // 대화 갈라지기 결과 — 새 세션을 새 탭으로 연다
 type ForkResult = {ok: true; sessionId: string; title: string; cwd: string} | {ok: false; error: string};
 
@@ -642,6 +665,8 @@ interface Window {
         runPluginOp: (tabId: string, op: PluginOp) => Promise<PluginOpResult>;
         getPluginBusy: () => Promise<{kind: PluginOp["kind"]; id: string; startedAt: number} | null>;
         cancelPluginOp: () => Promise<void>;
+        // 확장 창 "대화 시작 비용" — refresh면 다시 잰다 (CLI를 잠깐 띄운다, 대화 비용 없음)
+        getStartCost: (tabId: string, refresh?: boolean) => Promise<StartCostResult>;
 
         getBackgroundOutput: (tabId: string, taskId: string, maxBytes?: number) => Promise<BackgroundOutput | null>;
         stopBackgroundTask: (tabId: string, taskId: string) => Promise<void>;

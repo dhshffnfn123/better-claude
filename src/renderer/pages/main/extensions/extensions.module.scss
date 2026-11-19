@@ -1049,6 +1049,211 @@
   gap: 8px;
 }
 
+// ── 대화 시작 비용 탭 (CostTab.tsx) ──
+.costHead {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 14px 16px;
+  background-color: var(--c-panel-bg);
+  border: 1px solid var(--c-border-soft);
+  border-radius: 12px;
+}
+
+.costHeadMain {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.costHeadLabel {
+  font-size: 12.5px;
+  color: var(--c-text-2);
+}
+
+.costHeadTotal {
+  font-size: 28px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  color: var(--c-text);
+}
+
+.costHeadUnit {
+  margin-left: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--c-text-2);
+}
+
+.costHeadSub {
+  font-size: 12px;
+  color: var(--c-text-muted);
+}
+
+.costSection {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.costSectionTitle {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  margin: 6px 0 2px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--c-text);
+}
+
+.costSectionSum {
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--c-text-muted);
+}
+
+.costSectionLink {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.costRows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+// 이름 · 막대 · 토큰 · 비율
+.costRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(80px, 180px) 70px 46px;
+  gap: 12px;
+  align-items: center;
+  min-height: 28px;
+  padding: 2px 8px;
+  font-size: 12.5px;
+  border-radius: 7px;
+
+  &:hover {
+    background-color: var(--c-hover);
+  }
+}
+
+.costRowName {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--c-text);
+  white-space: nowrap;
+}
+
+// 누르는 이름 (지침 파일 → 지침 패널, 스킬 묶음 펼치기)
+.costRowLink {
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  background: none;
+  border: none;
+}
+
+.costPath {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  color: var(--c-text-2);
+}
+
+.costRowTokens {
+  font-variant-numeric: tabular-nums;
+  color: var(--c-text);
+  text-align: right;
+}
+
+.costRowPct {
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--c-text-muted);
+  text-align: right;
+}
+
+.costBar {
+  position: relative;
+  display: block;
+  height: 8px;
+  overflow: hidden;
+  background-color: var(--c-gauge-track);
+  border-radius: 4px;
+}
+
+.costBarFill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background-color: var(--c-accent);
+  border-radius: 4px;
+}
+
+.costNote {
+  margin: 2px 8px 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--c-text-muted);
+}
+
+.costChevron {
+  flex-shrink: 0;
+  width: 9px;
+  font-size: 9px;
+  color: var(--c-text-muted);
+}
+
+.costCount {
+  flex-shrink: 0;
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--c-text-muted);
+}
+
+.costSubRows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 2px 0 6px 32px;
+  margin: 0;
+  list-style: none;
+}
+
+.costSubRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 70px;
+  gap: 12px;
+  align-items: center;
+  padding: 1px 66px 1px 0;
+  font-size: 12px;
+
+  .extLinkBtn {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.costSubAction {
+  padding: 2px 0 4px;
+  font-size: 12px;
+}
+
 // 좁은 창에서는 왼쪽 목록을 아이콘만
 @media (max-width: 720px) {
   .extNav {

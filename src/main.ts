@@ -278,20 +278,36 @@ async function loadModels(cwd: string = os.homedir()): Promise<ModelInfo[] | nul
 // 위로 올라가며 찾은 CLAUDE.md, 그 안의 @import, paths 없는 .claude/rules, CLAUDE.local.md(Local), 사용자 공통(User),
 // 자동 메모리 목록 MEMORY.md(AutoMem). "full"은 토큰 세기 API로 정확히 센다(0.5초 남짓, 대화 비용 없음).
 // 폴더·모델마다 캐시하고, 앱에서 저장했거나 Claude가 지침 파일을 고치면 비운다(invalidateInstructions).
+// 확장 창의 "대화 시작 비용"도 같은 측정을 쓴다 — 나머지 내역(분류·스킬·MCP 도구·에이전트)까지 남겨 둔다.
 interface InstructionMeasure {
     files: {path: string; type: string; tokens: number}[];
     startTotal: number; // 새 대화를 시작하면 바로 쓰는 컨텍스트 (시스템 프롬프트·도구·지침)
     maxTokens: number;
     at: number;
+    model: string;
+    full: boolean; // 토큰 세기 API로 셌다 (아니면 summary — 어림값)
+    // MCP 서버 연결이 끝난 뒤 쟀다. CLI는 MCP 연결을 기다리지 않고 답해서(실측: 막 띄운 CLI는 서버가 pending이고 MCP 도구가
+    // 0개) 대화 시작 비용 탭은 연결을 기다린 측정을 쓴다(settleMcp, 길어야 10초). 지침 칩·패널은 기다리지 않는다.
+    mcpSettled: boolean;
+    categories: {id?: string; name: string; tokens: number; kind: string}[];
+    skills: {name: string; source: string; pluginName?: string; pluginId?: string; path?: string; tokens: number}[];
+    mcpTools: {name: string; serverName: string; tokens: number; loaded: boolean}[];
+    mcpInstructions: {serverName: string; tokens: number}[];
+    agents: {agentType: string; source: string; pluginId?: string; path?: string; tokens: number}[];
+    mcpServers: {name: string; status: string; scope?: string}[];
 }
 
 const instructionCache = new Map<string, Promise<InstructionMeasure | null>>();
 
-function measureInstructions(tab: ChatTab, refresh = false): Promise<InstructionMeasure | null> {
+function measureInstructions(tab: ChatTab, refresh = false, settle = false): Promise<InstructionMeasure | null> {
     // 시스템 프롬프트도 키에 넣는다 — 새 대화 시작 컨텍스트(startTotal)에 들어가서, 바꾸면 다시 세야 한다
     const key = `${tab.cwd}\u0000${tab.model}\u0000${systemPrompts.join("\u0001")}`;
     const cached = instructionCache.get(key);
-    if (cached && !refresh) return cached;
+    if (cached && !refresh) {
+        if (!settle) return cached;
+        // MCP 연결을 기다리지 않은 측정이면 기다려서 다시 잰다 (그 결과가 캐시를 바꿔 지침 칩도 같이 쓴다)
+        return cached.then((r) => (r?.mcpSettled ? r : measureInstructions(tab, true, true)));
+    }
     const claudePath = resolveClaudePath();
     if (!claudePath) return Promise.resolve(null);
     const {cwd, model} = tab;
@@ -309,14 +325,37 @@ function measureInstructions(tab: ChatTab, refresh = false): Promise<Instruction
             },
         });
         try {
-            const usage = await withTimeout(idle.q.getContextUsage({detail: "full"}), 15_000).catch(() =>
-                withTimeout(idle.q.getContextUsage({detail: "summary"}), 10_000)
-            );
+            let servers: McpServerStatus[] = [];
+            if (settle) {
+                await withTimeout(idle.q.initializationResult(), 30_000);
+                servers = await settleMcp(idle.q).catch(() => []);
+            }
+            let full = true;
+            const usage = await withTimeout(idle.q.getContextUsage({detail: "full"}), 15_000).catch(() => {
+                full = false;
+                return withTimeout(idle.q.getContextUsage({detail: "summary"}), 10_000);
+            });
             return {
                 files: usage.memoryFiles.map((f) => ({path: f.path, type: f.type, tokens: f.tokens})),
                 startTotal: usage.totalTokens,
                 maxTokens: usage.maxTokens,
                 at: Date.now(),
+                model: usage.model || model,
+                full,
+                mcpSettled: settle,
+                categories: (usage.categories ?? []).map((c) => ({id: c.id, name: c.name, tokens: c.tokens, kind: c.kind})),
+                skills: (usage.skills?.skillFrontmatter ?? []).map((sk) => ({
+                    name: sk.name,
+                    source: sk.source,
+                    pluginName: sk.pluginName,
+                    pluginId: sk.pluginId,
+                    path: sk.path,
+                    tokens: sk.tokens,
+                })),
+                mcpTools: (usage.mcpTools ?? []).map((t) => ({name: t.name, serverName: t.serverName, tokens: t.tokens, loaded: t.isLoaded !== false})),
+                mcpInstructions: (usage.mcpInstructions ?? []).map((m) => ({serverName: m.serverName, tokens: m.tokens})),
+                agents: (usage.agents ?? []).map((a) => ({agentType: a.agentType, source: a.source, pluginId: a.pluginId, path: a.path, tokens: a.tokens})),
+                mcpServers: servers.map((m) => ({name: m.name, status: m.status, scope: m.scope})),
             };
         } finally {
             idle.close();
@@ -3193,6 +3232,32 @@ ipcMain.handle("instructions:summary", async (event, tabId: string) => {
     const m = await measureInstructions(tabFor(event, tabId));
     if (!m) return null;
     return {count: m.files.length, tokens: m.files.reduce((n, f) => n + f.tokens, 0)};
+});
+
+// 확장 창 "대화 시작 비용": 새 대화 하나가 처음부터 쓰는 토큰과 그 내역 — 지침 패널과 같은 측정(measureInstructions),
+// MCP 서버 연결을 기다린 것. CLI가 토큰 세기 API로 센 값이다(full) — 대화 비용은 들지 않는다.
+ipcMain.handle("extensions:start_cost", async (event, tabId: string, refresh: unknown) => {
+    const tab = tabFor(event, tabId);
+    const cwd = tab.cwd;
+    const m = await measureInstructions(tab, refresh === true, true);
+    if (!m) return {ok: false, error: "대화 시작 비용을 재지 못했습니다 — Claude CLI를 실행하지 못했습니다"};
+    return {
+        ok: true,
+        cwd,
+        model: m.model,
+        total: m.startTotal,
+        max: m.maxTokens,
+        measuredAt: m.at,
+        full: m.full,
+        mcpSettled: m.mcpSettled,
+        categories: m.categories,
+        memoryFiles: m.files,
+        skills: m.skills,
+        mcpTools: m.mcpTools,
+        mcpInstructions: m.mcpInstructions,
+        agents: m.agents,
+        mcpServers: m.mcpServers,
+    };
 });
 
 ipcMain.handle("instructions:list", async (event, tabId: string, refresh: unknown) => {
